@@ -1144,7 +1144,7 @@ namespace GithubLauncher
                         return;
                     }
 
-                    await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings.IsPortable, _settings);
+                    await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
                     // Check if multiple downloads need selection
                     if ((game.Status == GameStatus.NotInstalled || game.Status == GameStatus.UpdateAvailable) &&
@@ -1294,7 +1294,7 @@ namespace GithubLauncher
                     game.SelectedDownload = selectedAsset;
                     try
                     {
-                        await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings.IsPortable, _settings);
+                        await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
                     }
                     catch (Exception ex)
                     {
@@ -1690,7 +1690,7 @@ namespace GithubLauncher
 
                     try
                     {
-                        await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings.IsPortable, _settings);
+                        await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
                     }
                     catch (Exception ex)
                     {
@@ -1811,7 +1811,7 @@ namespace GithubLauncher
             {
                 try
                 {
-                    await latestGame.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings.IsPortable, _settings);
+                    await latestGame.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
                 }
                 catch (Exception ex)
                 {
@@ -1845,9 +1845,6 @@ namespace GithubLauncher
         {
             if (_settings != null)
             {
-                if (PortableCheckBox != null)
-                    PortableCheckBox.IsChecked = _settings.IsPortable;
-
                 if (IconOpacitySlider != null)
                     IconOpacitySlider.Value = _settings.IconOpacity;
 
@@ -2014,24 +2011,6 @@ namespace GithubLauncher
         {
             _settings.UseGridView = false;
             OnSettingChanged();
-        }
-
-        private void PortableCheckBox_Checked(object sender, RoutedEventArgs e)
-        {
-            if (_settings != null)
-            {
-                _settings.IsPortable = true;
-                OnSettingChanged();
-            }
-        }
-
-        private void PortableCheckBox_Unchecked(object sender, RoutedEventArgs e)
-        {
-            if (_settings != null)
-            {
-                _settings.IsPortable = false;
-                OnSettingChanged();
-            }
         }
 
         private void SlotSizeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -2383,7 +2362,7 @@ namespace GithubLauncher
 
             try
             {
-                await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings.IsPortable, _settings);
+                await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
             }
             catch (Exception ex)
             {

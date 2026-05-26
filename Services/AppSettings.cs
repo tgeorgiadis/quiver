@@ -7,7 +7,6 @@ namespace GithubLauncher
 {
     public class AppSettings
     {
-        public bool IsPortable { get; set; } = false;
         public bool FirstStartup { get; set; } = true;
         public bool IconFill { get; set; } = true;
         public bool UseGridView { get; set; } = true;

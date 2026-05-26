@@ -1129,19 +1129,6 @@
 												   Margin="0,0,0,4"/>
 
 										<StackPanel Spacing="2">
-											<CheckBox x:Name="PortableCheckBox"
-													  Content="Portable Mode"
-													  Foreground="{DynamicResource ThemeText}"
-													  FontSize="13" FontWeight="SemiBold"
-													  Checked="PortableCheckBox_Checked"
-													  Unchecked="PortableCheckBox_Unchecked"/>
-											<TextBlock Text="Store data in the app directory instead of your user profile"
-													   FontSize="11"
-													   Foreground="{DynamicResource ThemeTextSecondary}"
-													   Margin="20,0,0,0"/>
-										</StackPanel>
-
-										<StackPanel Spacing="2">
 											<CheckBox x:Name="EnableGamepadCheckBox"
 													  Content="Enable Gamepad Input"
 													  Foreground="{DynamicResource ThemeText}"

@@ -486,7 +486,6 @@ namespace GithubLauncher
                 await game.PerformActionAsync(
                     _gameManager.HttpClient,
                     gamesFolder,
-                    settings.IsPortable,
                     settings);
 
                 game.GameProcessStarted -= OnGameProcessStarted;
@@ -684,7 +683,6 @@ namespace GithubLauncher
                 var downloadTask = game.PerformActionAsync(
                     _gameManager.HttpClient,
                     _gameManager.GamesFolder,
-                    settings.IsPortable,
                     settings);
 
                 // Monitor progress and version changes

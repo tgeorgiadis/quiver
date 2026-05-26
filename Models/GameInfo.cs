@@ -57,7 +57,6 @@ namespace GithubLauncher.Models
         }
         private string? _cachedDefaultIconPath;
         public bool HasCustomIcon => !string.IsNullOrEmpty(CustomIconPath) && File.Exists(CustomIconPath);
-        public bool HasThunderstorePage => ThunderstoreService.GetCommunityForRepository(Repository ?? string.Empty) != null;
 
         public string IconUrl
         {
@@ -1253,7 +1252,7 @@ namespace GithubLauncher.Models
             }
         }
 
-        public async Task PerformActionAsync(HttpClient httpClient, string gamesFolder, bool isPortable, AppSettings settings)
+        public async Task PerformActionAsync(HttpClient httpClient, string gamesFolder, AppSettings settings)
         {
             if (string.IsNullOrEmpty(FolderName))
             {
@@ -1262,8 +1261,6 @@ namespace GithubLauncher.Models
             }
 
             string gamePath = GetInstallPath(gamesFolder);
-            string portableFilePath = Path.Combine(gamePath, "portable.txt");
-            string disabledPortableFilePath = Path.Combine(gamePath, "portable_disabled.txt");
 
             switch (Status)
             {
@@ -1271,30 +1268,9 @@ namespace GithubLauncher.Models
                 case GameStatus.UpdateAvailable:
                     
                     await DownloadAndInstallAsync(httpClient, gamesFolder, GetLatestRelease(), settings, _status);
-
-                    if (File.Exists(portableFilePath))
-                    {
-                        if (!isPortable)
-                        {
-                            File.Move(portableFilePath, disabledPortableFilePath, true);
-                        }
-                    }
                     break;
 
                 case GameStatus.Installed:
-                    if (File.Exists(portableFilePath) && !isPortable)
-                    {
-                        File.Move(portableFilePath, disabledPortableFilePath, true);
-                    }
-                    else if (File.Exists(disabledPortableFilePath) && isPortable)
-                    {
-                        File.Move(disabledPortableFilePath, portableFilePath, true);
-                    }
-                    else if (!File.Exists(portableFilePath) && !File.Exists(disabledPortableFilePath) && isPortable)
-                    {
-                        Directory.CreateDirectory(gamePath);
-                        File.Create(portableFilePath).Close();
-                    }
 
                     await LaunchAsync(gamesFolder);
                     break;
@@ -1893,23 +1869,12 @@ namespace GithubLauncher.Models
                 assetName,
                 version,
                 GetInstallationOptions()).ConfigureAwait(false);
-
-            var portableFilePath = Path.Combine(gamePath, "portable.txt");
-            if (!File.Exists(portableFilePath))
-            {
-                await File.WriteAllTextAsync(portableFilePath, string.Empty).ConfigureAwait(false);
-            }
         }
 
         static GameInstallationOptions GetInstallationOptions()
         {
             return new GameInstallationOptions
             {
-                AdditionalMetadataFileNames =
-                [
-                    "portable.txt",
-                    "portable_disabled.txt"
-                ],
                 Log = message => Debug.WriteLine(message)
             };
         }
