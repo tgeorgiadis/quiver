@@ -3,8 +3,11 @@
 [![.NET 9](https://img.shields.io/badge/.NET-9-512BD4)](https://dotnet.microsoft.com/)
 [![License](https://img.shields.io/github/license/SirDiabo/GithubLauncher)](https://github.com/SirDiabo/GithubLauncher/blob/main/LICENSE)
 
+>## Important
+>This software was previously knows as the "N64Recomp Launcher", but this had to be changed due to the continued requests by the N64Recomp Tool Developers. If you are interested in a version of the launcher that is primarily for N64 Recompiled Games, then check out [this version](https://github.com/SirDiabo/GithubLauncher/releases/tag/v1.70).
+
 ![Github Launcher Screenshot](Assets/LauncherScreenshot.png)
-A modern, user-friendly launcher application for managing and running GitHub-hosted apps. This tool streamlines the process of downloading, installing, and launching your favorite projects.
+A modern, user-friendly launcher application for managing and running GitHub-hosted applications. This tool streamlines the process of downloading, installing, and launching your favorite projects.
 
 ## Features
 
@@ -80,8 +83,3 @@ Each app entry requires the following properties:
 If you encounter any issues or have questions:
 - [Open an issue](https://github.com/SirDiabo/GithubLauncher/issues)
 - Check existing issues for solutions
-- Join the [GitHub Launcher Discord](https://discord.gg/DptggHetGZ)
-
----
-
-<p align="center">Made for the GitHub Launcher community</p>
