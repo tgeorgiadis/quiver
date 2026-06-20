@@ -1,7 +1,7 @@
-using GitHubLauncher.Core.Models;
-using GitHubLauncher.Core.Services;
-using GithubLauncher.Models;
-using GithubLauncher.Services;
+using Quiver.Core.Models;
+using Quiver.Core.Services;
+using Quiver.Models;
+using Quiver.Services;
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -13,7 +13,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace GithubLauncher
+namespace Quiver
 {
     public class CLIHandler
     {
@@ -22,7 +22,7 @@ namespace GithubLauncher
         private const ConsoleColor ColorWarning = ConsoleColor.Yellow;
         private const ConsoleColor ColorError = ConsoleColor.Red;
         private const ConsoleColor ColorMuted = ConsoleColor.DarkGray;
-        private static readonly GithubLauncherProfile Profile = GithubLauncherProfile.Instance;
+        private static readonly QuiverProfile Profile = QuiverProfile.Instance;
         private static readonly string Repository = Profile.Repository;
         private const string VersionFileName = "version.txt";
         private const string UpdateCheckFileName = "update_check.json";
@@ -30,6 +30,13 @@ namespace GithubLauncher
 
         private GameManager? _gameManager;
         private string _currentVersion = "Unknown";
+        private readonly LauncherUpdateService _launcherUpdateService;
+
+        public CLIHandler(GameManager? gameManager = null, LauncherUpdateService? launcherUpdateService = null)
+        {
+            _gameManager = gameManager;
+            _launcherUpdateService = launcherUpdateService ?? new LauncherUpdateService();
+        }
 
         public async Task<int> Execute(string[] args)
         {
@@ -135,16 +142,16 @@ namespace GithubLauncher
             if (_gameManager == null)
             {
                 _gameManager = new GameManager();
-
-                // Force load all games
                 var settings = AppSettings.Load();
-                var originalHiddenApps = settings.HiddenApps.ToList();
-                settings.HiddenApps.Clear();
+                settings.EnsureInitialized();
+                var originalScope = settings.ListScope;
+                settings.ListScope = AppListScope.AllApps;
+                AppSettings.Save(settings);
 
                 await _gameManager.LoadGamesAsync();
 
-                // Restore hidden games list
-                settings.HiddenApps = originalHiddenApps;
+                settings.ListScope = originalScope;
+                AppSettings.Save(settings);
             }
         }
 
@@ -161,32 +168,24 @@ namespace GithubLauncher
 
         private void LoadVersion()
         {
+            _currentVersion = _launcherUpdateService.ReadInstalledVersion();
+        }
+
+        private async Task CheckForLauncherUpdates()
+        {
             try
             {
-                string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
-                string updateCheckFilePath = Path.Combine(currentAppDirectory, "update_check.json");
-
-                if (File.Exists(updateCheckFilePath))
+                var latestTag = await _launcherUpdateService.FetchLatestReleaseTagAsync();
+                if (_launcherUpdateService.IsUpdateAvailable(_currentVersion, latestTag))
                 {
-                    var json = File.ReadAllText(updateCheckFilePath);
-                    var updateInfo = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
-                    if (updateInfo != null && updateInfo.TryGetValue("CurrentVersion", out var versionElement))
-                    {
-                        _currentVersion = versionElement.GetString() ?? "Unknown";
-                        return;
-                    }
-                }
-
-                // Fallback to version.txt
-                string versionFilePath = Path.Combine(currentAppDirectory, "version.txt");
-                if (File.Exists(versionFilePath))
-                {
-                    _currentVersion = File.ReadAllText(versionFilePath).Trim();
+                    WriteColor($"  [UPDATE AVAILABLE] ", ColorWarning);
+                    Console.WriteLine($"New version {latestTag} is available! Use --update-launcher to upgrade.");
+                    Console.WriteLine();
                 }
             }
             catch
             {
-                _currentVersion = "Unknown";
+                // Silently skip update check if offline or error
             }
         }
 
@@ -225,34 +224,9 @@ namespace GithubLauncher
             PrintLine();
         }
 
-        private async Task CheckForLauncherUpdates()
-        {
-            try
-            {
-                using var client = new HttpClient();
-                client.Timeout = TimeSpan.FromSeconds(5);
-                client.DefaultRequestHeaders.Add("User-Agent", Profile.CliUserAgent);
-
-                var response = await client.GetStringAsync("https://api.github.com/repos/sirdiabo/GithubLauncher/releases/latest");
-                using var doc = JsonDocument.Parse(response);
-                var latestTag = doc.RootElement.GetProperty("tag_name").GetString();
-
-                if (!string.IsNullOrEmpty(latestTag) && latestTag != _currentVersion)
-                {
-                    WriteColor($"  [UPDATE AVAILABLE] ", ColorWarning);
-                    Console.WriteLine($"New version {latestTag} is available! Use --update-launcher to upgrade.");
-                    Console.WriteLine();
-                }
-            }
-            catch
-            {
-                // Silently skip update check if offline or error
-            }
-        }
-
         private void ShowHelp()
         {
-            Console.WriteLine("Usage: GithubLauncher [command] [game name]");
+            Console.WriteLine("Usage: Quiver [command] [game name]");
             Console.WriteLine();
             WriteColor("Commands:", ColorTitle);
             Console.WriteLine();
@@ -266,10 +240,10 @@ namespace GithubLauncher
             Console.WriteLine();
             WriteColor("Examples:", ColorMuted);
             Console.WriteLine();
-            Console.WriteLine("  GithubLauncher --list");
-            Console.WriteLine("  GithubLauncher --download Banjo64");
-            Console.WriteLine("  GithubLauncher --run Banjo64");
-            Console.WriteLine("  GithubLauncher -r \"Mario Kart 64\"");
+            Console.WriteLine("  Quiver --list");
+            Console.WriteLine("  Quiver --download Banjo64");
+            Console.WriteLine("  Quiver --run Banjo64");
+            Console.WriteLine("  Quiver -r \"Mario Kart 64\"");
             Console.WriteLine();
         }
 
@@ -442,7 +416,7 @@ namespace GithubLauncher
                             // If running the CLI version, try to find the GUI version
                             if (exePath.Contains("CLI", StringComparison.OrdinalIgnoreCase))
                             {
-                                var possibleGuiExe = Path.Combine(exeDir, "GithubLauncher.exe");
+                                var possibleGuiExe = Path.Combine(exeDir, "Quiver.exe");
                                 if (File.Exists(possibleGuiExe))
                                 {
                                     guiExe = possibleGuiExe;
@@ -616,70 +590,17 @@ namespace GithubLauncher
                 // Get the latest release info
                 await game.CheckStatusAsync(_gameManager.HttpClient, _gameManager.GamesFolder, forceUpdateCheck: true);
 
-                // Get platform identifier
                 string platformIdentifier = GameInfo.GetPlatformIdentifier(settings);
                 WriteColor($"→ Detected platform: {platformIdentifier}", ColorMuted);
                 Console.WriteLine();
 
-                // Check for multiple downloads first
-                var cachedRelease = game.GetType().GetMethod("GetLatestRelease", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.Invoke(game, null);
-
-                if (cachedRelease != null)
+                if (game.TrySelectPlatformDownload(settings) && game.SelectedDownload != null)
                 {
-                    var assetsProperty = cachedRelease.GetType().GetProperty("assets");
-                    if (assetsProperty != null)
-                    {
-                        var assets = assetsProperty.GetValue(cachedRelease) as System.Collections.IEnumerable;
-                        var assetList = assets?.Cast<object>().ToList();
-
-                        if (assetList != null && assetList.Count > 1)
-                        {
-                            WriteColor($"→ Finding {platformIdentifier} version...", ColorMuted);
-                            Console.WriteLine();
-
-                            // Find matching platform
-                            object? matchingAsset = null;
-                            foreach (var asset in assetList)
-                            {
-                                var nameProperty = asset.GetType().GetProperty("name");
-                                if (nameProperty != null)
-                                {
-                                    var assetName = nameProperty.GetValue(asset)?.ToString();
-                                    if (!string.IsNullOrEmpty(assetName) && GameInfo.MatchesPlatform(assetName, platformIdentifier))
-                                    {
-                                        matchingAsset = asset;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (matchingAsset != null)
-                            {
-                                var nameProperty = matchingAsset.GetType().GetProperty("name");
-                                var assetName = nameProperty?.GetValue(matchingAsset)?.ToString();
-
-                                // Set the selected download via reflection
-                                var selectedDownloadProperty = game.GetType().GetProperty("SelectedDownload");
-                                selectedDownloadProperty?.SetValue(game, matchingAsset);
-
-                                WriteColor($"→ Selected: {assetName}", ColorSuccess);
-                                Console.WriteLine();
-                                Console.WriteLine();
-                            }
-                            else
-                            {
-                                WriteColor($"⚠ No {platformIdentifier} version found, using first available", ColorWarning);
-                                Console.WriteLine();
-                                Console.WriteLine();
-
-                                var selectedDownloadProperty = game.GetType().GetProperty("SelectedDownload");
-                                selectedDownloadProperty?.SetValue(game, assetList[0]);
-                            }
-                        }
-                    }
+                    WriteColor($"→ Selected: {game.SelectedDownload.name}", ColorSuccess);
+                    Console.WriteLine();
+                    Console.WriteLine();
                 }
 
-                // Start the actual download
                 var downloadTask = game.PerformActionAsync(
                     _gameManager.HttpClient,
                     _gameManager.GamesFolder,
@@ -870,7 +791,7 @@ namespace GithubLauncher
                 Console.WriteLine();
 
                 string tempDownloadPath = Path.Combine(Path.GetTempPath(), asset.name);
-                string tempUpdateFolder = Path.Combine(Path.GetTempPath(), "GithubLauncher_temp_update");
+                string tempUpdateFolder = Path.Combine(Path.GetTempPath(), "Quiver_temp_update");
                 if (Directory.Exists(tempUpdateFolder))
                     Directory.Delete(tempUpdateFolder, true);
                 Directory.CreateDirectory(tempUpdateFolder);
@@ -944,8 +865,8 @@ namespace GithubLauncher
             }
 
             string executableName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? "GithubLauncher.exe"
-                : "GithubLauncher";
+                ? "Quiver.exe"
+                : "Quiver";
 
             string executablePath = Path.Combine(updateDirectory, executableName);
             return File.Exists(executablePath) && new FileInfo(executablePath).Length > 1024;
@@ -976,16 +897,16 @@ namespace GithubLauncher
             string applicationExecutable = Environment.ProcessPath
                 ?? Process.GetCurrentProcess().MainModule?.FileName
                 ?? throw new InvalidOperationException("Could not determine launcher executable path.");
-            string backupDir = Path.Combine(Path.GetTempPath(), "GithubLauncher_backup_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+            string backupDir = Path.Combine(Path.GetTempPath(), "Quiver_backup_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
             string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                string updaterScriptPath = Path.Combine(Path.GetTempPath(), "GithubLauncher_Updater.cmd");
+                string updaterScriptPath = Path.Combine(Path.GetTempPath(), "Quiver_Updater.cmd");
                 string scriptContent = $@"@echo off
-echo GithubLauncher Updater - Version {release.tag_name}
+echo Quiver Updater - Version {release.tag_name}
 echo.
-echo Waiting for GithubLauncher CLI to close...
+echo Waiting for Quiver CLI to close...
 set /A waitCount=0
 :wait_loop
 tasklist /FI ""PID eq {currentProcessId}"" 2>NUL | find /I ""{currentProcessId}"">NUL
@@ -1045,11 +966,11 @@ del ""%~f0""
             }
             else
             {
-                string updaterScriptPath = Path.Combine(Path.GetTempPath(), "GithubLauncher_Updater.sh");
+                string updaterScriptPath = Path.Combine(Path.GetTempPath(), "Quiver_Updater.sh");
                 string scriptContent = $@"#!/bin/bash
-echo ""GithubLauncher Updater - Version {release.tag_name}""
+echo ""Quiver Updater - Version {release.tag_name}""
 echo
-echo ""Waiting for GithubLauncher CLI to close...""
+echo ""Waiting for Quiver CLI to close...""
 waitCount=0
 while kill -0 {currentProcessId} 2>/dev/null; do
     if [ ""$waitCount"" -ge {UpdaterProcessExitTimeoutSeconds} ]; then
@@ -1087,10 +1008,10 @@ cat > ""{updateCheckFilePath}"" << 'EOF'
 {{""CurrentVersion"":""{release.tag_name}"",""LastCheckTime"":""{DateTime.UtcNow:o}"",""LastKnownVersion"":""{release.tag_name}"",""ETag"":"""",""UpdateAvailable"":false}}
 EOF
 
-if [ -f ""$appDir/GithubLauncher"" ]; then
-    chmod +x ""$appDir/GithubLauncher""
+if [ -f ""$appDir/Quiver"" ]; then
+    chmod +x ""$appDir/Quiver""
     cd ""$appDir""
-    nohup ""./GithubLauncher"" > /dev/null 2>&1 &
+    nohup ""./Quiver"" > /dev/null 2>&1 &
 fi
 
 rm -rf ""$backupDir"" ""$updateDir"" 2>/dev/null || true
@@ -1141,21 +1062,8 @@ rm -- ""$0""
             throw new PlatformNotSupportedException("Unsupported operating system");
         }
 
-        private static bool IsNewerVersion(string latestVersion, string currentVersion)
-        {
-            try
-            {
-                string cleanLatest = latestVersion.TrimStart('v', 'V');
-                string cleanCurrent = currentVersion.TrimStart('v', 'V');
-                return Version.TryParse(cleanLatest, out var latest) &&
-                    Version.TryParse(cleanCurrent, out var current) &&
-                    latest > current;
-            }
-            catch
-            {
-                return !string.Equals(latestVersion, currentVersion, StringComparison.OrdinalIgnoreCase);
-            }
-        }
+        private static bool IsNewerVersion(string latestVersion, string currentVersion) =>
+            LauncherVersionService.IsNewerVersion(latestVersion, currentVersion);
 
         private async Task<int> UninstallGame(string gameName)
         {

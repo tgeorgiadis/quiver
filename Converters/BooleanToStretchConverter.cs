@@ -1,9 +1,9 @@
-﻿using System;
+using System;
 using System.Globalization;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 
-namespace GithubLauncher
+namespace Quiver
 {
     public class BooleanToStretchConverter : IValueConverter
     {

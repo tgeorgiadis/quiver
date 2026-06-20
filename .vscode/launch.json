@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Quiver (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/bin/Debug/net9.0/Quiver.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/bin/Debug/net9.0",
+      "console": "internalConsole"
+    }
+  ]
+}

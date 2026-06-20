@@ -9,10 +9,11 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using GitHubLauncher.Core.Models;
-using GitHubLauncher.Core.Services;
-using GithubLauncher.Models;
-using GithubLauncher.Services;
+using Quiver.Core.Models;
+using Quiver.Core.Services;
+using Quiver.Models;
+using Quiver.Services;
+using Quiver.ViewModels;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -25,12 +26,20 @@ using Avalonia.Platform;
 using NAudio.Wave;
 #endif
 
-namespace GithubLauncher
+namespace Quiver
 {
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
         private readonly GameManager _gameManager;
+        private readonly CatalogViewModel _catalogViewModel = new();
+        private readonly GameGridViewModel _gameGridViewModel = new();
+        private readonly SettingsViewModel _settingsViewModel = new();
         public ObservableCollection<GameInfo> Games => _gameManager?.Games ?? new ObservableCollection<GameInfo>();
+        public ObservableCollection<TagDisplayFilterListItem> TagDisplayFilters { get; } = new();
+        public ObservableCollection<CatalogSourceListItem> CatalogSources { get; } = new();
+        private bool _suppressCatalogSourceUiEvents;
+        private bool _isRefreshingCatalogSources;
+        private string? _editingDisplayFilterId;
         public AppSettings _settings = new();
         public App _app = null!;
         public AppSettings Settings => _settings;
@@ -232,7 +241,9 @@ namespace GithubLauncher
                 }
             }
         }
-        private bool _isGamesManagerOpen = false;
+        private bool _isEntryFormOpen = false;
+        private bool _entryFormShowValidation;
+        private GameInfo? _editingTagsGame;
         public string InfoTextLength = "*";
         private SolidColorBrush _themeColorBrush = new(Colors.Transparent);
         public SolidColorBrush ThemeColorBrush
@@ -269,7 +280,7 @@ namespace GithubLauncher
 
             try
             {
-                _settings = AppSettings.Load();
+                _settings = _settingsViewModel.Load();
             }
             catch (Exception ex)
             {
@@ -284,7 +295,7 @@ namespace GithubLauncher
             SecondaryColorBrush = new SolidColorBrush(Color.Parse(_settings?.SecondaryColor ?? "#404040"));
             UpdateThemeColors();
 
-            _gameManager.UnhideAllGames();
+            _settings.EnsureInitialized();
             LoadCurrentVersion();
             LoadCurrentPlatform();
             UpdateSettingsUI();
@@ -967,6 +978,7 @@ namespace GithubLauncher
             try
             {
                 await _gameManager.LoadGamesAsync();
+                _settings = AppSettings.Load();
 
                 ApplySorting();
 
@@ -974,6 +986,9 @@ namespace GithubLauncher
                 {
                     DataContext = this;
                     UpdateContinueButtonState();
+                    RefreshCatalogSourcesList();
+                    RefreshTagDisplayFiltersUI();
+                    RefreshSidebarFilterSelection();
 
                     if (!_hasInitializedFocus)
                     {
@@ -981,6 +996,8 @@ namespace GithubLauncher
                         _hasInitializedFocus = true;
                     }
                 });
+
+                await ProcessPendingCatalogUpdatesAsync();
             }
             catch (Exception ex)
             {
@@ -1019,13 +1036,8 @@ namespace GithubLauncher
 
         public void CloseLauncher_Click(object sender, RoutedEventArgs e)
         {
-            // Close settings panel if open
-            if (isSettingsPanelOpen && SettingsPanel != null)
-            {
-                isSettingsPanelOpen = false;
-                SettingsPanel.IsVisible = false;
+            if (CloseSettingsPanel())
                 return;
-            }
 
             // Close changelog if open
             if (_isChangelogOpen)
@@ -1034,9 +1046,9 @@ namespace GithubLauncher
                 return;
             }
 
-            if (_isGamesManagerOpen)
+            if (_isEntryFormOpen)
             {
-                CloseManageGames_Click(sender, e);
+                CloseEntryFormOverlay();
                 return;
             }
 
@@ -1066,6 +1078,7 @@ namespace GithubLauncher
         {
             _settings.IconFill = true;
             _settings.UseGridView = true;
+            _settings.GridCompactCards = true;
             _settings.SlotSize = 304;
             _settings.IconSize = 220;
             _settings.IconMargin = 0;
@@ -1080,6 +1093,7 @@ namespace GithubLauncher
         {
             _settings.IconFill = true;
             _settings.UseGridView = true;
+            _settings.GridCompactCards = true;
             _settings.SlotSize = 144;
             _settings.IconSize = 200;
             _settings.IconMargin = 0;
@@ -1092,10 +1106,12 @@ namespace GithubLauncher
 
         public void LayoutPreset_Square_Click(object sender, RoutedEventArgs e)
         {
-            _settings.IconFill = true;
+            _settings.IconFill = false;
             _settings.UseGridView = true;
-            _settings.SlotSize = 220;
-            _settings.IconSize = 220;
+            _settings.GridCompactCards = false;
+            _settings.SlotSize = 152;
+            _settings.IconSize = 124;
+            _settings.ActionButtonSize = 36;
             _settings.IconMargin = 0;
             _settings.SlotTextMargin = 0;
             _settings.IconOpacity = 1.0f;
@@ -1108,6 +1124,7 @@ namespace GithubLauncher
         {
             _settings.IconFill = true;
             _settings.UseGridView = true;
+            _settings.GridCompactCards = true;
             _settings.SlotSize = 272;
             _settings.IconSize = 200;
             _settings.IconMargin = 0;
@@ -1826,19 +1843,50 @@ namespace GithubLauncher
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
+            if (SettingsPanel == null)
+                return;
+
+            if (_isEntryFormOpen)
+                CloseEntryFormOverlay();
+
             isSettingsPanelOpen = !isSettingsPanelOpen;
             SettingsPanel.IsVisible = isSettingsPanelOpen;
 
             if (isSettingsPanelOpen)
             {
+                RefreshCatalogSourcesList();
                 Dispatcher.UIThread.Post(() =>
                 {
-                    var firstSettingsControl = SettingsContent?.GetVisualDescendants()
-                        .OfType<Control>()
-                        .FirstOrDefault(c => c.IsVisible && c.IsEnabled && c.Focusable);
-                    firstSettingsControl?.Focus();
+                    EnableGamepadCheckBox?.Focus();
                 }, DispatcherPriority.Loaded);
             }
+        }
+
+        private bool CloseSettingsPanel()
+        {
+            if (!isSettingsPanelOpen || SettingsPanel == null)
+                return false;
+
+            isSettingsPanelOpen = false;
+            SettingsPanel.IsVisible = false;
+
+            var settingsButton = this.FindControl<Button>("SettingsButton");
+            if (settingsButton != null)
+                settingsButton.Focus();
+            else
+            {
+                var firstFocusable = this.GetVisualDescendants()
+                    .OfType<Control>()
+                    .FirstOrDefault(c => c.IsVisible && c.IsEnabled && c.Focusable && !IsInsideSettingsPanel(c));
+                firstFocusable?.Focus();
+            }
+
+            return true;
+        }
+
+        private void CloseSettingsPanel_Click(object? sender, RoutedEventArgs e)
+        {
+            CloseSettingsPanel();
         }
 
         private void UpdateSettingsUI()
@@ -1863,8 +1911,16 @@ namespace GithubLauncher
                 if (SlotSizeSlider != null)
                     SlotSizeSlider.Value = _settings.SlotSize;
 
+                if (ActionButtonSizeSlider != null)
+                    ActionButtonSizeSlider.Value = _settings.ActionButtonSize;
+
                 if (UseGridViewCheckBox != null)
                     UseGridViewCheckBox.IsChecked = _settings.UseGridView;
+
+                if (GridCompactCardsCheckBox != null)
+                    GridCompactCardsCheckBox.IsChecked = _settings.GridCompactCards;
+
+                UpdateGridLayoutVisibility();
 
                 if (BackgroundOpacitySlider != null)
                     BackgroundOpacitySlider.Value = _settings.BackgroundOpacity;
@@ -1922,7 +1978,603 @@ namespace GithubLauncher
                 ThemeColorBrush = new SolidColorBrush(Color.Parse(_settings?.PrimaryColor ?? "#18181b"));
                 SecondaryColorBrush = new SolidColorBrush(Color.Parse(_settings?.SecondaryColor ?? "#404040"));
                 UpdateThemeColors();
+                RefreshCatalogSourcesList();
+                RefreshTagDisplayFiltersUI();
+                RefreshSidebarFilterSelection();
             }
+        }
+
+        private void RefreshTagDisplayFiltersUI()
+        {
+            _settings.EnsureInitialized();
+
+            TagDisplayFilters.Clear();
+            foreach (var filter in _settings.TagDisplayFilters)
+            {
+                var isSelected = string.Equals(
+                    filter.Id,
+                    _settings.ActiveTagDisplayFilterId,
+                    StringComparison.OrdinalIgnoreCase);
+                TagDisplayFilters.Add(TagDisplayFilterListItem.FromFilter(filter, isSelected));
+            }
+        }
+
+        private void RefreshSidebarFilterSelection()
+        {
+            _settings.EnsureInitialized();
+
+            UnhideAllGamesButton?.Classes.Set(
+                "selected",
+                _settings.ListScope == AppListScope.AllApps);
+            HideNonInstalledButton?.Classes.Set(
+                "selected",
+                _settings.ListScope == AppListScope.InstalledOnly);
+        }
+
+        private void RefreshCatalogSourcesList()
+        {
+            if (_isRefreshingCatalogSources)
+                return;
+
+            _isRefreshingCatalogSources = true;
+            _suppressCatalogSourceUiEvents = true;
+            try
+            {
+                _catalogViewModel.RefreshSourceList(CatalogSources, _settings);
+            }
+            finally
+            {
+                _suppressCatalogSourceUiEvents = false;
+                _isRefreshingCatalogSources = false;
+            }
+        }
+
+        private enum CatalogSourceRemovalChoice
+        {
+            Cancel,
+            KeepApps,
+            RemoveApps,
+        }
+
+        private async void AddCatalogSource_Click(object? sender, RoutedEventArgs e)
+        {
+            var result = await ShowAddCatalogSourceDialogAsync();
+            if (result == null)
+                return;
+
+            var (name, location) = result.Value;
+            var (apps, error) = await _gameManager.CatalogService.TryLoadSourceAsync(_gameManager.HttpClient, location);
+            if (error != null)
+            {
+                await ShowMessageBoxAsync($"Could not load catalog source:\n{error}", "Invalid Source");
+                return;
+            }
+
+            if (apps.Count == 0)
+            {
+                await ShowMessageBoxAsync("The catalog source loaded successfully but contains no apps.", "Empty Catalog");
+                return;
+            }
+
+            var source = _catalogViewModel.CreateSource(name, location);
+
+            await _gameManager.CatalogService.RegisterNewSourceAsync(source, apps);
+
+            _settings.AppCatalogSources.Add(source);
+            OnSettingChanged();
+            RefreshCatalogSourcesList();
+
+            await _gameManager.LoadGamesAsync();
+            ApplySorting();
+            await ShowMessageBoxAsync($"Added \"{name}\" with {apps.Count} app(s).", "Source Added");
+        }
+
+        private async void RemoveCatalogSource_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string sourceId })
+                return;
+
+            var source = _settings.AppCatalogSources.FirstOrDefault(s => s.Id == sourceId);
+            if (source == null)
+                return;
+
+            var exclusiveApps = await _gameManager.CatalogService.GetExclusiveAppsForSourceAsync(
+                _gameManager.HttpClient,
+                _settings,
+                source);
+
+            CatalogSourceRemovalChoice choice;
+            if (exclusiveApps.Count > 0)
+            {
+                choice = await ShowCatalogSourceRemovalDialogAsync(
+                    source.Name,
+                    exclusiveApps.Count);
+            }
+            else
+            {
+                var confirmed = await ShowMessageBoxAsync(
+                    $"Remove catalog source \"{source.Name}\"?",
+                    "Remove Source",
+                    true);
+                choice = confirmed ? CatalogSourceRemovalChoice.RemoveApps : CatalogSourceRemovalChoice.Cancel;
+            }
+
+            if (choice == CatalogSourceRemovalChoice.Cancel)
+                return;
+
+            if (choice == CatalogSourceRemovalChoice.KeepApps)
+                await _gameManager.CatalogService.PromoteAppsToLocalAsync(exclusiveApps);
+
+            _settings.AppCatalogSources.RemoveAll(s => s.Id == sourceId);
+            OnSettingChanged();
+            RefreshCatalogSourcesList();
+
+            await _gameManager.LoadGamesAsync();
+            ApplySorting();
+        }
+
+        private async void CatalogSourceEnabled_Changed(object? sender, RoutedEventArgs e)
+        {
+            if (_suppressCatalogSourceUiEvents)
+                return;
+
+            if (sender is not CheckBox checkBox || checkBox.Tag is not string sourceId)
+                return;
+
+            _settings.EnsureInitialized();
+            var source = _settings.AppCatalogSources.FirstOrDefault(s => s.Id == sourceId);
+            if (source == null)
+                return;
+
+            source.Enabled = checkBox.IsChecked == true;
+            OnSettingChanged();
+
+            await _gameManager.LoadGamesAsync();
+            ApplySorting();
+        }
+
+        private async void RefreshCatalogSources_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                await _gameManager.LoadGamesAsync();
+                _settings = AppSettings.Load();
+                _settings.EnsureInitialized();
+                RefreshCatalogSourcesList();
+                ApplySorting();
+
+                var prompted = await ProcessPendingCatalogUpdatesAsync();
+                if (!prompted)
+                    await ShowMessageBoxAsync("Catalog sources refreshed.", "Refresh Complete");
+            }
+            catch (Exception ex)
+            {
+                await ShowMessageBoxAsync($"Failed to refresh catalog sources: {ex.Message}", "Refresh Error");
+            }
+        }
+
+        private void CommunityCatalogIndexUrlTextBox_TextChanged(object? sender, TextChangedEventArgs e)
+        {
+            if (_settings == null || sender is not TextBox textBox)
+                return;
+
+            _settings.CommunityCatalogIndexUrl = textBox.Text ?? string.Empty;
+            OnSettingChanged();
+        }
+
+        private async void BrowseCommunityCatalogLists_Click(object? sender, RoutedEventArgs e)
+        {
+            var indexUrl = _settings.CommunityCatalogIndexUrl?.Trim() ?? "";
+            var (index, error) = await CommunityCatalogIndexService.FetchIndexAsync(
+                _gameManager.HttpClient,
+                indexUrl);
+
+            if (error != null || index == null)
+            {
+                await ShowMessageBoxAsync(error ?? "Could not load community index.", "Community Lists");
+                return;
+            }
+
+            if (index.Lists.Count == 0)
+            {
+                await ShowMessageBoxAsync("The community index contains no lists.", "Community Lists");
+                return;
+            }
+
+            await ShowBrowseCommunityListsDialogAsync(index);
+        }
+
+        private async Task<bool> ProcessPendingCatalogUpdatesAsync()
+        {
+            var pending = await _gameManager.CatalogService.CheckPendingCatalogUpdatesAsync(
+                _gameManager.HttpClient,
+                _settings);
+
+            if (pending.Count == 0)
+                return false;
+
+            foreach (var update in pending)
+            {
+                var choice = await ShowCatalogUpdateDialogAsync(update);
+                if (choice == null)
+                    continue;
+
+                await _gameManager.CatalogService.AcceptCatalogUpdateAsync(
+                    update.Source,
+                    update.RemoteApps,
+                    update.AcceptedApps,
+                    choice.Value);
+
+                OnSettingChanged();
+
+                if (choice.Value != CatalogUpdateChoice.KeepCurrent)
+                {
+                    await _gameManager.LoadGamesAsync();
+                    ApplySorting();
+                }
+            }
+
+            _settings = AppSettings.Load();
+            RefreshCatalogSourcesList();
+            return true;
+        }
+
+        private async Task<CatalogUpdateChoice?> ShowCatalogUpdateDialogAsync(PendingCatalogUpdate update)
+        {
+            return await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+                    desktop.MainWindow == null)
+                    return (CatalogUpdateChoice?)null;
+
+                var diff = update.Diff;
+                var summary = $"{diff.AddedCount} new app(s), {diff.RemovedCount} removed, {diff.ChangedCount} changed";
+                var removedNames = diff.Removed
+                    .Select(a => a.Name)
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Take(8)
+                    .ToList();
+
+                var removedText = removedNames.Count > 0
+                    ? $"\n\nRemoved: {string.Join(", ", removedNames)}{(diff.RemovedCount > removedNames.Count ? ", …" : "")}"
+                    : "";
+
+                CatalogUpdateChoice? choice = null;
+                var applyAllButton = new Button { Content = "Apply All", MinWidth = 100 };
+                var applyNewButton = new Button { Content = "Apply New Only", MinWidth = 120 };
+                var keepButton = new Button { Content = "Keep Current", MinWidth = 100 };
+
+                var dialog = new Window
+                {
+                    Title = "Catalog Update Available",
+                    Width = 500,
+                    Height = 280,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    Content = new StackPanel
+                    {
+                        Margin = new Thickness(20),
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = $"\"{update.Source.Name}\" has been updated.\n\n{summary}{removedText}\n\nApply All syncs your library to the new list (removals drop exclusive apps).\nApply New Only adds/updates apps but keeps previously listed apps even if removed remotely.",
+                                TextWrapping = TextWrapping.Wrap,
+                                Margin = new Thickness(0, 0, 0, 16),
+                            },
+                            new StackPanel
+                            {
+                                Orientation = Orientation.Horizontal,
+                                HorizontalAlignment = HorizontalAlignment.Center,
+                                Spacing = 8,
+                                Children = { applyAllButton, applyNewButton, keepButton },
+                            },
+                        },
+                    },
+                };
+
+                applyAllButton.Click += (_, _) => { choice = CatalogUpdateChoice.ApplyAll; dialog.Close(); };
+                applyNewButton.Click += (_, _) => { choice = CatalogUpdateChoice.ApplyNewOnly; dialog.Close(); };
+                keepButton.Click += (_, _) => { choice = CatalogUpdateChoice.KeepCurrent; dialog.Close(); };
+
+                await dialog.ShowDialog(desktop.MainWindow);
+                return choice;
+            });
+        }
+
+        private async Task ShowBrowseCommunityListsDialogAsync(CommunityCatalogIndex index)
+        {
+            if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+                desktop.MainWindow == null)
+                return;
+
+            var listPanel = new StackPanel { Spacing = 8 };
+
+            foreach (var entry in index.Lists)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Location))
+                    continue;
+
+                var subscribeButton = new Button
+                {
+                    Content = "Subscribe",
+                    MinWidth = 90,
+                    Tag = entry,
+                };
+
+                var row = new Border
+                {
+                    Background = new SolidColorBrush(Color.Parse(_settings?.SecondaryColor ?? "#404040")),
+                    CornerRadius = new CornerRadius(4),
+                    Padding = new Thickness(10),
+                    Child = new Grid
+                    {
+                        ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+                        Children =
+                        {
+                            new StackPanel
+                            {
+                                Spacing = 2,
+                                Children =
+                                {
+                                    new TextBlock
+                                    {
+                                        Text = string.IsNullOrWhiteSpace(entry.Name) ? entry.Id : entry.Name,
+                                        FontWeight = FontWeight.SemiBold,
+                                    },
+                                    new TextBlock
+                                    {
+                                        Text = entry.Description,
+                                        TextWrapping = TextWrapping.Wrap,
+                                        FontSize = 11,
+                                        Opacity = 0.8,
+                                    },
+                                    new TextBlock
+                                    {
+                                        Text = string.IsNullOrWhiteSpace(entry.ListVersion)
+                                            ? entry.Location
+                                            : $"v{entry.ListVersion} · {entry.Location}",
+                                        FontSize = 10,
+                                        Opacity = 0.6,
+                                        TextTrimming = TextTrimming.CharacterEllipsis,
+                                    },
+                                },
+                            },
+                            subscribeButton,
+                        },
+                    },
+                };
+
+                Grid.SetColumn(subscribeButton, 1);
+                listPanel.Children.Add(row);
+
+                subscribeButton.Click += async (_, _) =>
+                {
+                    await SubscribeToCommunityListAsync(entry);
+                };
+            }
+
+            var scroll = new ScrollViewer
+            {
+                MaxHeight = 360,
+                Content = listPanel,
+            };
+
+            var closeButton = new Button { Content = "Close", MinWidth = 80, HorizontalAlignment = HorizontalAlignment.Center };
+            var dialog = new Window
+            {
+                Title = "Browse Community Lists",
+                Width = 520,
+                Height = 480,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Content = new StackPanel
+                {
+                    Margin = new Thickness(20),
+                    Spacing = 12,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "Subscribe to a community-maintained app list.",
+                            TextWrapping = TextWrapping.Wrap,
+                        },
+                        scroll,
+                        closeButton,
+                    },
+                },
+            };
+
+            closeButton.Click += (_, _) => dialog.Close();
+            await dialog.ShowDialog(desktop.MainWindow);
+        }
+
+        private async Task SubscribeToCommunityListAsync(CommunityCatalogListEntry entry)
+        {
+            var alreadySubscribed = _catalogViewModel.IsAlreadySubscribed(_settings, entry);
+
+            if (alreadySubscribed)
+            {
+                await ShowMessageBoxAsync($"You are already subscribed to \"{entry.Name}\".", "Already Subscribed");
+                return;
+            }
+
+            var (apps, error) = await _gameManager.CatalogService.TryLoadSourceAsync(
+                _gameManager.HttpClient,
+                entry.Location);
+
+            if (error != null)
+            {
+                await ShowMessageBoxAsync($"Could not load list:\n{error}", "Subscribe Failed");
+                return;
+            }
+
+            if (apps.Count == 0)
+            {
+                await ShowMessageBoxAsync("The list loaded successfully but contains no apps.", "Empty List");
+                return;
+            }
+
+            var source = _catalogViewModel.CreateSourceFromCommunityEntry(entry);
+
+            await _gameManager.CatalogService.RegisterNewSourceAsync(source, apps);
+            _settings.AppCatalogSources.Add(source);
+            OnSettingChanged();
+            RefreshCatalogSourcesList();
+
+            await _gameManager.LoadGamesAsync();
+            ApplySorting();
+            await ShowMessageBoxAsync($"Subscribed to \"{source.Name}\" with {apps.Count} app(s).", "Subscribed");
+        }
+
+        private async Task<(string Name, string Location)?> ShowAddCatalogSourceDialogAsync()
+        {
+            if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+                desktop.MainWindow == null)
+                return null;
+
+            var nameBox = new TextBox
+            {
+                Watermark = "Display name",
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            var locationBox = new TextBox
+            {
+                Watermark = "URL or file path to apps.json",
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+
+            var browseButton = new Button
+            {
+                Content = "Browse…",
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Margin = new Thickness(0, 0, 0, 12),
+            };
+
+            browseButton.Click += async (_, _) =>
+            {
+                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Select apps.json",
+                    FileTypeFilter = new[] { new FilePickerFileType("JSON Files") { Patterns = new[] { "*.json" } } },
+                    AllowMultiple = false,
+                });
+
+                if (files?.Count > 0)
+                    locationBox.Text = files[0].Path.LocalPath;
+            };
+
+            (string Name, string Location)? result = null;
+            var addButton = new Button { Content = "Add", MinWidth = 80 };
+            var cancelButton = new Button { Content = "Cancel", MinWidth = 80 };
+
+            var dialog = new Window
+            {
+                Title = "Add Catalog Source",
+                Width = 420,
+                Height = 280,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Content = new StackPanel
+                {
+                    Margin = new Thickness(20),
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "Name",
+                            FontWeight = FontWeight.SemiBold,
+                            Margin = new Thickness(0, 0, 0, 4),
+                        },
+                        nameBox,
+                        new TextBlock
+                        {
+                            Text = "Location",
+                            FontWeight = FontWeight.SemiBold,
+                            Margin = new Thickness(0, 0, 0, 4),
+                        },
+                        locationBox,
+                        browseButton,
+                        new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            Spacing = 10,
+                            Children = { addButton, cancelButton },
+                        },
+                    },
+                },
+            };
+
+            addButton.Click += (_, _) =>
+            {
+                var name = nameBox.Text?.Trim() ?? "";
+                var location = locationBox.Text?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(location))
+                    return;
+
+                result = (name, location);
+                dialog.Close();
+            };
+
+            cancelButton.Click += (_, _) => dialog.Close();
+
+            await dialog.ShowDialog(desktop.MainWindow);
+            return result;
+        }
+
+        private async Task<CatalogSourceRemovalChoice> ShowCatalogSourceRemovalDialogAsync(string sourceName, int appCount)
+        {
+            return await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+                    desktop.MainWindow == null)
+                    return CatalogSourceRemovalChoice.Cancel;
+
+                var choice = CatalogSourceRemovalChoice.Cancel;
+                var messageBox = new Window
+                {
+                    Title = "Remove Catalog Source",
+                    Width = 480,
+                    Height = 220,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    Content = new StackPanel
+                    {
+                        Margin = new Thickness(20),
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = $"Removing \"{sourceName}\" affects {appCount} app(s) only available from this source.\n\nKeep apps copies them into your local app list.\nRemove apps drops them from your library (installed files are not deleted).",
+                                TextWrapping = TextWrapping.Wrap,
+                                Margin = new Thickness(0, 0, 0, 16),
+                            },
+                            new StackPanel
+                            {
+                                Orientation = Orientation.Horizontal,
+                                HorizontalAlignment = HorizontalAlignment.Center,
+                                Spacing = 8,
+                                Children =
+                                {
+                                    new Button { Content = "Keep Apps", MinWidth = 90 },
+                                    new Button { Content = "Remove Apps", MinWidth = 90 },
+                                    new Button { Content = "Cancel", MinWidth = 90 },
+                                },
+                            },
+                        },
+                    },
+                };
+
+                if (((StackPanel)messageBox.Content!).Children[1] is StackPanel buttonPanel)
+                {
+                    if (buttonPanel.Children[0] is Button keepButton)
+                        keepButton.Click += (_, _) => { choice = CatalogSourceRemovalChoice.KeepApps; messageBox.Close(); };
+                    if (buttonPanel.Children[1] is Button removeButton)
+                        removeButton.Click += (_, _) => { choice = CatalogSourceRemovalChoice.RemoveApps; messageBox.Close(); };
+                    if (buttonPanel.Children[2] is Button cancelButton)
+                        cancelButton.Click += (_, _) => { choice = CatalogSourceRemovalChoice.Cancel; messageBox.Close(); };
+                }
+
+                await messageBox.ShowDialog(desktop.MainWindow);
+                return choice;
+            });
         }
 
         private void OnSettingChanged()
@@ -2001,15 +2653,46 @@ namespace GithubLauncher
             }
         }
 
+        private void UpdateGridLayoutVisibility()
+        {
+            if (_settings == null)
+                return;
+
+            var useGrid = _settings.UseGridView;
+            var compact = _settings.GridCompactCards;
+
+            if (ClassicGridViewControl != null)
+                ClassicGridViewControl.IsVisible = useGrid && !compact;
+
+            if (CompactGridViewControl != null)
+                CompactGridViewControl.IsVisible = useGrid && compact;
+        }
+
         private void UseGridViewCheckBox_Checked(object sender, RoutedEventArgs e)
         {
             _settings.UseGridView = true;
+            UpdateGridLayoutVisibility();
             OnSettingChanged();
         }
 
         private void UseGridViewCheckBox_Unchecked(object sender, RoutedEventArgs e)
         {
             _settings.UseGridView = false;
+            UpdateGridLayoutVisibility();
+            OnSettingChanged();
+        }
+
+        private void GridCompactCardsCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            _settings.GridCompactCards = true;
+            UpdateGridLayoutVisibility();
+            OnSettingChanged();
+        }
+
+        private void GridCompactCardsCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _settings.GridCompactCards = false;
+            UpdateGridLayoutVisibility();
             OnSettingChanged();
         }
 
@@ -2018,6 +2701,15 @@ namespace GithubLauncher
             if (_settings != null)
             {
                 _settings.SlotSize = (int)e.NewValue;
+                OnSettingChanged();
+            }
+        }
+
+        private void ActionButtonSizeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+        {
+            if (_settings != null)
+            {
+                _settings.ActionButtonSize = (int)e.NewValue;
                 OnSettingChanged();
             }
         }
@@ -2190,7 +2882,7 @@ namespace GithubLauncher
                         Height = 32,
                         Source = new Avalonia.Media.Imaging.Bitmap(
                             Avalonia.Platform.AssetLoader.Open(
-                                new Uri("avares://GithubLauncher/Assets/CheckForUpdates.png"))),
+                                new Uri("avares://Quiver/Assets/CheckForUpdates.png"))),
                         Margin = new Thickness(0, 0, 12, 0),
                         VerticalAlignment = VerticalAlignment.Center
                     },
@@ -2237,7 +2929,7 @@ namespace GithubLauncher
                         Height = 32,
                         Source = new Avalonia.Media.Imaging.Bitmap(
                             Avalonia.Platform.AssetLoader.Open(
-                                new Uri("avares://GithubLauncher/Assets/CheckForUpdates.png"))),
+                                new Uri("avares://Quiver/Assets/CheckForUpdates.png"))),
                         Margin = new Thickness(0, 0, 12, 0)
                     },
                     new TextBlock
@@ -2336,24 +3028,11 @@ namespace GithubLauncher
             }
         }
 
-        private void KofiButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                string url = "https://ko-fi.com/sirdiabo/";
-                OpenUrl(url);
-            }
-            catch (Exception ex)
-            {
-                _ = ShowMessageBoxAsync($"Failed to open Ko-Fi link: {ex.Message}", "Action Error");
-            }
-        }
-
         private void GithubButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                string url = "https://github.com/SirDiabo/GithubLauncher/";
+                string url = "https://github.com/tgeorgiadis/quiver/";
                 OpenUrl(url);
             }
             catch (Exception ex)
@@ -2689,73 +3368,298 @@ namespace GithubLauncher
             });
         }
 
-        private async void UnhideAllGamesButton_Click(object sender, RoutedEventArgs e)
+        private void UnhideAllGamesButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                _gameManager.UnhideAllGames();
-                await _gameManager.LoadGamesAsync();
+                _settings.ListScope = AppListScope.AllApps;
+                OnSettingChanged();
+                _gameManager.SetListScope(AppListScope.AllApps, _settings);
+                RefreshSidebarFilterSelection();
+                UpdateContinueButtonState();
                 ApplySorting();
             }
             catch (Exception ex)
             {
-                _ = ShowMessageBoxAsync($"Failed to unhide games: {ex.Message}", "Error");
+                _ = ShowMessageBoxAsync($"Failed to show all apps: {ex.Message}", "Error");
             }
         }
 
-        private async void UnhideAllManuallyHidden_Click(object sender, RoutedEventArgs e)
+        private void HideNonInstalledButton_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button button || button.Tag is not string category)
+            try
+            {
+                _settings.ListScope = AppListScope.InstalledOnly;
+                OnSettingChanged();
+                _gameManager.SetListScope(AppListScope.InstalledOnly, _settings);
+                RefreshSidebarFilterSelection();
+                UpdateContinueButtonState();
+                ApplySorting();
+            }
+            catch (Exception ex)
+            {
+                _ = ShowMessageBoxAsync($"Failed to filter installed apps: {ex.Message}", "Error");
+            }
+        }
+
+        private void TagDisplayFilterButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button || button.Tag is not string filterId)
                 return;
 
-            try
+            if (string.Equals(_settings.ActiveTagDisplayFilterId, filterId, StringComparison.OrdinalIgnoreCase))
+                _settings.ActiveTagDisplayFilterId = null;
+            else
+                _settings.ActiveTagDisplayFilterId = filterId;
+
+            OnSettingChanged();
+            _gameManager.ApplyTagDisplayFilter(_settings);
+            RefreshTagDisplayFiltersUI();
+            RefreshSidebarFilterSelection();
+            UpdateContinueButtonState();
+            ApplySorting();
+        }
+
+        private void AddDisplayFilter_Click(object? sender, RoutedEventArgs e)
+        {
+            ShowDisplayFilterOverlay(null);
+        }
+
+        private void DisplayFilterOverflow_Click(object? sender, RoutedEventArgs e)
+        {
+            e.Handled = true;
+
+            if (sender is Button button && button.ContextMenu != null)
             {
-                var settings = AppSettings.Load();
-                var games = await LoadGamesFromJsonAsync();
-
-                var targets = category switch
-                {
-                    "Stable" => games.Where(g => !g.IsExperimental && !g.IsCustom),
-                    "Experimental" => games.Where(g => g.IsExperimental && !g.IsCustom),
-                    "Custom" => games.Where(g => g.IsCustom),
-                    _ => Enumerable.Empty<GameInfo>()
-                };
-
-                foreach (var game in targets)
-                {
-                    var key = !string.IsNullOrWhiteSpace(game.FolderName)
-                        ? $"folder:{game.FolderName}"
-                        : !string.IsNullOrWhiteSpace(game.Repository)
-                            ? $"repo:{game.Repository}"
-                            : $"name:{game.Name ?? string.Empty}";
-
-                    settings.ManuallyHiddenApps.Remove(key);
-                    if (!string.IsNullOrWhiteSpace(game.Name))
-                        settings.ManuallyHiddenApps.Remove(game.Name);
-                }
-
-                AppSettings.Save(settings);
-                await _gameManager.LoadGamesAsync();
-                ApplySorting();
-                LoadGamesFromJson();
-            }
-            catch (Exception ex)
-            {
-                _ = ShowMessageBoxAsync($"Failed to unhide games: {ex.Message}", "Error");
+                button.ContextMenu.PlacementTarget = button;
+                button.ContextMenu.Placement = PlacementMode.Bottom;
+                button.ContextMenu.Open();
             }
         }
 
-        private async void HideNonInstalledButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
+        private static string? GetFilterIdFromSender(object? sender) =>
+            sender switch
             {
-                await _gameManager.HideAllNonInstalledGames();
+                Button { Tag: string id } => id,
+                MenuItem { Tag: string id } => id,
+                _ => null
+            };
+
+        private void EditTagDisplayFilter_Click(object? sender, RoutedEventArgs e)
+        {
+            var filterId = GetFilterIdFromSender(sender);
+            if (filterId == null)
+                return;
+
+            ShowDisplayFilterOverlay(filterId);
+        }
+
+        private void ShowDisplayFilterOverlay(string? filterId)
+        {
+            _editingDisplayFilterId = filterId;
+            _settings.EnsureInitialized();
+
+            if (filterId == null)
+            {
+                DisplayFilterOverlayTitle.Text = "Add Display Filter";
+                DisplayFilterNameTextBox.Text = string.Empty;
+                DisplayFilterTagsTextBox.Text = string.Empty;
+                SetDisplayFilterMatchModeComboBox(TagFilterMatchMode.Any);
+            }
+            else
+            {
+                var filter = _settings.TagDisplayFilters.FirstOrDefault(f => f.Id == filterId);
+                if (filter == null)
+                    return;
+
+                DisplayFilterOverlayTitle.Text = "Edit Display Filter";
+                DisplayFilterNameTextBox.Text = filter.Name;
+                DisplayFilterTagsTextBox.Text = TagHelper.FormatTagsForDisplay(filter.Tags);
+                SetDisplayFilterMatchModeComboBox(filter.MatchMode);
+            }
+
+            DisplayFilterOverlay.IsVisible = true;
+            DisplayFilterNameTextBox.Focus();
+        }
+
+        private void SetDisplayFilterMatchModeComboBox(TagFilterMatchMode matchMode)
+        {
+            DisplayFilterMatchModeComboBox.SelectedIndex = matchMode == TagFilterMatchMode.All ? 1 : 0;
+            UpdateDisplayFilterMatchModeHelpText();
+        }
+
+        private TagFilterMatchMode GetSelectedDisplayFilterMatchMode() =>
+            DisplayFilterMatchModeComboBox.SelectedIndex == 1
+                ? TagFilterMatchMode.All
+                : TagFilterMatchMode.Any;
+
+        private void UpdateDisplayFilterMatchModeHelpText()
+        {
+            DisplayFilterMatchModeHelpText.Text = GetSelectedDisplayFilterMatchMode() == TagFilterMatchMode.All
+                ? "Show apps that have every tag listed."
+                : "Show apps that have at least one of these tags.";
+        }
+
+        private void DisplayFilterMatchModeComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (DisplayFilterMatchModeHelpText == null)
+                return;
+
+            UpdateDisplayFilterMatchModeHelpText();
+        }
+
+        private void CancelDisplayFilterEdit_Click(object? sender, RoutedEventArgs e)
+        {
+            _editingDisplayFilterId = null;
+            DisplayFilterOverlay.IsVisible = false;
+            DisplayFilterNameTextBox.Text = string.Empty;
+            DisplayFilterTagsTextBox.Text = string.Empty;
+            SetDisplayFilterMatchModeComboBox(TagFilterMatchMode.Any);
+        }
+
+        private void SaveDisplayFilter_Click(object? sender, RoutedEventArgs e)
+        {
+            var name = DisplayFilterNameTextBox.Text?.Trim();
+            var tags = TagHelper.ParseCommaSeparatedTags(DisplayFilterTagsTextBox.Text);
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                _ = ShowMessageBoxAsync("Please enter a filter name.", "Validation Error");
+                return;
+            }
+
+            if (tags.Count == 0)
+            {
+                _ = ShowMessageBoxAsync("Please enter at least one tag.", "Validation Error");
+                return;
+            }
+
+            _settings.EnsureInitialized();
+
+            var duplicate = _settings.TagDisplayFilters.Any(f =>
+                f.Name.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(f.Id, _editingDisplayFilterId, StringComparison.OrdinalIgnoreCase));
+            if (duplicate)
+            {
+                _ = ShowMessageBoxAsync("A filter with this name already exists.", "Duplicate Filter");
+                return;
+            }
+
+            var isEdit = !string.IsNullOrWhiteSpace(_editingDisplayFilterId);
+            var matchMode = GetSelectedDisplayFilterMatchMode();
+            if (isEdit)
+            {
+                var filter = _settings.TagDisplayFilters.FirstOrDefault(f => f.Id == _editingDisplayFilterId);
+                if (filter == null)
+                    return;
+
+                filter.Name = name;
+                filter.Tags = tags;
+                filter.MatchMode = matchMode;
+            }
+            else
+            {
+                _settings.TagDisplayFilters.Add(new TagDisplayFilter
+                {
+                    Name = name,
+                    Tags = tags,
+                    MatchMode = matchMode,
+                });
+            }
+
+            CancelDisplayFilterEdit_Click(null, new RoutedEventArgs());
+            OnSettingChanged();
+            RefreshTagDisplayFiltersUI();
+            RefreshSidebarFilterSelection();
+
+            if (isEdit)
+            {
+                _gameManager.ApplyTagDisplayFilter(_settings);
                 ApplySorting();
             }
-            catch (Exception ex)
+        }
+
+        private void DeleteTagDisplayFilter_Click(object? sender, RoutedEventArgs e)
+        {
+            var filterId = GetFilterIdFromSender(sender);
+            if (filterId == null)
+                return;
+
+            var filter = _settings.TagDisplayFilters.FirstOrDefault(f => f.Id == filterId);
+            if (filter == null)
+                return;
+
+            _settings.TagDisplayFilters.Remove(filter);
+            if (string.Equals(_settings.ActiveTagDisplayFilterId, filterId, StringComparison.OrdinalIgnoreCase))
+                _settings.ActiveTagDisplayFilterId = null;
+
+            OnSettingChanged();
+            RefreshTagDisplayFiltersUI();
+            RefreshSidebarFilterSelection();
+            _gameManager.ApplyTagDisplayFilter(_settings);
+            ApplySorting();
+        }
+
+        private async Task<string?> PromptForTextAsync(string title, string initialValue)
+        {
+            var inputBox = new TextBox
             {
-                _ = ShowMessageBoxAsync($"Failed to hide non-installed apps: {ex.Message}", "Error");
+                Text = initialValue,
+                Width = 320,
+                Foreground = Resources["ThemeText"] as IBrush,
+                Background = Resources["ThemeBase"] as IBrush,
+                BorderBrush = Resources["ThemeBorder"] as IBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8),
+            };
+
+            var dialog = new Window
+            {
+                Title = title,
+                Width = 380,
+                Height = 160,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Background = Resources["ThemeDarker"] as IBrush,
+                Content = new StackPanel
+                {
+                    Margin = new Thickness(16),
+                    Spacing = 12,
+                    Children =
+                    {
+                        inputBox,
+                        new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            HorizontalAlignment = HorizontalAlignment.Right,
+                            Spacing = 8,
+                            Children =
+                            {
+                                new Button { Classes = { "options" }, Content = "Cancel", Tag = false },
+                                new Button { Classes = { "options" }, Content = "OK", Tag = true },
+                            }
+                        }
+                    }
+                }
+            };
+
+            string? result = null;
+            var buttonsPanel = (StackPanel)((StackPanel)dialog.Content!).Children[1];
+            foreach (var child in buttonsPanel.Children)
+            {
+                if (child is Button btn)
+                {
+                    btn.Click += (_, _) =>
+                    {
+                        if (btn.Tag is true)
+                            result = inputBox.Text;
+                        dialog.Close();
+                    };
+                }
             }
+
+            await dialog.ShowDialog(this);
+            return result;
         }
         private void SortByComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -2779,81 +3683,12 @@ namespace GithubLauncher
             }
 
             Debug.WriteLine($"ApplySorting: Sorting {_gameManager.Games.Count} apps by {_currentSortBy}");
-
-            List<GameInfo> sortedGames;
-
-            switch (_currentSortBy)
-            {
-                case "Name":
-                    sortedGames = _gameManager.Games.OrderBy(g => g.Name ?? string.Empty).ToList();
-                    break;
-
-                case "NameDesc":
-                    sortedGames = _gameManager.Games.OrderByDescending(g => g.Name ?? string.Empty).ToList();
-                    break;
-
-                case "Installed":
-                    sortedGames = _gameManager.Games
-                        .OrderByDescending(g => g.IsInstalled)
-                        .ThenBy(g => g.Name ?? string.Empty)
-                        .ToList();
-                    break;
-
-                case "NotInstalled":
-                    sortedGames = _gameManager.Games
-                        .OrderBy(g => g.IsInstalled)
-                        .ThenBy(g => g.Name ?? string.Empty)
-                        .ToList();
-                    break;
-
-                case "LastPlayed":
-                    sortedGames = _gameManager.Games
-                        .OrderByDescending(g => GetLastPlayedTime(g))
-                        .ThenBy(g => g.Name ?? string.Empty)
-                        .ToList();
-                    break;
-
-                default:
-                    sortedGames = _gameManager.Games.OrderBy(g => g.Name ?? string.Empty).ToList();
-                    break;
-            }
-
-            _gameManager.Games.Clear();
-            foreach (var game in sortedGames)
-            {
-                _gameManager.Games.Add(game);
-            }
-
-            Debug.WriteLine($"ApplySorting: Completed sorting");
+            _gameGridViewModel.ApplySort(_gameManager.Games, _currentSortBy, _gameManager.GamesFolder);
+            Debug.WriteLine("ApplySorting: Completed sorting");
         }
 
-        private DateTime GetLastPlayedTime(GameInfo game)
-        {
-            if (string.IsNullOrEmpty(game.FolderName))
-                return DateTime.MinValue;
-
-            try
-            {
-                var gamePath = game.GetInstallPath(_gameManager.GamesFolder);
-                var lastPlayedPath = Path.Combine(gamePath, "LastPlayed.txt");
-
-                if (File.Exists(lastPlayedPath))
-                {
-                    var content = File.ReadAllText(lastPlayedPath).Trim();
-                    if (DateTime.TryParseExact(content, "yyyy-MM-dd HH:mm:ss", null,
-                        System.Globalization.DateTimeStyles.None, out DateTime lastPlayed))
-                    {
-                        return lastPlayed;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Failed to read LastPlayed for {game.Name}: {ex.Message}");
-            }
-
-            return DateTime.MinValue;
-        }
+        private DateTime GetLastPlayedTime(GameInfo game) =>
+            GameGridViewModel.GetLastPlayedTime(game, _gameManager.GamesFolder);
 
         private async void HideGame_Click(object sender, RoutedEventArgs e)
         {
@@ -3276,415 +4111,36 @@ namespace GithubLauncher
             AppSettings.Save(_settings);
         }
 
-        // Apps Manager Tab Properties
-        public ObservableCollection<GameInfo> ManagerGames { get; set; } = [];
-        private GameInfo? _selectedGame;
-        public GameInfo? SelectedGame
-        {
-            get => _selectedGame;
-            set
-            {
-                if (_selectedGame != value)
-                {
-                    _selectedGame = value;
-                    OnPropertyChanged(nameof(SelectedGame));
-                    OnPropertyChanged(nameof(CanAddGame));
-                    OnPropertyChanged(nameof(CanUpdateGame));
-                    OnPropertyChanged(nameof(IsEditingCustomGame));
-                    OnPropertyChanged(nameof(CanEditAllFields));
-                    UpdateFormFieldsEnabled();
-                }
-            }
-        }
-        private string _validationStatus = string.Empty;
-        public string ValidationStatus
-        {
-            get => _validationStatus;
-            set
-            {
-                if (_validationStatus != value)
-                {
-                    _validationStatus = value;
-                    OnPropertyChanged(nameof(ValidationStatus));
-                    OnPropertyChanged(nameof(ValidationStatusColor));
-                }
-            }
-        }
-        public IBrush ValidationStatusColor => string.IsNullOrEmpty(_validationStatus) ? Brushes.Transparent :
-            _validationStatus.Contains("Error") ? new SolidColorBrush(Color.Parse("#ef4444")) :
-            _validationStatus.Contains("Warning") ? new SolidColorBrush(Color.Parse("#f59e0b")) :
-            new SolidColorBrush(Color.Parse("#10b981"));
-        public bool CanAddGame => SelectedGame == null && !string.IsNullOrEmpty(_selectedGame?.Name) &&
-            !string.IsNullOrEmpty(_selectedGame?.Repository) && !string.IsNullOrEmpty(_selectedGame?.FolderName);
-        public bool CanUpdateGame => SelectedGame != null && !string.IsNullOrEmpty(_selectedGame?.Name) &&
-            !string.IsNullOrEmpty(_selectedGame?.Repository) && !string.IsNullOrEmpty(_selectedGame?.FolderName);
-        
-        // App editing state
-        public bool IsEditingCustomGame => SelectedGame != null;
-        public bool CanEditAllFields => SelectedGame != null;
+        private string? _editingGameName;
+        private string? _editingGameRepository;
+        private string? _editingFolderName;
+        private GameInfo? _editingGame;
 
-        // Method to update form field enabled state
-        private void UpdateFormFieldsEnabled()
-        {
-            if (SelectedGame == null) return;
+        private Task<List<GameInfo>> LoadGamesFromJsonAsync() =>
+            _gameManager.CatalogService.LoadLocalAppsAsync();
 
-            var nameBox = this.FindControl<TextBox>("NewGameNameTextBox");
-            var repoBox = this.FindControl<TextBox>("NewGameRepoTextBox");
-            var folderBox = this.FindControl<TextBox>("NewGameFolderTextBox");
-            var iconBox = this.FindControl<TextBox>("NewGameIconTextBox");
-            var isCustomBox = this.FindControl<CheckBox>("IsCustomCheckBox");
-            var isExperimentalBox = this.FindControl<CheckBox>("IsExperimentalCheckBox");
-            if (repoBox != null) repoBox.IsEnabled = true;
-            if (folderBox != null) folderBox.IsEnabled = true;
-            if (isCustomBox != null) isCustomBox.IsEnabled = false;
-            if (isExperimentalBox != null) isExperimentalBox.IsEnabled = false;
-
-            // Name and icon URL can always be edited
-            if (nameBox != null) nameBox.IsEnabled = true;
-            if (iconBox != null) iconBox.IsEnabled = true;
-        }
-
-        // Apps Manager Event Handlers
-        private async void AddGame_Click(object sender, RoutedEventArgs e)
-        {
-            if (SelectedGame == null || string.IsNullOrEmpty(SelectedGame.Name) ||
-                string.IsNullOrEmpty(SelectedGame.Repository) || string.IsNullOrEmpty(SelectedGame.FolderName))
-            {
-                await ShowMessageBoxAsync("Please fill in all required fields (Name, Repository, Folder Name).", "Validation Error");
-                return;
-            }
-
-            try
-            {
-                var gamesData = await LoadGamesFromJsonAsync();
-                var apps = gamesData.ToList();
-
-                if (apps.Any(g => g.Name == SelectedGame.Name || g.Repository == SelectedGame.Repository))
-                {
-                    await ShowMessageBoxAsync("An app with this name or repository already exists.", "Duplicate App");
-                    return;
-                }
-
-                var newGame = new GameInfo
-                {
-                    Name = SelectedGame.Name,
-                    Repository = SelectedGame.Repository,
-                    FolderName = SelectedGame.FolderName,
-                    InstallPath = SelectedGame.InstallPath,
-                    GameIconUrl = SelectedGame.GameIconUrl,
-                    IsCustom = true,
-                    IsExperimental = false,
-                    GameManager = _gameManager
-                };
-
-                apps.Add(newGame);
-                await SaveGamesToJsonAsync(apps);
-                await LoadGamesManagerAsync();
-                ClearGameForm_Click(sender, e);
-                await ShowMessageBoxAsync($"App '{newGame.Name}' added successfully.", "App Added");
-            }
-            catch (Exception ex)
-            {
-                await ShowMessageBoxAsync($"Failed to add app: {ex.Message}", "Error");
-            }
-        }
-
-        private async void UpdateGame_Click(object sender, RoutedEventArgs e)
-        {
-            if (SelectedGame == null || string.IsNullOrEmpty(SelectedGame.Name) ||
-                string.IsNullOrEmpty(SelectedGame.Repository) || string.IsNullOrEmpty(SelectedGame.FolderName))
-            {
-                await ShowMessageBoxAsync("Please fill in all required fields (Name, Repository, Folder Name).", "Validation Error");
-                return;
-            }
-
-            try
-            {
-                var gamesData = await LoadGamesFromJsonAsync();
-                var appToUpdate = gamesData.FirstOrDefault(g => g.Repository == SelectedGame.Repository) ??
-                    gamesData.FirstOrDefault(g => g.Name == SelectedGame.Name);
-
-                if (appToUpdate == null)
-                {
-                    await ShowMessageBoxAsync("App not found.", "Error");
-                    return;
-                }
-                if (gamesData.Any(g => !ReferenceEquals(g, appToUpdate) && (g.Name == SelectedGame.Name || g.Repository == SelectedGame.Repository)))
-                {
-                    await ShowMessageBoxAsync("An app with this name or repository already exists.", "Duplicate App");
-                    return;
-                }
-
-                // Update the game properties
-                appToUpdate.Name = SelectedGame.Name;
-                appToUpdate.Repository = SelectedGame.Repository;
-                appToUpdate.FolderName = SelectedGame.FolderName;
-                appToUpdate.InstallPath = SelectedGame.InstallPath;
-                appToUpdate.GameIconUrl = SelectedGame.GameIconUrl;
-                await SaveGamesToJsonAsync(gamesData);
-
-                // Refresh the main game list and manager
-                await _gameManager.LoadGamesAsync();
-                ApplySorting();
-                await LoadGamesManagerAsync();
-                ClearGameForm_Click(sender, e);
-                await ShowMessageBoxAsync($"App '{appToUpdate.Name}' updated successfully.", "App Updated");
-            }
-            catch (Exception ex)
-            {
-                await ShowMessageBoxAsync($"Failed to update app: {ex.Message}", "Error");
-            }
-        }
-
-        private async void DeleteGame_Click(object sender, RoutedEventArgs e)
-        {
-            var button = sender as Button;
-            var game = button?.Tag as GameInfo;
-
-            if (game == null)
-            {
-                await ShowMessageBoxAsync("Apps can be deleted from this list.", "Error");
-                return;
-            }
-
-            var result = await ShowMessageBoxAsync($"Are you sure you want to delete '{game.Name}'?", "Confirm Deletion", true);
-            if (!result) return;
-
-            try
-            {
-                var gamesData = await LoadGamesFromJsonAsync();
-                var apps = gamesData.Where(g => g.Name != game.Name).ToList();
-
-                await SaveGamesToJsonAsync(apps);
-                await LoadGamesManagerAsync();
-                await ShowMessageBoxAsync($"App '{game.Name}' deleted successfully.", "App Deleted");
-            }
-            catch (Exception ex)
-            {
-                await ShowMessageBoxAsync($"Failed to delete app: {ex.Message}", "Error");
-            }
-        }
-
-        private async void EditGame_Click(object sender, RoutedEventArgs e)
-        {
-            var button = sender as Button;
-            var game = button?.Tag as GameInfo;
-
-            if (game == null)
-            {
-                await ShowMessageBoxAsync("Apps can be edited from this list.", "Error");
-                return;
-            }
-
-            SelectedGame = new GameInfo
-            {
-                Name = game.Name,
-                Repository = game.Repository,
-                FolderName = game.FolderName,
-                InstallPath = game.InstallPath,
-                GameIconUrl = game.GameIconUrl,
-                IsCustom = game.IsCustom,
-                IsExperimental = game.IsExperimental
-            };
-        }
-
-        private void ClearGameForm_Click(object sender, RoutedEventArgs e)
-        {
-            SelectedGame = null;
-        }
-
-        private async void ImportGames_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-                {
-                    Title = "Import Apps JSON",
-                    FileTypeFilter = new[] { new FilePickerFileType("JSON Files") { Patterns = new[] { "*.json" } } },
-                    AllowMultiple = false
-                });
-
-                if (files?.Count > 0)
-                {
-                    var importedData = await File.ReadAllTextAsync(files[0].Path.LocalPath);
-                    var gamesData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(importedData);
-
-                    if (gamesData != null && (gamesData.ContainsKey("apps") || gamesData.ContainsKey("standard") || gamesData.ContainsKey("experimental") || gamesData.ContainsKey("custom")))
-                    {
-                        await SaveGamesToJsonAsync(gamesData);
-                        await LoadGamesManagerAsync();
-                        await ShowMessageBoxAsync("Apps imported successfully.", "Import Complete");
-                    }
-                    else
-                    {
-                        await ShowMessageBoxAsync("Invalid apps.json format.", "Import Error");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                await ShowMessageBoxAsync($"Failed to import apps: {ex.Message}", "Error");
-            }
-        }
-
-        private async void ExportGames_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                var gamesData = await LoadGamesFromJsonAsync();
-                var exportData = new
-                {
-                    apps = gamesData.Select(SerializeGame).ToList()
-                };
-
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                var exportPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "apps_export.json");
-                await File.WriteAllTextAsync(exportPath, JsonSerializer.Serialize(exportData, options));
-
-                await ShowMessageBoxAsync($"Apps exported to {exportPath}", "Export Complete");
-            }
-            catch (Exception ex)
-            {
-                await ShowMessageBoxAsync($"Failed to export apps: {ex.Message}", "Error");
-            }
-        }
-
-        private async void ValidateGames_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                var gamesData = await LoadGamesFromJsonAsync();
-                var issues = new List<string>();
-
-                foreach (var game in gamesData)
-                {
-                    if (string.IsNullOrEmpty(game.Name)) issues.Add($"App '{game.Name}' has empty name");
-                    if (string.IsNullOrEmpty(game.Repository)) issues.Add($"App '{game.Name}' has empty repository");
-                    if (string.IsNullOrEmpty(game.FolderName)) issues.Add($"App '{game.Name}' has empty folder name");
-                    if (game.GameIconUrl != null && !Uri.TryCreate(game.GameIconUrl, UriKind.Absolute, out _))
-                        issues.Add($"App '{game.Name}' has invalid icon URL");
-                }
-
-                if (issues.Count == 0)
-                {
-                    ValidationStatus = "All apps are valid.";
-                }
-                else
-                {
-                    ValidationStatus = $"Found {issues.Count} issue(s):\n{string.Join("\n", issues.Take(5))}";
-                    if (issues.Count > 5) ValidationStatus += $"\n... and {issues.Count - 5} more";
-                }
-            }
-            catch (Exception ex)
-            {
-                ValidationStatus = $"Validation error: {ex.Message}";
-            }
-        }
-        private async Task<List<GameInfo>> LoadGamesFromJsonAsync()
-        {
-            var appsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "apps.json");
-            var legacyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "games.json");
-            var sourcePath = File.Exists(appsPath) ? appsPath : legacyPath;
-            if (!File.Exists(sourcePath)) return [];
-
-            var json = await File.ReadAllTextAsync(sourcePath);
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-
-            var apps = new List<GameInfo>();
-            if (root.ValueKind == JsonValueKind.Array)
-            {
-                apps.AddRange(ParseGameArray(root, false, true));
-            }
-            else
-            {
-                if (root.TryGetProperty("apps", out var appsArray))
-                    apps.AddRange(ParseGameArray(appsArray, false, true));
-                foreach (var legacySection in new[] { "standard", "experimental", "custom" })
-                {
-                    if (root.TryGetProperty(legacySection, out var legacyArray))
-                        apps.AddRange(ParseGameArray(legacyArray, false, true));
-                }
-            }
-
-            return apps
-                .GroupBy(app => app.Repository ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First())
-                .ToList();
-        }
-
-        private List<GameInfo> ParseGameArray(JsonElement array, bool isExperimental, bool isCustom)
-        {
-            var apps = new List<GameInfo>();
-            foreach (var element in array.EnumerateArray())
-            {
-                var app = new GameInfo
-                {
-                    Name = element.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
-                    Repository = element.TryGetProperty("repository", out var r) ? r.GetString() ?? "" : "",
-                    FolderName = element.TryGetProperty("folderName", out var f) ? f.GetString() ?? "" : "",
-                    InstallPath = element.TryGetProperty("installPath", out var installPath) ? installPath.GetString() : null,
-                    GameIconUrl = GetConfiguredIconUrl(element),
-                    PreferredVersion = element.TryGetProperty("preferredVersion", out var preferredVersion) ? preferredVersion.GetString() : null,
-                    SkippedUpdateVersion = element.TryGetProperty("skippedUpdateVersion", out var skippedUpdateVersion) ? skippedUpdateVersion.GetString() : null,
-                    IsExperimental = false,
-                    IsCustom = true,
-                    GameManager = _gameManager
-                };
-                apps.Add(app);
-            }
-            return apps;
-        }
-
-        private static string? GetConfiguredIconUrl(JsonElement element)
-        {
-            if (element.TryGetProperty("appIconUrl", out var appIconUrl) && appIconUrl.ValueKind != JsonValueKind.Null)
-                return appIconUrl.GetString();
-            if (element.TryGetProperty("gameIconUrl", out var gameIconUrl) && gameIconUrl.ValueKind != JsonValueKind.Null)
-                return gameIconUrl.GetString();
-            return null;
-        }
-
-        private static object SerializeGame(GameInfo game)
-        {
-            return new
-            {
-                name = game.Name,
-                repository = game.Repository,
-                folderName = game.FolderName,
-                installPath = game.InstallPath,
-                appIconUrl = game.GameIconUrl,
-                preferredVersion = game.PreferredVersion,
-                skippedUpdateVersion = game.SkippedUpdateVersion
-            };
-        }
         private async Task SaveGamesToJsonAsync(List<GameInfo> appsToSave)
         {
-            var appsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "apps.json");
-            var data = new
-            {
-                apps = appsToSave.Select(SerializeGame).ToList()
-            };
+            foreach (var app in appsToSave)
+                app.GameManager ??= _gameManager;
 
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            await File.WriteAllTextAsync(appsPath, JsonSerializer.Serialize(data, options));
+            await _gameManager.CatalogService.SaveLocalAppsAsync(appsToSave);
         }
 
         private async Task SaveGamesToJsonAsync(Dictionary<string, JsonElement> gamesData)
         {
-            var imported = new List<GameInfo>();
-            if (gamesData.TryGetValue("apps", out var appsArray))
-                imported.AddRange(ParseGameArray(appsArray, false, true));
-            foreach (var legacySection in new[] { "standard", "experimental", "custom" })
-            {
-                if (gamesData.TryGetValue(legacySection, out var legacyArray))
-                    imported.AddRange(ParseGameArray(legacyArray, false, true));
-            }
-            await SaveGamesToJsonAsync(imported);
+            var imported = _gameManager.CatalogService.ParseAppsFromDictionary(gamesData);
+            foreach (var app in imported)
+                app.GameManager = _gameManager;
+
+            await _gameManager.CatalogService.SaveLocalAppsAsync(imported);
         }
+
         private async Task PersistGameVersionPreferencesAsync(GameInfo game, string? preferredVersion, string? skippedUpdateVersion)
         {
             game.SetVersionPreferences(preferredVersion, skippedUpdateVersion);
+
+            await _gameManager.CatalogService.PromoteAppToLocalIfNeededAsync(game);
 
             var allGames = await LoadGamesFromJsonAsync();
             var matchingGame = allGames.FirstOrDefault(g =>
@@ -3702,6 +4158,8 @@ namespace GithubLauncher
 
         private async Task PersistGameInstallLocationAsync(GameInfo game)
         {
+            await _gameManager.CatalogService.PromoteAppToLocalIfNeededAsync(game);
+
             var allGames = await LoadGamesFromJsonAsync();
             var matchingGame = allGames.FirstOrDefault(g =>
                 !string.IsNullOrWhiteSpace(g.Repository) &&
@@ -3716,260 +4174,125 @@ namespace GithubLauncher
             await SaveGamesToJsonAsync(allGames);
         }
 
-        private async Task LoadGamesManagerAsync()
+        private void AddNewEntryButton_Click(object? sender, RoutedEventArgs e)
         {
-            try
-            {
-                var gamesData = await LoadGamesFromJsonAsync();
-                ManagerGames.Clear();
-                foreach (var game in gamesData)
-                {
-                    ManagerGames.Add(game);
-                }
-                ValidateGames_Click(null, null);
-            }
-            catch (Exception ex)
-            {
-                ValidationStatus = $"Failed to load apps: {ex.Message}";
-            }
+            ShowEntryFormOverlay(forCreate: true);
         }
 
-        private void GameNameTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        private void ShowEntryFormOverlay(bool forCreate, GameInfo? gameToEdit = null)
         {
-            ValidateGameForm();
+            SettingsPanel.IsVisible = false;
+            ChangelogPanel.IsVisible = false;
+
+            if (forCreate)
+                ClearForm();
+            else if (gameToEdit != null)
+                OpenEditForm(gameToEdit);
+
+            _isEntryFormOpen = true;
+            EntryFormOverlay.IsVisible = true;
         }
 
-        private void GameRepoTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        private void CloseEntryFormOverlay()
         {
-            ValidateGameForm();
+            _isEntryFormOpen = false;
+            EntryFormOverlay.IsVisible = false;
+            ClearForm();
         }
 
-        private void GameFolderTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        private void OpenEditForm(GameInfo game)
         {
-            ValidateGameForm();
+            ClearForm();
+
+            FormTitleText.Text = "Edit App Entry";
+            NewGameNameTextBox.Text = game.Name ?? "";
+            NewGameRepoTextBox.Text = game.Repository ?? "";
+            NewGameRepoTextBox.IsEnabled = false;
+            NewGameFolderTextBox.Text = game.FolderName ?? "";
+            NewGameIconTextBox.Text = game.GameIconUrl ?? "";
+            if (NewGameTagsTextBox != null)
+                NewGameTagsTextBox.Text = TagHelper.FormatTagsForDisplay(game.Tags);
+            CreateEditButton.Content = "Update Entry";
+            CancelButton.IsVisible = true;
+
+            _editingGameName = game.Name;
+            _editingGameRepository = game.Repository;
+            _editingFolderName = game.FolderName;
+            _editingGame = game;
         }
 
-        private void GameIconTextBox_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            ValidateGameForm();
-        }
+        private void GameNameTextBox_TextChanged(object sender, TextChangedEventArgs e) => ValidateGameForm();
+
+        private void GameRepoTextBox_TextChanged(object sender, TextChangedEventArgs e) => ValidateGameForm();
+
+        private void GameFolderTextBox_TextChanged(object sender, TextChangedEventArgs e) => ValidateGameForm();
+
+        private void GameIconTextBox_TextChanged(object sender, TextChangedEventArgs e) => ValidateGameForm();
 
         private void ValidateGameForm()
         {
-            if (SelectedGame == null) return;
+            if (!_entryFormShowValidation)
+            {
+                SetValidationStatus("");
+                return;
+            }
 
-            var isValid = !string.IsNullOrEmpty(SelectedGame.Name) &&
-                         !string.IsNullOrEmpty(SelectedGame.Repository) &&
-                         !string.IsNullOrEmpty(SelectedGame.FolderName);
+            var name = NewGameNameTextBox?.Text?.Trim();
+            var repository = NewGameRepoTextBox?.Text?.Trim();
+            var folderName = NewGameFolderTextBox?.Text?.Trim();
 
-            // Update validation status
-            if (string.IsNullOrEmpty(SelectedGame.Name))
-            {
-                ValidationStatus = "Error: App name is required";
-            }
-            else if (string.IsNullOrEmpty(SelectedGame.Repository))
-            {
-                ValidationStatus = "Error: Repository is required";
-            }
-            else if (string.IsNullOrEmpty(SelectedGame.FolderName))
-            {
-                ValidationStatus = "Error: Folder name is required";
-            }
-            else if (!Uri.TryCreate(SelectedGame.Repository, UriKind.Absolute, out var repoUri) || 
+            if (string.IsNullOrEmpty(name))
+                SetValidationStatus("Error: App name is required");
+            else if (string.IsNullOrEmpty(repository))
+                SetValidationStatus("Error: Repository is required");
+            else if (string.IsNullOrEmpty(folderName))
+                SetValidationStatus("Error: Folder name is required");
+            else if (!Uri.TryCreate(repository, UriKind.Absolute, out var repoUri) ||
                      (repoUri.Scheme != Uri.UriSchemeHttp && repoUri.Scheme != Uri.UriSchemeHttps))
-            {
-                ValidationStatus = "Warning: Repository should be a valid URL";
-            }
-            else if (!IsValidFolderName(SelectedGame.FolderName))
-            {
-                ValidationStatus = "Warning: Folder name contains invalid characters";
-            }
+                SetValidationStatus("Warning: Repository should be a valid URL");
+            else if (!IsValidFolderName(folderName))
+                SetValidationStatus("Warning: Folder name contains invalid characters");
             else
-            {
-                ValidationStatus = "All fields are valid";
-            }
-
-            OnPropertyChanged(nameof(CanAddGame));
-            OnPropertyChanged(nameof(CanUpdateGame));
+                SetValidationStatus("All fields are valid");
         }
 
-        private bool IsValidFolderName(string folderName)
+        private void SetValidationStatus(string message)
+        {
+            if (ValidationStatusText != null)
+                ValidationStatusText.Text = message;
+
+            if (ValidationStatusBorder != null)
+                ValidationStatusBorder.IsVisible = !string.IsNullOrEmpty(message);
+        }
+
+        private static bool IsValidFolderName(string folderName)
         {
             if (string.IsNullOrWhiteSpace(folderName))
                 return false;
 
-            // Check for invalid characters
             var invalidChars = Path.GetInvalidFileNameChars();
             if (folderName.IndexOfAny(invalidChars) >= 0)
                 return false;
 
-            // Check for reserved names
             var reservedNames = new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
-            if (reservedNames.Contains(folderName.ToUpper()))
-                return false;
-
-            return true;
-        }
-
-        private async void DeleteGameFromManager_Click(object sender, RoutedEventArgs e)
-        {
-            var button = sender as Button;
-            var game = button?.Tag as GameInfo;
-
-            if (game == null)
-            {
-                await ShowMessageBoxAsync("Apps can be deleted from this list.", "Error");
-                return;
-            }
-
-            var result = await ShowMessageBoxAsync($"Are you sure you want to delete '{game.Name}'?", "Confirm Deletion", true);
-            if (!result) return;
-
-            try
-            {
-                var gamesData = await LoadGamesFromJsonAsync();
-                var apps = gamesData.Where(g => g.Name != game.Name).ToList();
-
-                await SaveGamesToJsonAsync(apps);
-                await LoadGamesManagerAsync();
-                await ShowMessageBoxAsync($"App '{game.Name}' deleted successfully.", "App Deleted");
-            }
-            catch (Exception ex)
-            {
-                await ShowMessageBoxAsync($"Failed to delete app: {ex.Message}", "Error");
-            }
-        }
-
-        private void ManageGamesButton_Click(object sender, RoutedEventArgs e)
-        {
-
-            if (_isGamesManagerOpen)
-            {
-                CloseManageGames_Click(sender, e);
-                return;
-            }
-
-            // Hide other panels
-            SettingsPanel.IsVisible = false;
-            ChangelogPanel.IsVisible = false;
-
-            // Show Manage Apps panel
-            _isGamesManagerOpen = true;
-            var manageGamesPanel = this.FindControl<Border>("ManageGamesPanel");
-            if (manageGamesPanel != null)
-            {
-                manageGamesPanel.IsVisible = true;
-            }
-
-            // Update header text
-            HeaderTitleText.Text = "Manage Apps";
-
-            // Initialize tabs
-            SwitchToManageGamesTab(null, null);
-
-            // Load apps from apps.json
-            LoadGamesFromJson();
-        }
-
-        private async void LoadGamesFromJson()
-        {
-            try
-            {
-                var games = await LoadGamesFromJsonAsync();
-                var settings = AppSettings.Load();
-                UpdateGamesListControl("CustomGamesListControl", games, settings);
-            }
-            catch (Exception ex)
-            {
-                _ = ShowMessageBoxAsync($"Error loading apps: {ex.Message}", "Error");
-            }
-        }
-
-        private void UpdateGamesListControl(string controlName, List<GameInfo> games, AppSettings settings)
-        {
-            var gamesListControl = this.FindControl<ItemsControl>(controlName);
-            if (gamesListControl != null)
-            {
-                var gameViewModels = games.Select(g => new
-                {
-                    Name = g.Name,
-                    Repository = g.Repository,
-                    FolderName = g.FolderName,
-                    InstallPath = g.InstallPath,
-                    GameIconUrl = g.GameIconUrl,
-                    IconUrl = g.IconUrl,
-                    IsInstalled = !string.IsNullOrEmpty(g.FolderName) && Directory.Exists(g.GetInstallPath(_gameManager.GamesFolder)),
-                    CanRemove = true,
-                    HideGameLabel = _gameManager.IsManuallyHidden(g) ? "Unhide" : "Hide",
-                    GameInfoRef = g
-                }).ToList();
-
-                gamesListControl.ItemsSource = gameViewModels;
-            }
-        }
-
-        private void ToggleHideGame_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is not Button button || button.Tag is not object gameData)
-                return;
-
-            var gameInfoProp = gameData.GetType().GetProperty("GameInfoRef");
-            var game = gameInfoProp?.GetValue(gameData) as GameInfo;
-
-            if (game == null)
-                return;
-
-            _gameManager.ToggleUserHide(game);
-            LoadGamesFromJson();
-        }
-
-        private void SwitchToManageGamesTab(object sender, RoutedEventArgs e)
-        {
-            var manageGamesTab = this.FindControl<ScrollViewer>("ManageGamesTab");
-            var createEditTab = this.FindControl<ScrollViewer>("CreateEditTab");
-
-            if (manageGamesTab != null && createEditTab != null)
-            {
-                manageGamesTab.IsVisible = true;
-                createEditTab.IsVisible = false;
-
-                // Update form state
-                var formTitle = this.FindControl<TextBlock>("FormTitleText");
-                var createEditButton = this.FindControl<Button>("CreateEditButton");
-
-                if (formTitle != null) formTitle.Text = "Create New Entry";
-                if (createEditButton != null) createEditButton.Content = "Create Entry";
-
-                ClearForm();
-            }
-        }
-
-        private void SwitchToCreateEditTab(object sender, RoutedEventArgs e)
-        {
-            var manageGamesTab = this.FindControl<ScrollViewer>("ManageGamesTab");
-            var createEditTab = this.FindControl<ScrollViewer>("CreateEditTab");
-
-            if (manageGamesTab != null && createEditTab != null)
-            {
-                manageGamesTab.IsVisible = false;
-                createEditTab.IsVisible = true;
-
-                var cancelButton = this.FindControl<Button>("CancelButton");
-                if (cancelButton != null) cancelButton.IsVisible = true;
-            }
+            return !reservedNames.Contains(folderName.ToUpper());
         }
 
         private async void CreateNewEntry_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                var name = this.FindControl<TextBox>("NewGameNameTextBox")?.Text?.Trim();
-                var repository = this.FindControl<TextBox>("NewGameRepoTextBox")?.Text?.Trim();
-                var folderName = this.FindControl<TextBox>("NewGameFolderTextBox")?.Text?.Trim();
-                var iconUrl = this.FindControl<TextBox>("NewGameIconTextBox")?.Text?.Trim();
+                _entryFormShowValidation = true;
+
+                var name = NewGameNameTextBox?.Text?.Trim();
+                var repository = NewGameRepoTextBox?.Text?.Trim();
+                var folderName = NewGameFolderTextBox?.Text?.Trim();
+                var iconUrl = NewGameIconTextBox?.Text?.Trim();
+                var tags = TagHelper.ParseCommaSeparatedTags(NewGameTagsTextBox?.Text);
 
                 if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(repository) || string.IsNullOrEmpty(folderName))
                 {
+                    ValidateGameForm();
                     _ = ShowMessageBoxAsync("Please fill in all required fields (Name, Repository, Folder Name)", "Validation Error");
                     return;
                 }
@@ -3978,22 +4301,28 @@ namespace GithubLauncher
 
                 if (!string.IsNullOrEmpty(_editingGameRepository))
                 {
-                    // Update Existing Record
                     var appToUpdate = games.FirstOrDefault(g => g.Repository == _editingGameRepository);
+                    if (appToUpdate == null && _editingGame != null)
+                    {
+                        await _gameManager.CatalogService.PromoteAppToLocalIfNeededAsync(_editingGame);
+                        games = await LoadGamesFromJsonAsync();
+                        appToUpdate = games.FirstOrDefault(g =>
+                            !string.IsNullOrWhiteSpace(g.Repository) &&
+                            g.Repository.Equals(_editingGameRepository, StringComparison.OrdinalIgnoreCase));
+                    }
+
                     if (appToUpdate == null)
                     {
                         _ = ShowMessageBoxAsync("Could not find the app to update.", "Error");
                         return;
                     }
 
-                    // Verify a different app does not already have the new name
                     if (name != _editingGameName && games.Any(g => g.Name == name))
                     {
                         _ = ShowMessageBoxAsync("An app with this name already exists.", "Duplicate Name");
                         return;
                     }
 
-                    // Update folder name if changed, if folder exists
                     if (appToUpdate.FolderName != folderName && !string.IsNullOrEmpty(appToUpdate.FolderName))
                     {
                         var oldPath = Path.Combine(_settings.AppsPath, appToUpdate.FolderName);
@@ -4004,12 +4333,10 @@ namespace GithubLauncher
                             try
                             {
                                 Directory.Move(oldPath, newPath);
-                                System.Diagnostics.Debug.WriteLine($"Renamed folder: {appToUpdate.FolderName} -> {folderName}");
                             }
                             catch (Exception ex)
                             {
-                                System.Diagnostics.Debug.WriteLine($"Failed to rename folder {appToUpdate.FolderName}: {ex.Message}");
-                                _ = ShowMessageBoxAsync($"Failed to rename folder {appToUpdate.FolderName}", $"{ex.Message}");
+                                _ = ShowMessageBoxAsync($"Failed to rename folder {appToUpdate.FolderName}", ex.Message);
                             }
                         }
                     }
@@ -4017,37 +4344,37 @@ namespace GithubLauncher
                     appToUpdate.Name = name;
                     appToUpdate.FolderName = folderName;
                     appToUpdate.GameIconUrl = iconUrl;
+                    appToUpdate.Tags = tags;
 
                     await SaveGamesToJsonAsync(games);
-                    _ = ShowMessageBoxAsync("app entry updated successfully", "App Updated");
+                    _ = ShowMessageBoxAsync("App entry updated successfully", "App Updated");
                 }
                 else
                 {
-                    // Create New Record
                     if (games.Any(g => g.Name == name || g.Repository == repository || g.FolderName == folderName))
                     {
                         _ = ShowMessageBoxAsync("An app with this name, repository, or folder name already exists", "Duplicate App");
                         return;
                     }
 
-                    var newGame = new GameInfo
+                    games.Add(new GameInfo
                     {
                         Name = name,
                         Repository = repository,
                         FolderName = folderName,
                         GameIconUrl = iconUrl,
+                        Tags = tags,
                         IsCustom = true,
                         IsExperimental = false
-                    };
+                    });
 
-                    games.Add(newGame);
                     await SaveGamesToJsonAsync(games);
                     _ = ShowMessageBoxAsync("New app entry created successfully", "App Added");
                 }
 
-                LoadGamesFromJson();
-                ClearForm();
-                SwitchToManageGamesTab(null, null);
+                await _gameManager.LoadGamesAsync();
+                ApplySorting();
+                CloseEntryFormOverlay();
             }
             catch (Exception ex)
             {
@@ -4057,148 +4384,144 @@ namespace GithubLauncher
 
         private void EditGameEntry_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button button && button.Tag is var gameData)
+            var game = (sender as MenuItem)?.CommandParameter as GameInfo;
+            if (game == null)
+                return;
+
+            ShowEntryFormOverlay(forCreate: false, gameToEdit: game);
+        }
+
+        private void EditTagsMenu_Click(object sender, RoutedEventArgs e)
+        {
+            var game = (sender as MenuItem)?.CommandParameter as GameInfo;
+            if (game == null)
+                return;
+
+            _editingTagsGame = game;
+            TagEditAppNameText.Text = game.Name ?? "Unknown app";
+            TagEditTextBox.Text = TagHelper.FormatTagsForDisplay(game.Tags);
+            TagEditOverlay.IsVisible = true;
+        }
+
+        private void CancelTagEdit_Click(object? sender, RoutedEventArgs e)
+        {
+            TagEditOverlay.IsVisible = false;
+            _editingTagsGame = null;
+        }
+
+        private async void SaveTagEdit_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_editingTagsGame == null)
+                return;
+
+            try
             {
-                try
-                {
-                    var nameProp = gameData.GetType().GetProperty("Name");
-                    var repoProp = gameData.GetType().GetProperty("Repository");
-                    var folderProp = gameData.GetType().GetProperty("FolderName");
-                    var iconProp = gameData.GetType().GetProperty("GameIconUrl");
-
-                    var name = nameProp?.GetValue(gameData) as string;
-                    var repository = repoProp?.GetValue(gameData) as string;
-                    var folderName = folderProp?.GetValue(gameData) as string;
-                    var iconUrl = iconProp?.GetValue(gameData) as string;
-
-                    if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(repository) || string.IsNullOrEmpty(folderName))
-                    {
-                        _ = ShowMessageBoxAsync("Unable to extract app information for editing.", "Error");
-                        return;
-                    }
-
-                    SwitchToCreateEditTab(null, null);
-
-                    var formTitle = this.FindControl<TextBlock>("FormTitleText");
-                    var nameBox = this.FindControl<TextBox>("NewGameNameTextBox");
-                    var repoBox = this.FindControl<TextBox>("NewGameRepoTextBox");
-                    var folderBox = this.FindControl<TextBox>("NewGameFolderTextBox");
-                    var iconBox = this.FindControl<TextBox>("NewGameIconTextBox");
-                    var cancelButton = this.FindControl<Button>("CancelButton");
-                    var createEditButton = this.FindControl<Button>("CreateEditButton");
-
-                    if (formTitle != null) formTitle.Text = "Edit App Entry";
-                    if (nameBox != null) nameBox.Text = name;
-                    if (repoBox != null)
-                    {
-                        repoBox.Text = repository;
-                        repoBox.IsEnabled = false;
-                    }
-                    if (folderBox != null) folderBox.Text = folderName;
-                    if (iconBox != null) iconBox.Text = iconUrl ?? "";
-                    if (cancelButton != null) cancelButton.IsVisible = true;
-                    if (createEditButton != null) createEditButton.Content = "Update Entry";
-
-                    _editingGameName = name;
-                    _editingGameRepository = repository;
-                    _editingFolderName = folderName;
-                }
-                catch (Exception ex)
-                {
-                    _ = ShowMessageBoxAsync($"Error preparing edit form: {ex.Message}", "Error");
-                }
+                var tags = TagHelper.ParseCommaSeparatedTags(TagEditTextBox?.Text);
+                await SaveTagsForGameAsync(_editingTagsGame, tags);
+                TagEditOverlay.IsVisible = false;
+                _editingTagsGame = null;
+                await _gameManager.LoadGamesAsync();
+                ApplySorting();
+            }
+            catch (Exception ex)
+            {
+                _ = ShowMessageBoxAsync($"Failed to save tags: {ex.Message}", "Error");
             }
         }
 
-        private string? _editingGameName = null;
-        private string? _editingGameRepository = null;
-        private string? _editingFolderName = null;
-
-        private async void CancelForm_Click(object sender, RoutedEventArgs e)
+        private async Task SaveTagsForGameAsync(GameInfo game, List<string> tags)
         {
-            ClearForm();
-            SwitchToManageGamesTab(null, null);
+            game.Tags = tags;
+
+            if (game.IsInLocalAppsJson && !string.IsNullOrWhiteSpace(game.Repository))
+            {
+                var games = await LoadGamesFromJsonAsync();
+                var appToUpdate = games.FirstOrDefault(g =>
+                    !string.IsNullOrWhiteSpace(g.Repository) &&
+                    g.Repository.Equals(game.Repository, StringComparison.OrdinalIgnoreCase));
+
+                if (appToUpdate != null)
+                {
+                    appToUpdate.Tags = tags;
+                    await SaveGamesToJsonAsync(games);
+                }
+
+                if (!string.IsNullOrWhiteSpace(game.Repository))
+                    _settings.UserAppTags.Remove(game.Repository);
+            }
+            else if (!string.IsNullOrWhiteSpace(game.Repository))
+            {
+                _settings.UserAppTags[game.Repository] = tags;
+            }
+
+            OnSettingChanged();
+        }
+
+        private void CancelForm_Click(object? sender, RoutedEventArgs e)
+        {
+            CloseEntryFormOverlay();
         }
 
         private void ClearForm()
         {
-            var nameBox = this.FindControl<TextBox>("NewGameNameTextBox");
-            var repoBox = this.FindControl<TextBox>("NewGameRepoTextBox");
-            var folderBox = this.FindControl<TextBox>("NewGameFolderTextBox");
-            var iconBox = this.FindControl<TextBox>("NewGameIconTextBox");
-            var createEditButton = this.FindControl<Button>("CreateEditButton");
-            var formTitle = this.FindControl<TextBlock>("FormTitleText");
-            var validationStatus = this.FindControl<TextBlock>("ValidationStatusText");
+            if (NewGameNameTextBox != null) NewGameNameTextBox.Text = "";
+            if (NewGameRepoTextBox != null)
+            {
+                NewGameRepoTextBox.Text = "";
+                NewGameRepoTextBox.IsEnabled = true;
+            }
+            if (NewGameFolderTextBox != null) NewGameFolderTextBox.Text = "";
+            if (NewGameIconTextBox != null) NewGameIconTextBox.Text = "";
+            if (NewGameTagsTextBox != null) NewGameTagsTextBox.Text = "";
+            if (CreateEditButton != null) CreateEditButton.Content = "Create Entry";
+            if (FormTitleText != null) FormTitleText.Text = "Create New Entry";
+            if (ValidationStatusText != null) ValidationStatusText.Text = "";
 
-            if (nameBox != null) nameBox.Text = "";
-            if (repoBox != null) { repoBox.Text = ""; repoBox.IsEnabled = true; }
-            if (folderBox != null) folderBox.Text = "";
-            if (iconBox != null) iconBox.Text = "";
-            if (createEditButton != null) createEditButton.Content = "Create Entry";
-            if (formTitle != null) formTitle.Text = "Create New Entry";
-            if (validationStatus != null) validationStatus.Text = "";
-
+            _entryFormShowValidation = false;
             _editingGameName = null;
             _editingGameRepository = null;
             _editingFolderName = null;
+            _editingGame = null;
         }
 
         private async void RemoveGameEntry_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button button && button.Tag is var gameData)
+            var game = (sender as MenuItem)?.CommandParameter as GameInfo;
+            if (game == null || string.IsNullOrEmpty(game.Repository) || string.IsNullOrEmpty(game.Name))
+                return;
+
+            if (!game.IsInLocalAppsJson)
+                return;
+
+            try
             {
-                try
-                {
-                    var repoProp = gameData.GetType().GetProperty("Repository");
-                    var nameProp = gameData.GetType().GetProperty("Name");
+                var confirm = await ShowMessageBoxAsync(
+                    $"Are you sure you want to remove '{game.Name}' from your apps list?\n\nThis will only remove it from the launcher, not delete your files.",
+                    "Confirm Removal",
+                    true);
 
-                    var repository = repoProp?.GetValue(gameData) as string;
-                    var gameName = nameProp?.GetValue(gameData) as string;
+                if (!confirm)
+                    return;
 
-                    if (string.IsNullOrEmpty(repository) || string.IsNullOrEmpty(gameName)) return;
+                var games = await LoadGamesFromJsonAsync();
+                var gameToRemove = games.FirstOrDefault(g =>
+                    !string.IsNullOrWhiteSpace(g.Repository) &&
+                    g.Repository.Equals(game.Repository, StringComparison.OrdinalIgnoreCase));
 
-                    var confirm = await ShowMessageBoxAsync(
-                        $"Are you sure you want to remove '{gameName}' from your apps list?\n\nThis will only remove it from the launcher, not delete your files.",
-                        "Confirm Removal",
-                        true);
+                if (gameToRemove == null)
+                    return;
 
-                    if (!confirm) return;
+                games.Remove(gameToRemove);
+                await SaveGamesToJsonAsync(games);
+                await _gameManager.LoadGamesAsync();
+                ApplySorting();
 
-                    var games = await LoadGamesFromJsonAsync();
-                    var gameToRemove = games.FirstOrDefault(g => g.Repository == repository);
-
-                    if (gameToRemove != null)
-                    {
-                        games.Remove(gameToRemove);
-                        await SaveGamesToJsonAsync(games);
-
-                        await _gameManager.LoadGamesAsync();
-                        ApplySorting();
-                        LoadGamesFromJson();
-
-                        _ = ShowMessageBoxAsync($"'{gameName}' was removed successfully.", "Removed");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _ = ShowMessageBoxAsync($"Error removing app: {ex.Message}", "Error");
-                }
+                _ = ShowMessageBoxAsync($"'{game.Name}' was removed successfully.", "Removed");
             }
-        }
-
-        private void CloseManageGames_Click(object sender, RoutedEventArgs e)
-        {
-            _isGamesManagerOpen = false;
-
-            // Hide Manage Apps panel
-            var manageGamesPanel = this.FindControl<Border>("ManageGamesPanel");
-            if (manageGamesPanel != null)
+            catch (Exception ex)
             {
-                manageGamesPanel.IsVisible = false;
+                _ = ShowMessageBoxAsync($"Error removing app: {ex.Message}", "Error");
             }
-
-            // Show main content
-            HeaderTitleText.Text = "Library";
         }
 
         private void MusicVolumeSlider_ValueChanged(object sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -4516,6 +4839,11 @@ namespace GithubLauncher
                         e.Handled = true;
                         break;
 
+                    case Key.Escape:
+                        HandleCancelAction();
+                        e.Handled = true;
+                        break;
+
                     case Key.Up:
                         _inputService?.HandleNavigation(Services.NavigationDirection.Up);
                         e.Handled = true;
@@ -4607,27 +4935,9 @@ namespace GithubLauncher
             }
 
             // Close settings panel if open
-            if (isSettingsPanelOpen && SettingsPanel != null)
-            {
-                isSettingsPanelOpen = false;
-                SettingsPanel.IsVisible = false;
-
-                // Return focus to settings button
-                var settingsButton = this.FindControl<Button>("SettingsButton");
-                if (settingsButton != null)
-                {
-                    settingsButton.Focus();
-                }
-                else
-                {
-                    // Fallback: focus the first focusable element outside settings panel
-                    var firstFocusable = this.GetVisualDescendants()
-                        .OfType<Control>()
-                        .FirstOrDefault(c => c.IsVisible && c.IsEnabled && c.Focusable && !IsInsideSettingsPanel(c));
-                    firstFocusable?.Focus();
-                }
+            if (CloseSettingsPanel())
                 return;
-            }
+
             // Close changelog if open
             if (_isChangelogOpen)
             {
@@ -5070,7 +5380,7 @@ namespace GithubLauncher
                             {
                                 Source = new Avalonia.Media.Imaging.Bitmap(
                                     Avalonia.Platform.AssetLoader.Open(
-                                        new Uri($"avares://GithubLauncher/Assets/{iconPath}")))
+                                        new Uri($"avares://Quiver/Assets/{iconPath}")))
                             }
                         };
                         titlePanel.Children.Add(iconRect);
@@ -5338,7 +5648,7 @@ namespace GithubLauncher
             try
             {
                 using var client = new HttpClient();
-                client.DefaultRequestHeaders.Add("User-Agent", "GithubLauncher");
+                client.DefaultRequestHeaders.Add("User-Agent", "Quiver");
 
                 if (!string.IsNullOrEmpty(_settings?.GitHubApiToken))
                 {
@@ -5421,7 +5731,7 @@ namespace GithubLauncher
                     return;
                 }
 
-                GithubLauncher.Services.ShortcutHelper.CreateGameShortcut(
+                await Quiver.Services.ShortcutHelper.CreateGameShortcutAsync(
                     game,
                     launcherPath,
                     _gameManager.CacheFolder);
@@ -5453,9 +5763,9 @@ namespace GithubLauncher
                     return;
                 }
 
-                string resultMessage = GithubLauncher.Services.ShortcutHelper.IsSteamRunning()
-                    ? GithubLauncher.Services.ShortcutHelper.QueueGameAddToSteam(game, launcherPath)
-                    : GithubLauncher.Services.ShortcutHelper.AddGameToSteam(
+                string resultMessage = Quiver.Services.ShortcutHelper.IsSteamRunning()
+                    ? Quiver.Services.ShortcutHelper.QueueGameAddToSteam(game, launcherPath)
+                    : Quiver.Services.ShortcutHelper.AddGameToSteam(
                         game,
                         launcherPath,
                         _gameManager.CacheFolder);

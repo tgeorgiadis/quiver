@@ -9,7 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace GithubLauncher.Services
+namespace Quiver.Services
 {
     public class InputService : IDisposable
     {

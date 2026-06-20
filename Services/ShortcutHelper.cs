@@ -1,4 +1,4 @@
-using GithubLauncher.Models;
+using Quiver.Models;
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -10,19 +10,19 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace GithubLauncher.Services
+namespace Quiver.Services
 {
     public static class ShortcutHelper
     {
-        private static readonly string LauncherSteamTag = GithubLauncherProfile.Instance.SteamTag;
+        private static readonly string LauncherSteamTag = QuiverProfile.Instance.SteamTag;
 
-        public static void CreateGameShortcut(GameInfo game, string launcherPath, string? cacheDirectory)
+        public static async Task CreateGameShortcutAsync(GameInfo game, string launcherPath, string? cacheDirectory)
         {
             if (string.IsNullOrWhiteSpace(game?.Name))
                 throw new ArgumentException("Game name is required.", nameof(game));
 
             string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            string? iconPath = PrepareIcon(game, cacheDirectory);
+            string? iconPath = await PrepareIconAsync(game, cacheDirectory).ConfigureAwait(false);
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
@@ -36,6 +36,11 @@ namespace GithubLauncher.Services
             {
                 throw new PlatformNotSupportedException("macOS shortcuts not yet implemented");
             }
+        }
+
+        public static void CreateGameShortcut(GameInfo game, string launcherPath, string? cacheDirectory)
+        {
+            CreateGameShortcutAsync(game, launcherPath, cacheDirectory).GetAwaiter().GetResult();
         }
 
         public static string AddGameToSteam(GameInfo game, string launcherPath, string? cacheDirectory)
@@ -55,7 +60,7 @@ namespace GithubLauncher.Services
             if (IsSteamRunning())
                 throw new InvalidOperationException("Steam is still running.");
 
-            return AddGameToSteamInternal(game, launcherPath, cacheDirectory);
+            return AddGameToSteamInternalAsync(game, launcherPath, cacheDirectory).GetAwaiter().GetResult();
         }
 
         public static string QueueGameAddToSteam(GameInfo game, string launcherPath)
@@ -97,10 +102,10 @@ namespace GithubLauncher.Services
                 throw new InvalidOperationException("Steam must be closed before modifying shortcuts.vdf.");
             }
 
-            return AddGameToSteamInternal(game, launcherPath, cacheDirectory);
+            return await AddGameToSteamInternalAsync(game, launcherPath, cacheDirectory).ConfigureAwait(false);
         }
 
-        private static string AddGameToSteamInternal(GameInfo game, string launcherPath, string? cacheDirectory)
+        private static async Task<string> AddGameToSteamInternalAsync(GameInfo game, string launcherPath, string? cacheDirectory)
         {
             string? configDirectory = FindSteamConfigDirectory();
             if (string.IsNullOrWhiteSpace(configDirectory))
@@ -111,7 +116,7 @@ namespace GithubLauncher.Services
             Directory.CreateDirectory(configDirectory);
 
             string shortcutsPath = Path.Combine(configDirectory, "shortcuts.vdf");
-            string? iconPath = PrepareIcon(game, cacheDirectory);
+            string? iconPath = await PrepareIconAsync(game, cacheDirectory).ConfigureAwait(false);
             var root = File.Exists(shortcutsPath)
                 ? ReadSteamShortcuts(shortcutsPath)
                 : CreateEmptySteamShortcutsRoot();
@@ -163,7 +168,7 @@ namespace GithubLauncher.Services
                 : "Added the game to Steam. Restart Steam or return to Game Mode to refresh your library.";
         }
 
-        private static string? PrepareIcon(GameInfo game, string? cacheDirectory)
+        private static async Task<string?> PrepareIconAsync(GameInfo game, string? cacheDirectory)
         {
             if (string.IsNullOrWhiteSpace(cacheDirectory))
                 return null;
@@ -173,12 +178,10 @@ namespace GithubLauncher.Services
 
             string? sourcePath = null;
 
-            // Try cached default icon
             if (!string.IsNullOrEmpty(game.IconUrl) && File.Exists(game.IconUrl))
             {
                 sourcePath = game.IconUrl;
             }
-            // Download from URL if needed
             else if (!string.IsNullOrEmpty(game.DefaultIconUrl) &&
                      (game.DefaultIconUrl.StartsWith("http://") || game.DefaultIconUrl.StartsWith("https://")))
             {
@@ -186,20 +189,19 @@ namespace GithubLauncher.Services
                 {
                     var tempIconPath = Path.Combine(iconsDir, $"{game.FolderName}_temp.png");
                     using var client = new System.Net.Http.HttpClient();
-                    var iconData = client.GetByteArrayAsync(game.DefaultIconUrl).Result;
-                    File.WriteAllBytes(tempIconPath, iconData);
+                    var iconData = await client.GetByteArrayAsync(game.DefaultIconUrl).ConfigureAwait(false);
+                    await File.WriteAllBytesAsync(tempIconPath, iconData).ConfigureAwait(false);
                     sourcePath = tempIconPath;
                 }
                 catch
                 {
-                    return null; // No icon available
+                    return null;
                 }
             }
 
             if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
                 return null;
 
-            // Convert to ICO for Windows
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 string icoPath = Path.Combine(iconsDir, $"{game.FolderName}.ico");
@@ -212,7 +214,6 @@ namespace GithubLauncher.Services
                 return icoPath;
             }
 
-            // Linux can use PNG directly
             return sourcePath;
         }
 
@@ -277,7 +278,7 @@ namespace GithubLauncher.Services
                 $Shortcut.TargetPath = '{launcherPath}'
                 $Shortcut.Arguments = '--run {gameName}'
                 $Shortcut.WorkingDirectory = '{Path.GetDirectoryName(launcherPath)}'
-                $Shortcut.Description = 'Launch {gameName} via Github Launcher'
+                $Shortcut.Description = 'Launch {gameName} via Quiver'
                 {(iconPath != null ? $"$Shortcut.IconLocation = '{iconPath},0'" : "")}
                 $Shortcut.Save()
                 ";
@@ -310,7 +311,7 @@ namespace GithubLauncher.Services
                 Icon={iconPath ?? ""}
                 Terminal=false
                 Categories=Game;
-                Comment=Launch {safeGameName} via Github Launcher
+                Comment=Launch {safeGameName} via Quiver
                 ";
 
             File.WriteAllText(desktopFilePath, desktopFileContent);

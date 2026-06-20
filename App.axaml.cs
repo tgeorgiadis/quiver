@@ -16,8 +16,9 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Quiver.Services;
 
-namespace GithubLauncher;
+namespace Quiver;
 
 public class App : Application, INotifyPropertyChanged
 {
@@ -130,7 +131,7 @@ public class App : Application, INotifyPropertyChanged
 
     private static bool _hasCheckedForAppUpdates = false;
     private static readonly object _updateLock = new object();
-    private const string Repository = "SirDiabo/GithubLauncher";
+    private const string Repository = "tgeorgiadis/quiver";
     private const string VersionFileName = "version.txt";
     private const string UpdateCheckFileName = "update_check.json";
     private const string BackupDirectoryPrefix = "backup_";
@@ -147,6 +148,14 @@ public class App : Application, INotifyPropertyChanged
 
     public override void OnFrameworkInitializationCompleted()
     {
+#if DEBUG
+        Dispatcher.UIThread.UnhandledException += (_, e) =>
+        {
+            Program.LogCrashFromUiThread("Dispatcher.UIThread.UnhandledException", e.Exception);
+            e.Handled = true;
+        };
+#endif
+
         CleanupStaleUpdateBackups();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -206,8 +215,28 @@ public class App : Application, INotifyPropertyChanged
         await CheckForUpdatesAndApplyAsync(isManualCheck: true);
     }
 
+    private static bool ShouldSkipLauncherSelfUpdate(bool isManualCheck)
+    {
+        if (isManualCheck)
+            return false;
+
+#if DEBUG
+        return true;
+#else
+        var skip = Environment.GetEnvironmentVariable("Quiver_SKIP_UPDATES");
+        return string.Equals(skip, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(skip, "true", StringComparison.OrdinalIgnoreCase);
+#endif
+    }
+
     private async Task CheckForUpdatesAndApplyAsync(bool isManualCheck = false)
     {
+        if (ShouldSkipLauncherSelfUpdate(isManualCheck))
+        {
+            Trace.WriteLine("Skipping launcher self-update check (DEBUG build or Quiver_SKIP_UPDATES is set).");
+            return;
+        }
+
         string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
         string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
 
@@ -255,7 +284,7 @@ public class App : Application, INotifyPropertyChanged
                     using (var httpClient = new HttpClient())
                     {
                         httpClient.Timeout = DownloadTimeout;
-                        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("GithubLauncher-Updater");
+                        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Quiver-Updater");
 
                         var settings = AppSettings.Load();
                         if (!string.IsNullOrEmpty(settings?.GitHubApiToken))
@@ -299,7 +328,7 @@ public class App : Application, INotifyPropertyChanged
                         using (var httpClient = new HttpClient())
                         {
                             httpClient.Timeout = DownloadTimeout;
-                            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("GithubLauncher-Updater");
+                            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Quiver-Updater");
 
                             var settings = AppSettings.Load();
                             if (!string.IsNullOrEmpty(settings?.GitHubApiToken))
@@ -337,7 +366,7 @@ public class App : Application, INotifyPropertyChanged
         using (var httpClient = new HttpClient())
         {
             httpClient.Timeout = DownloadTimeout;
-            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("GithubLauncher-Updater");
+            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Quiver-Updater");
 
             var settings = AppSettings.Load();
             if (!string.IsNullOrEmpty(settings?.GitHubApiToken))
@@ -663,81 +692,20 @@ public class App : Application, INotifyPropertyChanged
         return false;
     }
 
-    private bool IsNewerVersion(string latestVersion, string currentVersion)
-    {
-        try
-        {
-            string normalizedLatest = NormalizeVersionString(latestVersion);
-            string normalizedCurrent = NormalizeVersionString(currentVersion);
-
-            Trace.WriteLine($"Comparing versions - Latest: '{latestVersion}' ({normalizedLatest}) vs Current: '{currentVersion}' ({normalizedCurrent})");
-
-            Version current = new Version(normalizedCurrent);
-            Version latest = new Version(normalizedLatest);
-
-            bool isNewer = latest.CompareTo(current) > 0;
-            Trace.WriteLine($"IsNewerVersion result: {isNewer}");
-
-            return isNewer;
-        }
-        catch (Exception ex)
-        {
-            Trace.WriteLine($"Error comparing versions '{latestVersion}' vs '{currentVersion}': {ex.Message}");
-
-            bool shouldUpdate = !latestVersion.TrimStart('v', 'V').Equals(currentVersion.TrimStart('v', 'V'), StringComparison.OrdinalIgnoreCase);
-            Trace.WriteLine($"Version parsing failed, using string comparison: {shouldUpdate}");
-            return shouldUpdate;
-        }
-    }
+    private bool IsNewerVersion(string latestVersion, string currentVersion) =>
+        LauncherVersionService.IsNewerVersion(latestVersion, currentVersion);
 
     private bool IsBootstrapVersion(string version)
     {
         try
         {
-            Version parsedVersion = new Version(NormalizeVersionString(version));
+            Version parsedVersion = new Version(LauncherVersionService.NormalizeVersionString(version));
             return parsedVersion == new Version(0, 0);
         }
         catch
         {
             var trimmed = version.TrimStart('v', 'V').Trim();
             return trimmed == "0" || trimmed == "0.0" || trimmed == "0.0.0" || trimmed == "0.0.0.0";
-        }
-    }
-
-    private string NormalizeVersionString(string version)
-    {
-        if (string.IsNullOrWhiteSpace(version))
-            return "0.0.0.0";
-
-        version = version.TrimStart('v', 'V').Trim();
-
-        var parts = version.Split('.');
-        var validParts = new List<string>();
-
-        foreach (var part in parts)
-        {
-            if (int.TryParse(part.Trim(), out int number))
-            {
-                validParts.Add(number.ToString());
-            }
-        }
-
-        while (validParts.Count < 2)
-        {
-            validParts.Add("0");
-        }
-
-        if (validParts.Count == 2)
-        {
-            return $"{validParts[0]}.{validParts[1]}";
-        }
-        else if (validParts.Count == 3)
-        {
-            return $"{validParts[0]}.{validParts[1]}.{validParts[2]}";
-        }
-        else
-        {
-            return $"{validParts[0]}.{validParts[1]}.{validParts[2]}.{validParts[3]}";
         }
     }
 
@@ -824,7 +792,7 @@ public class App : Application, INotifyPropertyChanged
                 progressWindow?.UpdateProgress(100, "Download complete. Extracting...");
                 await Task.Delay(500); // Brief pause so user can see 100%
 
-                string tempUpdateFolder = Path.Combine(Path.GetTempPath(), "GithubLauncher_temp_update");
+                string tempUpdateFolder = Path.Combine(Path.GetTempPath(), "Quiver_temp_update");
                 if (Directory.Exists(tempUpdateFolder))
                 {
                     Directory.Delete(tempUpdateFolder, true);
@@ -979,7 +947,7 @@ public class App : Application, INotifyPropertyChanged
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                mainExecutable = Path.Combine(updateDirectory, "GithubLauncher.exe");
+                mainExecutable = Path.Combine(updateDirectory, "Quiver.exe");
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
@@ -992,12 +960,12 @@ public class App : Application, INotifyPropertyChanged
                 }
                 else
                 {
-                    mainExecutable = Path.Combine(updateDirectory, "GithubLauncher");
+                    mainExecutable = Path.Combine(updateDirectory, "Quiver");
                 }
             }
             else
             {
-                mainExecutable = Path.Combine(updateDirectory, "GithubLauncher");
+                mainExecutable = Path.Combine(updateDirectory, "Quiver");
             }
 
             if (!File.Exists(mainExecutable) && !Directory.Exists(mainExecutable))
@@ -1029,7 +997,7 @@ public class App : Application, INotifyPropertyChanged
         int currentProcessId = Environment.ProcessId;
         string applicationExecutable = Process.GetCurrentProcess().MainModule?.FileName
             ?? throw new InvalidOperationException("Could not determine the current application executable path.");
-        string backupDir = Path.Combine(Path.GetTempPath(), "GithubLauncher_backup_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+        string backupDir = Path.Combine(Path.GetTempPath(), "Quiver_backup_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
@@ -1043,14 +1011,14 @@ public class App : Application, INotifyPropertyChanged
 
     private async Task CreateWindowsUpdaterScript(GitHubRelease latestRelease, string tempUpdateFolder, string tempDownloadPath, string currentAppDirectory, UpdateCheckInfo updateCheckInfo, string applicationExecutable, string backupDir, int currentProcessId)
     {
-        string updaterScriptPath = Path.Combine(Path.GetTempPath(), "GithubLauncher_Updater.cmd");
+        string updaterScriptPath = Path.Combine(Path.GetTempPath(), "Quiver_Updater.cmd");
         string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
 
         string scriptContent = $@"@echo off
-echo GithubLauncher Updater - Version {latestRelease.tag_name}
+echo Quiver Updater - Version {latestRelease.tag_name}
 echo.
 
-echo Waiting for GithubLauncher to close...
+echo Waiting for Quiver to close...
 set /A waitCount=0
 :wait_loop
 tasklist /FI ""PID eq {currentProcessId}"" 2>NUL | find /I ""{currentProcessId}"">NUL
@@ -1095,7 +1063,7 @@ echo Updating version info...
 echo {{""CurrentVersion"":""{latestRelease.tag_name}"",""LastCheckTime"":""{DateTime.UtcNow:o}"",""LastKnownVersion"":""{latestRelease.tag_name}"",""ETag"":"""",""UpdateAvailable"":false}} > ""{updateCheckFilePath}""
 
 echo Update completed successfully!
-echo Restarting GithubLauncher...
+echo Restarting Quiver...
 start """" ""{applicationExecutable}""
 
 :cleanup
@@ -1129,17 +1097,17 @@ del ""%~f0""
 
     private async Task CreateUnixUpdaterScript(GitHubRelease latestRelease, string tempUpdateFolder, string tempDownloadPath, string currentAppDirectory, UpdateCheckInfo updateCheckInfo, string applicationExecutable, string backupDir, int currentProcessId)
     {
-        string updaterScriptPath = Path.Combine(Path.GetTempPath(), "GithubLauncher_Updater.sh");
+        string updaterScriptPath = Path.Combine(Path.GetTempPath(), "Quiver_Updater.sh");
         string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
 
         bool isMacAppBundle = RuntimeInformation.IsOSPlatform(OSPlatform.OSX) &&
                              Directory.GetDirectories(tempUpdateFolder, "*.app", SearchOption.TopDirectoryOnly).Any();
 
         string scriptContent = $@"#!/bin/bash
-echo ""GithubLauncher Updater - Version {latestRelease.tag_name}""
+echo ""Quiver Updater - Version {latestRelease.tag_name}""
 echo
 
-echo ""Waiting for GithubLauncher to close...""
+echo ""Waiting for Quiver to close...""
 waitCount=0
 while kill -0 {currentProcessId} 2>/dev/null; do
     if [ ""$waitCount"" -ge {UpdaterProcessExitTimeoutSeconds} ]; then
@@ -1197,30 +1165,30 @@ if [ ""{RuntimeInformation.IsOSPlatform(OSPlatform.OSX).ToString().ToLower()}"" 
     appBundle=$(find ""$appDir"" -maxdepth 1 -name ""*.app"" -type d | head -n 1)
     if [ -n ""$appBundle"" ]; then
         echo ""Found .app bundle: $appBundle""
-    elif [ -f ""$appDir/GithubLauncher"" ]; then
-        chmod +x ""$appDir/GithubLauncher""
+    elif [ -f ""$appDir/Quiver"" ]; then
+        chmod +x ""$appDir/Quiver""
     fi
 else
-    if [ -f ""$appDir/GithubLauncher"" ]; then
-        chmod +x ""$appDir/GithubLauncher""
+    if [ -f ""$appDir/Quiver"" ]; then
+        chmod +x ""$appDir/Quiver""
     fi
 fi
 
-echo ""Restarting GithubLauncher...""
+echo ""Restarting Quiver...""
 
 if [ ""{RuntimeInformation.IsOSPlatform(OSPlatform.OSX).ToString().ToLower()}"" = ""true"" ]; then
     appBundle=$(find ""$appDir"" -maxdepth 1 -name ""*.app"" -type d | head -n 1)
     if [ -n ""$appBundle"" ]; then
         echo ""Starting .app bundle: $appBundle""
         nohup open ""$appBundle"" > /dev/null 2>&1 &
-    elif [ -f ""$appDir/GithubLauncher"" ]; then
+    elif [ -f ""$appDir/Quiver"" ]; then
         cd ""$appDir""
-        nohup ""./GithubLauncher"" > /dev/null 2>&1 &
+        nohup ""./Quiver"" > /dev/null 2>&1 &
     fi
 else
-    if [ -f ""$appDir/GithubLauncher"" ]; then
+    if [ -f ""$appDir/Quiver"" ]; then
         cd ""$appDir""
-        nohup ""./GithubLauncher"" > /dev/null 2>&1 &
+        nohup ""./Quiver"" > /dev/null 2>&1 &
     fi
 fi
 

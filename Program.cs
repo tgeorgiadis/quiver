@@ -1,12 +1,18 @@
 using Avalonia;
+using Avalonia.Controls.Platform;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
-namespace GithubLauncher
+namespace Quiver
 {
     class Program
     {
+        private static readonly string CrashLogPath = Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory,
+            "crash.log");
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool AttachConsole(int dwProcessId);
 
@@ -39,10 +45,66 @@ namespace GithubLauncher
                 return exitCode;
             }
 
+#if DEBUG
+            RegisterDebugExceptionHandlers();
+#endif
+
+            DefaultMenuInteractionHandler.MenuShowDelay = TimeSpan.Zero;
+
             BuildAvaloniaApp()
                 .StartWithClassicDesktopLifetime(args);
             return 0;
         }
+
+#if DEBUG
+        private static void RegisterDebugExceptionHandlers()
+        {
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
+                if (e.ExceptionObject is Exception ex)
+                    LogCrash("AppDomain.UnhandledException", ex);
+            };
+
+            TaskScheduler.UnobservedTaskException += (_, e) =>
+            {
+                LogCrash("TaskScheduler.UnobservedTaskException", e.Exception);
+                e.SetObserved();
+            };
+        }
+
+        internal static void LogCrashFromUiThread(string source, Exception ex)
+        {
+            LogCrash(source, ex);
+        }
+
+        private static void LogCrash(string source, Exception ex)
+        {
+            var message = new StringBuilder();
+            message.AppendLine($"[{DateTime.UtcNow:O}] {source}");
+            message.AppendLine(ex.ToString());
+
+            try
+            {
+                File.AppendAllText(CrashLogPath, message.ToString() + Environment.NewLine);
+            }
+            catch
+            {
+                // Best-effort logging only.
+            }
+
+            Debug.WriteLine(message.ToString());
+            Trace.WriteLine(message.ToString());
+
+            try
+            {
+                Console.Error.WriteLine(message.ToString());
+            }
+            catch
+            {
+                // WinExe may have no console attached.
+            }
+        }
+#endif
 
         private static int RunCLI(string[] args)
         {

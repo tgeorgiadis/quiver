@@ -8,18 +8,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    
-    env:
-      Solution_Name: GithubLauncher.sln
+  test:
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        submodules: recursive
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
@@ -27,15 +23,45 @@ jobs:
         dotnet-version: 9.0.x
 
     - name: Restore dependencies
-      run: dotnet restore GithubLauncher.sln
+      run: dotnet restore Quiver.sln
+
+    - name: Test with coverage
+      run: dotnet test Quiver.sln -c Release --no-restore --collect:"XPlat Code Coverage" --results-directory "${{ runner.temp }}/coverage"
+
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-cobertura
+        path: ${{ runner.temp }}/coverage/**/coverage.cobertura.xml
+        retention-days: 14
+
+  build-windows:
+    runs-on: windows-latest
+    
+    env:
+      Solution_Name: Quiver.sln
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 9.0.x
+
+    - name: Restore dependencies
+      run: dotnet restore Quiver.sln
 
     - name: Publish Windows x64
-      run: dotnet publish GithubLauncher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/win-x64
+      run: dotnet publish Quiver.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/win-x64
 
     - name: Upload Windows x64
       uses: actions/upload-artifact@v4
       with:
-        name: GithubLauncher-Windows-x64
+        name: Quiver-Windows-x64
         path: publish/win-x64
         retention-days: 14
 
@@ -43,14 +69,13 @@ jobs:
     runs-on: ubuntu-latest
     
     env:
-      Solution_Name: GithubLauncher.sln
+      Solution_Name: Quiver.sln
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        submodules: recursive
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
@@ -58,25 +83,25 @@ jobs:
         dotnet-version: 9.0.x
 
     - name: Restore dependencies
-      run: dotnet restore GithubLauncher.sln
+      run: dotnet restore Quiver.sln
 
     - name: Publish Linux x64
-      run: dotnet publish GithubLauncher.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/linux-x64
+      run: dotnet publish Quiver.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/linux-x64
 
     - name: Publish Linux ARM64
-      run: dotnet publish GithubLauncher.csproj -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/linux-arm64
+      run: dotnet publish Quiver.csproj -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/linux-arm64
 
     - name: Upload Linux x64
       uses: actions/upload-artifact@v4
       with:
-        name: GithubLauncher-Linux-x64
+        name: Quiver-Linux-x64
         path: publish/linux-x64
         retention-days: 14
 
     - name: Upload Linux ARM64
       uses: actions/upload-artifact@v4
       with:
-        name: GithubLauncher-Linux-ARM64
+        name: Quiver-Linux-ARM64
         path: publish/linux-arm64
         retention-days: 14
 
@@ -84,15 +109,14 @@ jobs:
     runs-on: macos-latest
     
     env:
-      Solution_Name: GithubLauncher.sln
-      App_Name: GithubLauncher
+      Solution_Name: Quiver.sln
+      App_Name: Quiver
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        submodules: recursive
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
@@ -100,10 +124,10 @@ jobs:
         dotnet-version: 9.0.x
 
     - name: Restore dependencies
-      run: dotnet restore GithubLauncher.sln
+      run: dotnet restore Quiver.sln
 
     - name: Publish macOS x64
-      run: dotnet publish GithubLauncher.csproj -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/osx-x64
+      run: dotnet publish Quiver.csproj -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/osx-x64
 
     - name: Create macOS .app bundle
       run: |
@@ -126,13 +150,13 @@ jobs:
             <key>CFBundleExecutable</key>
             <string>${{ env.App_Name }}</string>
             <key>CFBundleIdentifier</key>
-            <string>com.sirdiabo.githublauncher</string>
+            <string>com.tgeorgiadis.quiver</string>
             <key>CFBundleName</key>
             <string>${{ env.App_Name }}</string>
             <key>CFBundleVersion</key>
-            <string>1.0.0</string>
+            <string>2.0.0</string>
             <key>CFBundleShortVersionString</key>
-            <string>1.0.0</string>
+            <string>2.0.0</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>LSMinimumSystemVersion</key>
@@ -146,6 +170,6 @@ jobs:
     - name: Upload macOS x64
       uses: actions/upload-artifact@v4
       with:
-        name: GithubLauncher-macOS-x64
+        name: Quiver-macOS-x64
         path: publish/${{ env.App_Name }}.app
         retention-days: 14

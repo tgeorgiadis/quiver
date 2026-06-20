@@ -1,0 +1,121 @@
+using Quiver.Core.Models;
+using Quiver.Core.Services;
+using Quiver.Models;
+
+namespace Quiver.Services;
+
+public static class GameStatusService
+{
+    private const string DefaultInstalledVersion = "0.0.0";
+
+    public static async Task CheckStatusAsync(
+        GameInfo game,
+        HttpClient httpClient,
+        string gamesFolder,
+        bool forceUpdateCheck = false)
+    {
+        if (string.IsNullOrEmpty(game.FolderName))
+        {
+            System.Diagnostics.Debug.WriteLine($"Warning: FolderName is null or empty for game {game.Name}");
+            game.Status = GameStatus.NotInstalled;
+            return;
+        }
+
+        game.IsLoading = true;
+
+        try
+        {
+            var gamePath = game.GetInstallPath(gamesFolder);
+            var versionFile = Path.Combine(gamePath, "version.txt");
+
+            var directoryExists = Directory.Exists(gamePath);
+            var versionFileExists = File.Exists(versionFile);
+
+            var isInstalled = false;
+            if (directoryExists)
+            {
+                if (versionFileExists)
+                {
+                    try
+                    {
+                        game.InstalledVersion = (await File.ReadAllTextAsync(versionFile).ConfigureAwait(false))?.Trim();
+
+                        if (string.IsNullOrWhiteSpace(game.InstalledVersion))
+                            game.InstalledVersion = await EnsureInstalledVersionFileAsync(versionFile).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        game.InstalledVersion = null;
+                    }
+
+                    game.Status = GameStatus.Installed;
+                    isInstalled = true;
+                }
+                else
+                {
+                    game.Status = GameStatus.Installed;
+                    game.InstalledVersion = await EnsureInstalledVersionFileAsync(versionFile).ConfigureAwait(false);
+                    isInstalled = true;
+                }
+            }
+            else
+            {
+                game.Status = GameStatus.NotInstalled;
+                game.InstalledVersion = "";
+            }
+
+            if (forceUpdateCheck)
+                await game.CheckLatestVersionAsync(httpClient, forceCheck: true).ConfigureAwait(false);
+            else if (isInstalled)
+            {
+                if (GitHubApiCache.NeedsUpdateCheck(game.Repository ?? string.Empty, isInstalledGame: true))
+                    await game.CheckLatestVersionAsync(httpClient).ConfigureAwait(false);
+                else if (GitHubApiCache.TryGetCachedVersion(game.Repository, out var cache) && cache != null)
+                    game.ApplyCachedRelease(cache.Version, cache.CachedRelease);
+            }
+            else
+            {
+                if (GitHubApiCache.NeedsUpdateCheck(game.Repository ?? string.Empty, isInstalledGame: false))
+                    await game.CheckLatestVersionAsync(httpClient).ConfigureAwait(false);
+                else if (GitHubApiCache.TryGetCachedVersion(game.Repository, out var cache) && cache != null)
+                    game.ApplyCachedRelease(cache.Version, cache.CachedRelease);
+            }
+
+            if (isInstalled && string.IsNullOrWhiteSpace(game.InstalledVersion))
+            {
+                game.InstalledVersion = string.IsNullOrWhiteSpace(game.LatestVersion)
+                    ? "Unknown"
+                    : DefaultInstalledVersion;
+            }
+
+            if (isInstalled)
+                game.RefreshInstalledStatus();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error checking status for {game.Name}: {ex.Message}");
+            game.Status = GameStatus.NotInstalled;
+        }
+        finally
+        {
+            game.IsLoading = false;
+        }
+    }
+
+    internal static async Task<string?> EnsureInstalledVersionFileAsync(string versionFile)
+    {
+        try
+        {
+            var versionDirectory = Path.GetDirectoryName(versionFile);
+            if (!string.IsNullOrEmpty(versionDirectory))
+                Directory.CreateDirectory(versionDirectory);
+
+            await File.WriteAllTextAsync(versionFile, DefaultInstalledVersion).ConfigureAwait(false);
+            return DefaultInstalledVersion;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}

@@ -1,10 +1,9 @@
-<Window x:Class="GithubLauncher.MainWindow"
+<Window x:Class="Quiver.MainWindow"
 		xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:anim="https://github.com/whistyun/AnimatedImage.Avalonia"
-        xmlns:local="clr-namespace:GithubLauncher"
+        xmlns:local="clr-namespace:Quiver"
 		xmlns:asyncImageLoader="clr-namespace:AsyncImageLoader;assembly=AsyncImageLoader.Avalonia"
-        Title="Github Launcher"
+        Title="Quiver"
 		Width="1280" Height="720"
 		MinWidth="750" MinHeight="490"
         Background="{Binding WindowBackground}"
@@ -17,6 +16,7 @@
 	<Window.Resources>
 		<local:BooleanToStretchConverter x:Key="BooleanToStretchConverter"/>
 		<local:ThicknessConverter x:Key="ThicknessConverter"/>
+		<local:DoubleScaleConverter x:Key="DoubleScaleConverter"/>
 
 		<!-- Theme Color Resources -->
 		<SolidColorBrush x:Key="ThemeBase" Color="#18181b"/>
@@ -89,8 +89,8 @@
 							<Button Classes="modern"
 									Content="{Binding ButtonText}"
 									FontSize="15"
-									MinWidth="160"
-									Height="48"
+									MinWidth="{Binding ElementName=ActionButtonSizeSlider, Path=Value, Converter={StaticResource DoubleScaleConverter}, ConverterParameter=3.333333}"
+									Height="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
 									IsEnabled="{Binding !IsLoading}"
 									Click="GameButton_Click"
 									Tag="{Binding}"/>
@@ -98,8 +98,8 @@
 							<Button Classes="options options-listview"
 									Content="⋯"
 									FontSize="20"
-									Height="48"
-									Width="48"
+									Height="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
+									Width="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
 									IsEnabled="{Binding !IsLoading}"
 									Click="OptionsButton_Click"
 									Tag="{Binding}">
@@ -154,6 +154,18 @@
 													  Click="AddToSteam_Click"
 													  IsVisible="{Binding IsInstalled}"
 													  CommandParameter="{Binding}"/>
+										</MenuItem>
+										<MenuItem Header="Catalog">
+											<MenuItem Header="Edit Entry"
+													  Click="EditGameEntry_Click"
+													  CommandParameter="{Binding}"/>
+											<MenuItem Header="Edit Tags"
+													  Click="EditTagsMenu_Click"
+													  CommandParameter="{Binding}"/>
+											<MenuItem Header="Remove from List"
+													  Click="RemoveGameEntry_Click"
+													  CommandParameter="{Binding}"
+													  IsVisible="{Binding IsInLocalAppsJson}"/>
 										</MenuItem>
 										<MenuItem Header="Customize">
 											<MenuItem Header="Add Custom Image"
@@ -291,6 +303,18 @@
 												  IsVisible="{Binding IsInstalled}"
 												  CommandParameter="{Binding}"/>
 									</MenuItem>
+									<MenuItem Header="Catalog">
+										<MenuItem Header="Edit Entry"
+												  Click="EditGameEntry_Click"
+												  CommandParameter="{Binding}"/>
+										<MenuItem Header="Edit Tags"
+												  Click="EditTagsMenu_Click"
+												  CommandParameter="{Binding}"/>
+										<MenuItem Header="Remove from List"
+												  Click="RemoveGameEntry_Click"
+												  CommandParameter="{Binding}"
+												  IsVisible="{Binding IsInLocalAppsJson}"/>
+									</MenuItem>
 									<MenuItem Header="Customize">
 										<MenuItem Header="Add Custom Image"
 												  Click="SetCustomIcon_Click"
@@ -343,34 +367,45 @@
 						<Binding ElementName="SlotSizeSlider" Path="Value"/>
 					</Grid.Width>
 					<Grid Margin="10,0,10,20">
+						<Grid.RowDefinitions>
+							<RowDefinition Height="Auto"/>
+							<RowDefinition Height="Auto"/>
+						</Grid.RowDefinitions>
 						<Grid.ColumnDefinitions>
-							<ColumnDefinition Width="48"/>
+							<ColumnDefinition Width="Auto"/>
 							<ColumnDefinition Width="*"/>
 						</Grid.ColumnDefinitions>
-		
+
+						<!-- App name (full width) -->
+						<TextBlock Grid.Row="0"
+								   Grid.ColumnSpan="2"
+								   Text="{Binding Name}"
+								   FontSize="14"
+								   FontWeight="Bold"
+								   Foreground="{DynamicResource ThemeText}"
+								   TextAlignment="Left"
+								   TextWrapping="Wrap"
+								   Margin="0,0,0,4"/>
+
 						<!-- Download/Launch Button -->
-						<Button Grid.Column="0"
+						<Button Grid.Row="1"
+							Grid.Column="0"
 							Classes="modern-icon"
 							VerticalAlignment="Top"
-							Width="48"
-							Height="48"
+							Width="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
+							Height="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
 							Margin="0,0,12,0"
 							IsEnabled="{Binding !IsLoading}"
 							Click="GameButton_Click"
 							Tag="{Binding}">
-							<Image Width="48" Source="{Binding ButtonImage}"/>
+							<Image Width="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
+								   Source="{Binding ButtonImage}"/>
 						</Button>
 
-						<!-- App Info -->
-						<StackPanel Grid.Column="1" VerticalAlignment="Center">
-							<TextBlock Text="{Binding Name}"
-									   FontSize="14"
-									   FontWeight="Bold"
-									   Foreground="{DynamicResource ThemeText}"
-									   TextAlignment="Left"
-									   TextWrapping="Wrap"
-									   Margin="0,0,0,4"/>
-
+						<!-- Status and versions -->
+						<StackPanel Grid.Row="1"
+									Grid.Column="1"
+									VerticalAlignment="Center">
 							<TextBlock Text="{Binding StatusText}"
 									   FontSize="11"
 									   Foreground="{DynamicResource ThemeTextSecondary}"
@@ -394,6 +429,207 @@
 					</Grid>
 				</Grid>
 			</StackPanel>
+		</DataTemplate>
+
+		<!-- compact grid view (in-card content) -->
+		<DataTemplate x:Key="CompactGridViewTemplate">
+			<Border Classes="gamecardcompact"
+					PointerPressed="GameCard_PointerPressed">
+				<Border.Width>
+					<Binding ElementName="SlotSizeSlider" Path="Value"/>
+				</Border.Width>
+				<Border.MinHeight>
+					<Binding ElementName="SlotSizeSlider" Path="Value"/>
+				</Border.MinHeight>
+				<Grid ClipToBounds="True">
+					<Grid.RowDefinitions>
+						<RowDefinition Height="Auto"/>
+						<RowDefinition Height="*"/>
+						<RowDefinition Height="Auto"/>
+					</Grid.RowDefinitions>
+
+					<!-- Icon -->
+					<Panel Grid.Row="0"
+						   ClipToBounds="True"
+						   Margin="{Binding ElementName=IconMarginSlider, Path=Value}"
+						   HorizontalAlignment="Center">
+						<Border CornerRadius="12,12,0,0" ClipToBounds="True">
+							<asyncImageLoader:AdvancedImage Source="{Binding IconUrl}"
+								ClipToBounds="True"
+								VerticalAlignment="Center"
+								HorizontalAlignment="Center"
+								Opacity="{Binding ElementName=IconOpacitySlider, Path=Value}"
+								Height="{Binding ElementName=IconSizeSlider, Path=Value}"
+								Stretch="{Binding Path=IsChecked, ElementName=IconFillCheckBox, Converter={StaticResource BooleanToStretchConverter}}" />
+						</Border>
+					</Panel>
+
+					<!-- App info -->
+					<StackPanel Grid.Row="1"
+								Margin="10,8,10,4"
+								VerticalAlignment="Top">
+						<TextBlock Text="{Binding Name}"
+								   FontSize="14"
+								   FontWeight="Bold"
+								   Foreground="{DynamicResource ThemeText}"
+								   TextWrapping="Wrap"
+								   Margin="0,0,0,4"/>
+
+						<TextBlock Text="{Binding StatusText}"
+								   FontSize="11"
+								   Foreground="{DynamicResource ThemeTextSecondary}"
+								   TextWrapping="Wrap"
+								   Margin="0,0,0,2"/>
+
+						<TextBlock FontSize="10"
+								   Foreground="{DynamicResource ThemeTextSecondary}"
+								   TextWrapping="Wrap">
+							<Run Text="Latest: "/>
+							<Run Text="{Binding LatestVersion}" Foreground="{DynamicResource ThemeTextSecondary}"/>
+						</TextBlock>
+						<TextBlock FontSize="10"
+								   Foreground="{DynamicResource ThemeTextSecondary}"
+								   TextWrapping="Wrap"
+								   IsVisible="{Binding HasPreferredVersion}">
+							<Run Text="Preferred: "/>
+							<Run Text="{Binding PreferredVersion}" Foreground="{DynamicResource ThemeTextSecondary}"/>
+						</TextBlock>
+					</StackPanel>
+
+					<!-- Action buttons -->
+					<StackPanel Grid.Row="2"
+								Orientation="Horizontal"
+								Margin="10,0,10,10"
+								Spacing="8">
+						<Button Classes="modern-icon"
+								Width="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
+								Height="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
+								IsEnabled="{Binding !IsLoading}"
+								Click="GameButton_Click"
+								Tag="{Binding}">
+							<Image Width="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
+								   Source="{Binding ButtonImage}"/>
+						</Button>
+
+						<Button Classes="options options-listview"
+								Content="⋯"
+								FontSize="18"
+								Height="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
+								Width="{Binding ElementName=ActionButtonSizeSlider, Path=Value}"
+								IsEnabled="{Binding !IsLoading}"
+								Click="OptionsButton_Click"
+								Tag="{Binding}">
+							<Button.ContextMenu>
+								<ContextMenu>
+									<MenuItem Header="Launch"
+											  Click="LaunchGameMenu_Click"
+											  CommandParameter="{Binding}"
+											  IsVisible="{Binding CanLaunch}"/>
+									<MenuItem Header="Download"
+											  Click="LaunchGameMenu_Click"
+											  CommandParameter="{Binding}"
+											  IsVisible="{Binding CanDownload}"/>
+									<MenuItem Header="Locate Existing Install"
+											  Click="LocateExistingInstall_Click"
+											  CommandParameter="{Binding}"
+											  IsVisible="{Binding CanLocateInstall}"/>
+									<MenuItem Header="Update Now"
+											  Click="UpdateNowMenu_Click"
+											  CommandParameter="{Binding}"
+											  IsVisible="{Binding CanUpdate}"/>
+									<MenuItem Header="Open Folder"
+											  Click="OpenFolder_Click"
+											  IsVisible="{Binding IsInstalled}"
+											  CommandParameter="{Binding}"/>
+									<MenuItem Header="Versions"
+											  IsVisible="{Binding CanVersionOptions}">
+										<MenuItem Header="Change Version"
+												  Click="ChangeVersion_Click"
+												  CommandParameter="{Binding}"
+												  IsVisible="{Binding CanChangeVersion}"/>
+										<MenuItem Header="Skip Update"
+												  Click="SkipUpdate_Click"
+												  CommandParameter="{Binding}"
+												  IsVisible="{Binding CanSkipUpdate}"/>
+										<MenuItem Header="Force Update"
+												  Click="ForceUpdate_Click"
+												  IsVisible="{Binding IsInstalled}"
+												  CommandParameter="{Binding}"/>
+									</MenuItem>
+									<MenuItem Header="Launch Options"
+											  IsVisible="{Binding CanLaunchOptions}">
+										<MenuItem Header="Select Different Executable"
+												  CommandParameter="{Binding}"
+												  Click="SelectDifferentExecutable_Click"
+												  IsVisible="{Binding HasExecutableChoice}"/>
+										<MenuItem Header="Create Desktop Shortcut"
+												  Click="CreateShortcut_Click"
+												  IsVisible="{Binding IsInstalled}"
+												  CommandParameter="{Binding}"/>
+										<MenuItem Header="Add to Steam"
+												  Click="AddToSteam_Click"
+												  IsVisible="{Binding IsInstalled}"
+												  CommandParameter="{Binding}"/>
+									</MenuItem>
+									<MenuItem Header="Catalog">
+										<MenuItem Header="Edit Entry"
+												  Click="EditGameEntry_Click"
+												  CommandParameter="{Binding}"/>
+										<MenuItem Header="Edit Tags"
+												  Click="EditTagsMenu_Click"
+												  CommandParameter="{Binding}"/>
+										<MenuItem Header="Remove from List"
+												  Click="RemoveGameEntry_Click"
+												  CommandParameter="{Binding}"
+												  IsVisible="{Binding IsInLocalAppsJson}"/>
+									</MenuItem>
+									<MenuItem Header="Customize">
+										<MenuItem Header="Add Custom Image"
+												  Click="SetCustomIcon_Click"
+												  CommandParameter="{Binding}"/>
+										<MenuItem Header="Remove Custom Image"
+												  Click="RemoveCustomIcon_Click"
+												  CommandParameter="{Binding}"
+												  IsVisible="{Binding HasCustomIcon}"/>
+										<MenuItem Header="Hide App"
+												  Click="HideGame_Click"
+												  CommandParameter="{Binding}"/>
+									</MenuItem>
+									<MenuItem Header="About"
+											  IsVisible="{Binding CanInfoOptions}">
+										<MenuItem Header="Show Changelog"
+												  Click="ShowChangelog_Click"
+												  CommandParameter="{Binding}"/>
+										<MenuItem Header="Open GitHub Page"
+												  Click="OpenGitHubPage_Click"
+												  CommandParameter="{Binding}"/>
+									</MenuItem>
+									<MenuItem Header="Delete"
+											  Click="DeleteGameFromLibrary_Click"
+											  IsVisible="{Binding IsInstalled}"
+											  CommandParameter="{Binding}"/>
+								</ContextMenu>
+							</Button.ContextMenu>
+						</Button>
+					</StackPanel>
+
+					<!-- Progress Bar -->
+					<Border Grid.RowSpan="3"
+							VerticalAlignment="Bottom"
+							Height="4"
+							CornerRadius="0,0,12,12"
+							ClipToBounds="True"
+							IsVisible="{Binding IsDownloading}">
+						<ProgressBar Value="{Binding DownloadProgress}"
+									 Minimum="0"
+									 Maximum="100"
+									 Height="4"
+									 Background="Transparent"
+									 Foreground="{Binding ProgressBarColor}"
+									 BorderThickness="0"/>
+					</Border>
+				</Grid>
+			</Border>
 		</DataTemplate>
 	</Window.Resources>
 
@@ -617,6 +853,26 @@
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 	</Style>
+
+	<Style Selector="Button.display-filter-overflow">
+		<Setter Property="Opacity" Value="0"/>
+		<Setter Property="IsHitTestVisible" Value="False"/>
+	</Style>
+
+	<Style Selector="Button.display-filter-row:pointerover Button.display-filter-overflow, Button.display-filter-row:focus-within Button.display-filter-overflow">
+		<Setter Property="Opacity" Value="1"/>
+		<Setter Property="IsHitTestVisible" Value="True"/>
+	</Style>
+
+	<Style Selector="Button.display-filter-row.selected">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+	</Style>
+
+	<Style Selector="Button.scope-filter.selected">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+	</Style>
 	
 	<Style Selector="Button.iconbutton">
 		<Setter Property="Background" Value="Transparent"/>
@@ -643,6 +899,12 @@
 		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
 		<Setter Property="CornerRadius" Value="14"/>
 		<Setter Property="Margin" Value="10"/>
+	</Style>
+
+	<Style Selector="Border.gamecardcompact">
+		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
+		<Setter Property="CornerRadius" Value="14"/>
+		<Setter Property="Margin" Value="6"/>
 	</Style>
 
 	<Style Selector="ContextMenu">
@@ -694,6 +956,10 @@
 	</Style>
 
 	<Style Selector="Button.modern-icon:focus /template/ Border">
+		<Setter Property="BorderThickness" Value="0"/>
+	</Style>
+
+	<Style Selector="Button.modern-icon:focus-visible /template/ Border">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 		<Setter Property="Margin" Value="-1"/>
@@ -806,25 +1072,23 @@
 				</Grid.RowDefinitions>
 
 				<!-- Logo/Header -->
-				<StackPanel Grid.Row="0" Margin="20">
-					<Image anim:ImageBehavior.AnimatedSource="avares://GithubLauncher/Assets/app.gif"
-											Width="90"
-											Height="90"
-											HorizontalAlignment="Center"
-											Margin="0,0,0,15"/>
-					<TextBlock Text="GITHUB"
+				<StackPanel Grid.Row="0"
+							Margin="20"
+							Orientation="Horizontal"
+							HorizontalAlignment="Center"
+							VerticalAlignment="Center"
+							Spacing="6">
+					<Image Source="avares://Quiver/Assets/app.png"
+						   Width="61"
+						   Height="127"
+						   VerticalAlignment="Center"/>
+					<TextBlock Text="QUIVER"
 							   FontSize="18"
 							   FontWeight="Bold"
 							   Foreground="{DynamicResource ThemeText}"
-							   HorizontalAlignment="Center"
+							   VerticalAlignment="Center"
+							   Margin="20,0,0,0"
 							   LetterSpacing="2"/>
-					<TextBlock Text="LAUNCHER"
-							   FontSize="11"
-							   FontWeight="Medium"
-							   Foreground="{DynamicResource ThemeTextSecondary}"
-							   HorizontalAlignment="Center"
-							   LetterSpacing="3"
-							   Margin="0,2,0,0"/>
 				</StackPanel>
 
 				<!-- Navigation Buttons -->
@@ -840,36 +1104,29 @@
 								HorizontalAlignment="Left"
 								Click="ContinueButton_Click"
 								IsVisible="{Binding IsContinueVisible}">
-							<Grid>
-								<asyncImageLoader:AdvancedImage Source="{Binding ContinueGameInfo.DefaultIconUrl}"
-																HorizontalAlignment="Right"
-																Stretch="Uniform"
-																Width="216"
-																Height="64"/>
-								<StackPanel Orientation="Horizontal">
+							<Grid ColumnDefinitions="*,Auto">
+								<StackPanel Grid.Column="0"
+											Orientation="Horizontal"
+											VerticalAlignment="Center">
 									<Image Width="32" Height="32" 
-										   Source="avares://GithubLauncher/Assets/Continue.png"
+										   Source="avares://Quiver/Assets/Continue.png"
 										   Margin="0,0,12,0"/>
 									<TextBlock Text="Continue" 
 											  VerticalAlignment="Center"/>
 								</StackPanel>
+								<Border Grid.Column="1"
+										ClipToBounds="True"
+										MaxWidth="48"
+										MaxHeight="44"
+										Margin="8,0,0,0"
+										VerticalAlignment="Center"
+										HorizontalAlignment="Right">
+									<asyncImageLoader:AdvancedImage Source="{Binding ContinueGameInfo.DefaultIconUrl}"
+																	Stretch="Uniform"
+																	MaxWidth="48"
+																	MaxHeight="44"/>
+								</Border>
 							</Grid>
-						</Button>
-
-						<!-- Manage Apps Button -->
-						<Button x:Name="ManageGamesButton"
-								Classes="settings"
-								Margin="0,0,0,4"
-								CornerRadius="8"
-								Width="216"
-								HorizontalAlignment="Left"
-								Click="ManageGamesButton_Click">
-							<StackPanel Orientation="Horizontal">
-								<Image Width="32" Height="32" 
-									   Source="avares://GithubLauncher/Assets/DefaultGame.png"
-									   Margin="0,0,12,0"/>
-								<TextBlock Text="Manage Apps" VerticalAlignment="Center"/>
-							</StackPanel>
 						</Button>
 
 						<!-- Settings Button -->
@@ -882,7 +1139,7 @@
 								Click="SettingsButton_Click">
 							<StackPanel Orientation="Horizontal">
 								<Image Width="32" Height="32" 
-									   Source="avares://GithubLauncher/Assets/Settings.png"
+									   Source="avares://Quiver/Assets/Settings.png"
 									   Margin="0,0,12,0"/>
 								<TextBlock Text="Settings" VerticalAlignment="Center"/>
 							</StackPanel>
@@ -898,7 +1155,7 @@
 								Click="CheckforUpdates_Click">
 							<StackPanel Orientation="Horizontal">
 								<Image Width="32" Height="32" 
-									   Source="avares://GithubLauncher/Assets/CheckForUpdates.png"
+									   Source="avares://Quiver/Assets/CheckForUpdates.png"
 									   Margin="0,0,12,0"/>
 								<TextBlock Text="Check for Updates" VerticalAlignment="Center"/>
 							</StackPanel>
@@ -908,10 +1165,10 @@
 				<!-- Display Filters Header -->
 				<StackPanel Grid.Row="2" Margin="0,4,0,8">
 					<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,0,0,8"/>
-					<TextBlock Text="DISPLAY FILTERS"
+					<TextBlock Text="SHOW"
 							   FontSize="10"
 							   FontWeight="Bold"
-							   Foreground="{DynamicResource ThemeText}"
+							   Foreground="{DynamicResource ThemeTextSecondary}"
 							   LetterSpacing="1"
 							   Margin="24,0,0,4"/>
 				</StackPanel>
@@ -919,9 +1176,9 @@
 				<!-- Filter Buttons ScrollViewer -->
 				<ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
 					<StackPanel Margin="12,0,12,0">
-					
+
 							<Button x:Name="UnhideAllGamesButton"
-									Classes="settings"
+									Classes="settings scope-filter"
 									Width="216"
 									HorizontalAlignment="Left"
 									Click="UnhideAllGamesButton_Click">
@@ -929,12 +1186,73 @@
 							</Button>
 
 							<Button x:Name="HideNonInstalledButton"
-									Classes="settings"
+									Classes="settings scope-filter"
 									Width="216"
 									HorizontalAlignment="Left"
 									Click="HideNonInstalledButton_Click">
 								<TextBlock Text="Installed Only"/>
 							</Button>
+
+							<Border Height="1"
+									Background="{DynamicResource ThemeBorder}"
+									Margin="0,8,0,8"/>
+
+							<TextBlock Text="TAG FILTERS"
+									   FontSize="10"
+									   FontWeight="Bold"
+									   Foreground="{DynamicResource ThemeTextSecondary}"
+									   LetterSpacing="1"
+									   Margin="12,0,0,8"/>
+
+							<ItemsControl ItemsSource="{Binding TagDisplayFilters}">
+								<ItemsControl.ItemTemplate>
+									<DataTemplate>
+										<Button Classes="settings display-filter-row"
+												Classes.selected="{Binding IsSelected}"
+												Margin="0,0,0,4"
+												HorizontalAlignment="Stretch"
+												HorizontalContentAlignment="Stretch"
+												ToolTip.Tip="Click again to clear"
+												Click="TagDisplayFilterButton_Click"
+												Tag="{Binding Id}">
+											<Grid ColumnDefinitions="*,Auto">
+												<TextBlock Grid.Column="0"
+														   Text="{Binding Name}"
+														   TextTrimming="CharacterEllipsis"
+														   VerticalAlignment="Center"/>
+												<Button Grid.Column="1"
+														Classes="options options-listview display-filter-overflow"
+														Content="⋯"
+														FontSize="18"
+														Width="28"
+														Height="28"
+														Padding="0"
+														Margin="4,0,0,0"
+														VerticalAlignment="Center"
+														Click="DisplayFilterOverflow_Click"
+														Tag="{Binding Id}">
+													<Button.ContextMenu>
+														<ContextMenu>
+															<MenuItem Header="Edit"
+																	  Tag="{Binding Id}"
+																	  Click="EditTagDisplayFilter_Click"/>
+															<MenuItem Header="Delete"
+																	  Tag="{Binding Id}"
+																	  Click="DeleteTagDisplayFilter_Click"/>
+														</ContextMenu>
+													</Button.ContextMenu>
+												</Button>
+											</Grid>
+										</Button>
+									</DataTemplate>
+								</ItemsControl.ItemTemplate>
+							</ItemsControl>
+
+							<Button Classes="options"
+									Content="Add Display Filter"
+									HorizontalAlignment="Stretch"
+									Margin="0,8,0,0"
+									Click="AddDisplayFilter_Click"/>
 						</StackPanel>
 				</ScrollViewer>
 
@@ -945,26 +1263,10 @@
 							Width="216"
 							Height="44"
 							HorizontalAlignment="Left"
-							Click="KofiButton_Click">
-						<StackPanel Orientation="Horizontal" Margin="12,0">
-							<Image Width="32" Height="32" 
-								   Source="avares://GithubLauncher/Assets/Kofi.png"
-								   Margin="0,0,12,0"/>
-							<TextBlock Text="Donate" 
-									   Foreground="{DynamicResource ThemeTextSecondary}"
-									   FontSize="14"
-									   FontWeight="Medium"
-									   VerticalAlignment="Center"/>
-						</StackPanel>
-					</Button>
-					<Button Classes="iconbutton"
-							Width="216"
-							Height="44"
-							HorizontalAlignment="Left"
 							Click="GithubButton_Click">
 						<StackPanel Orientation="Horizontal" Margin="12,0">
 							<Image Width="32" Height="32" 
-								   Source="avares://GithubLauncher/Assets/Github.png"
+								   Source="avares://Quiver/Assets/Github.png"
 								   Margin="0,0,12,0"/>
 							<TextBlock Text="GitHub" 
 									   Foreground="{DynamicResource ThemeTextSecondary}"
@@ -1004,6 +1306,13 @@
 						       HorizontalAlignment="Right"
 							   VerticalAlignment="Center">
 
+							<Button x:Name="AddNewEntryButton"
+									Classes="options"
+									Content="+ Add New Entry"
+									FontSize="13"
+									Margin="0,0,16,0"
+									Click="AddNewEntryButton_Click"/>
+
 							<!-- Sorting ComboBox -->	
 							<TextBlock Text="Sort by:" 
 									   Foreground="{DynamicResource ThemeTextSecondary}"
@@ -1038,7 +1347,7 @@
 									Click="MinimizeButton_Click">
 								<Image Width="28" 
 									   Height="28" 
-									   Source="avares://GithubLauncher/Assets/Icons/button_minimize.png"/>
+									   Source="avares://Quiver/Assets/Icons/button_minimize.png"/>
 							</Button>
 
 							<!-- Fullscreen Button -->
@@ -1048,7 +1357,7 @@
 									Click="ToggleFullscreen_Click">
 								<Image Width="28" 
 									   Height="28" 
-									   Source="avares://GithubLauncher/Assets/Icons/button_fullscreen.png"/>
+									   Source="avares://Quiver/Assets/Icons/button_fullscreen.png"/>
 							</Button>
 
 							<!-- Close Button -->
@@ -1058,7 +1367,7 @@
 									Click="CloseLauncher_Click">
 								<Image Width="28" 
 									   Height="28" 
-									   Source="avares://GithubLauncher/Assets/Icons/button_close.png"/>
+									   Source="avares://Quiver/Assets/Icons/button_close.png"/>
 							</Button>
 						</StackPanel>
 				</Grid>
@@ -1069,10 +1378,6 @@
 
 				<!-- Background Image -->
 				<Border Background="{DynamicResource ThemeDarker}"/>
-				<Image x:Name="CustomBackgroundImage"
-					anim:ImageBehavior.AnimatedSource="{Binding BackgroundImageUri}"
-					Stretch="Fill"
-					Opacity="{Binding BackgroundOpacity}"/>
 				<Image x:Name="StaticBackgroundImage"
 					Source="{Binding BackgroundImageUri}"
 					Stretch="Fill"
@@ -1088,8 +1393,8 @@
 							</ItemsControl.ItemTemplate>
 						</ItemsControl>
 
-						<ItemsControl ItemsSource="{Binding Games}" x:Name="GridViewControl"
-									  IsVisible="{Binding ElementName=UseGridViewCheckBox, Path=IsChecked}">
+						<ItemsControl ItemsSource="{Binding Games}" x:Name="ClassicGridViewControl"
+									  IsVisible="False">
 							<ItemsControl.ItemsPanel>
 								<ItemsPanelTemplate>
 									<WrapPanel Orientation="Horizontal" />
@@ -1097,6 +1402,18 @@
 							</ItemsControl.ItemsPanel>
 							<ItemsControl.ItemTemplate>
 								<StaticResource ResourceKey="GridViewTemplate"/>
+							</ItemsControl.ItemTemplate>
+						</ItemsControl>
+
+						<ItemsControl ItemsSource="{Binding Games}" x:Name="CompactGridViewControl"
+									  IsVisible="False">
+							<ItemsControl.ItemsPanel>
+								<ItemsPanelTemplate>
+									<WrapPanel Orientation="Horizontal" />
+								</ItemsPanelTemplate>
+							</ItemsControl.ItemsPanel>
+							<ItemsControl.ItemTemplate>
+								<StaticResource ResourceKey="CompactGridViewTemplate"/>
 							</ItemsControl.ItemTemplate>
 						</ItemsControl>
 					</Grid>
@@ -1121,10 +1438,28 @@
 									Padding="20,14,20,14"
 									BorderThickness="0,0,0,1"
 									BorderBrush="{DynamicResource ThemeBorder}">
-								<TextBlock Text="Settings"
-										   FontSize="20"
-										   FontWeight="Bold"
-										   Foreground="{DynamicResource ThemeText}"/>
+								<Grid>
+									<Grid.ColumnDefinitions>
+										<ColumnDefinition Width="*"/>
+										<ColumnDefinition Width="Auto"/>
+									</Grid.ColumnDefinitions>
+									<TextBlock Grid.Column="0"
+											   Text="Settings"
+											   FontSize="20"
+											   FontWeight="Bold"
+											   Foreground="{DynamicResource ThemeText}"
+											   VerticalAlignment="Center"/>
+									<Button Grid.Column="1"
+											Classes="modern-icon"
+											Width="28"
+											Height="28"
+											ToolTip.Tip="Close settings"
+											Click="CloseSettingsPanel_Click">
+										<Image Width="28"
+											   Height="28"
+											   Source="avares://Quiver/Assets/Icons/button_close.png"/>
+									</Button>
+								</Grid>
 							</Border>
 
 							<!-- Tab Control -->
@@ -1209,6 +1544,100 @@
 												HorizontalAlignment="Stretch"
 												Click="ClearGamePath_Click"
 												FontSize="12"/>
+
+										<!-- Divider -->
+										<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,8,0,8"/>
+
+										<!-- App Catalog Sources -->
+										<TextBlock Text="APP CATALOG SOURCES"
+												   FontSize="10" FontWeight="Bold"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   LetterSpacing="1"
+												   Margin="0,0,0,4"/>
+
+										<TextBlock Text="Add remote or local apps.json lists to populate your library"
+												   FontSize="11"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   TextWrapping="Wrap"
+												   Margin="0,0,0,6"/>
+
+										<ItemsControl x:Name="CatalogSourcesItemsControl"
+													  ItemsSource="{Binding CatalogSources}">
+											<ItemsControl.ItemTemplate>
+												<DataTemplate>
+													<Border Background="{DynamicResource ThemeBase}"
+															BorderBrush="{DynamicResource ThemeBorder}"
+															BorderThickness="1"
+															CornerRadius="4"
+															Padding="10"
+															Margin="0,0,0,8">
+														<StackPanel Spacing="4">
+															<TextBlock Text="{Binding Name}"
+																	   FontSize="13"
+																	   FontWeight="SemiBold"
+																	   Foreground="{DynamicResource ThemeText}"/>
+															<TextBlock Text="{Binding Location}"
+																	   FontSize="10"
+																	   Foreground="{DynamicResource ThemeTextSecondary}"
+																	   TextTrimming="CharacterEllipsis"
+																	   TextWrapping="NoWrap"/>
+															<TextBlock Text="{Binding StatusText}"
+																	   FontSize="10"
+																	   Foreground="{DynamicResource ThemeTextSecondary}"
+																	   TextWrapping="Wrap"/>
+															<Grid ColumnDefinitions="*,Auto">
+																<CheckBox Grid.Column="0"
+																		  Content="Enabled"
+																		  IsChecked="{Binding Enabled}"
+																		  Foreground="{DynamicResource ThemeText}"
+																		  Tag="{Binding SourceId}"
+																		  Checked="CatalogSourceEnabled_Changed"
+																		  Unchecked="CatalogSourceEnabled_Changed"/>
+																<Button Grid.Column="1"
+																		Classes="options"
+																		Content="Remove"
+																		Tag="{Binding SourceId}"
+																		Click="RemoveCatalogSource_Click"
+																		FontSize="11"
+																		Padding="8,4"/>
+															</Grid>
+														</StackPanel>
+													</Border>
+												</DataTemplate>
+											</ItemsControl.ItemTemplate>
+										</ItemsControl>
+
+										<TextBlock Text="Community index URL"
+												   FontSize="11"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   Margin="0,4,0,4"/>
+
+										<TextBox x:Name="CommunityCatalogIndexUrlTextBox"
+												 Watermark="URL or file path to index.json"
+												 Text="{Binding Settings.CommunityCatalogIndexUrl, Mode=TwoWay}"
+												 TextChanged="CommunityCatalogIndexUrlTextBox_TextChanged"
+												 FontSize="12"
+												 Margin="0,0,0,6"/>
+
+										<Button Classes="options"
+												Content="Browse Community Lists"
+												HorizontalAlignment="Stretch"
+												Click="BrowseCommunityCatalogLists_Click"
+												FontSize="12"
+												Margin="0,0,0,6"/>
+
+										<Button Classes="options"
+												Content="Add Source"
+												HorizontalAlignment="Stretch"
+												Click="AddCatalogSource_Click"
+												FontSize="12"/>
+
+										<Button Classes="options"
+												Content="Refresh All Sources"
+												HorizontalAlignment="Stretch"
+												Click="RefreshCatalogSources_Click"
+												FontSize="12"
+												Margin="0,0,0,4"/>
 
 										<!-- Divider -->
 										<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,8,0,8"/>
@@ -1462,6 +1891,20 @@
 													   Margin="20,0,0,0"/>
 										</StackPanel>
 
+										<StackPanel Spacing="2" Margin="0,4,0,0">
+											<CheckBox x:Name="GridCompactCardsCheckBox"
+													  Content="Details in card"
+													  Foreground="{DynamicResource ThemeText}"
+													  FontSize="13" FontWeight="SemiBold"
+													  IsEnabled="{Binding ElementName=UseGridViewCheckBox, Path=IsChecked}"
+													  Checked="GridCompactCardsCheckBox_Checked"
+													  Unchecked="GridCompactCardsCheckBox_Unchecked"/>
+											<TextBlock Text="Keep name, status, and buttons inside each grid card"
+													   FontSize="11"
+													   Foreground="{DynamicResource ThemeTextSecondary}"
+													   Margin="20,0,0,0"/>
+										</StackPanel>
+
 										<StackPanel Spacing="6" Margin="0,4,0,0">
 											<TextBlock Text="Presets"
 													   FontSize="11"
@@ -1470,22 +1913,22 @@
 												<Button Classes="modern-icon" Width="52" Height="52"
 														Click="LayoutPreset_Landscape_Click"
 														ToolTip.Tip="Landscape">
-													<Image Width="52" Height="52" Source="avares://GithubLauncher/Assets/Icons/preset_landscape.png"/>
+													<Image Width="52" Height="52" Source="avares://Quiver/Assets/Icons/preset_landscape.png"/>
 												</Button>
 												<Button Classes="modern-icon" Width="52" Height="52"
 														Click="LayoutPreset_Square_Click"
 														ToolTip.Tip="Square">
-													<Image Width="52" Height="52" Source="avares://GithubLauncher/Assets/Icons/preset_square.png"/>
+													<Image Width="52" Height="52" Source="avares://Quiver/Assets/Icons/preset_square.png"/>
 												</Button>
 												<Button Classes="modern-icon" Width="52" Height="52"
 														Click="LayoutPreset_Portrait_Click"
 														ToolTip.Tip="Portrait">
-													<Image Width="52" Height="52" Source="avares://GithubLauncher/Assets/Icons/preset_portrait.png"/>
+													<Image Width="52" Height="52" Source="avares://Quiver/Assets/Icons/preset_portrait.png"/>
 												</Button>
 												<Button Classes="modern-icon" Width="52" Height="52"
 														Click="LayoutPreset_List_Click"
 														ToolTip.Tip="List">
-													<Image Width="52" Height="52" Source="avares://GithubLauncher/Assets/Icons/preset_list.png"/>
+													<Image Width="52" Height="52" Source="avares://Quiver/Assets/Icons/preset_list.png"/>
 												</Button>
 											</StackPanel>
 										</StackPanel>
@@ -1512,10 +1955,41 @@
 											</StackPanel>
 											<Slider x:Name="SlotSizeSlider"
 													Minimum="120" Maximum="400"
-													Value="120"
+													Value="152"
 													TickFrequency="4"
 													IsSnapToTickEnabled="True"
 													ValueChanged="SlotSizeSlider_ValueChanged"/>
+										</StackPanel>
+
+										<!-- Divider -->
+										<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,8,0,8"/>
+
+										<!-- Action Buttons -->
+										<TextBlock Text="ACTION BUTTONS"
+												   FontSize="10" FontWeight="Bold"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   LetterSpacing="1"
+												   Margin="0,0,0,4"/>
+
+										<StackPanel Spacing="4">
+											<StackPanel Orientation="Horizontal" Spacing="8">
+												<TextBlock Text="Size:"
+														   FontSize="12"
+														   Foreground="{DynamicResource ThemeText}"
+														   VerticalAlignment="Center"/>
+												<TextBlock Text="{Binding ElementName=ActionButtonSizeSlider, Path=Value, StringFormat={}{0:0}}"
+														   FontSize="12"
+														   Foreground="{DynamicResource ThemeTextSecondary}"/>
+											</StackPanel>
+											<Slider x:Name="ActionButtonSizeSlider"
+													Minimum="32" Maximum="80"
+													Value="36"
+													TickFrequency="4"
+													IsSnapToTickEnabled="True"
+													ValueChanged="ActionButtonSizeSlider_ValueChanged"/>
+											<TextBlock Text="Size of Play, Download, and Update buttons"
+													   FontSize="11"
+													   Foreground="{DynamicResource ThemeTextSecondary}"/>
 										</StackPanel>
 
 										<!-- Divider -->
@@ -1541,7 +2015,7 @@
 											</StackPanel>
 											<Slider x:Name="IconSizeSlider"
 													Minimum="64" Maximum="512"
-													Value="256"
+													Value="124"
 													TickFrequency="4"
 													IsSnapToTickEnabled="True"
 													ValueChanged="IconSizeSlider_ValueChanged"/>
@@ -1551,6 +2025,7 @@
 										<StackPanel Spacing="2">
 											<CheckBox x:Name="IconFillCheckBox"
 													  Content="Fill Cards"
+													  IsChecked="False"
 													  Foreground="{DynamicResource ThemeText}"
 													  FontSize="13" FontWeight="SemiBold"
 													  Checked="IconFillCheckBox_Checked"
@@ -1720,219 +2195,241 @@
 					</Grid>
 				</Border>
 
-				<!-- Manage Apps Panel -->
-				<Border x:Name="ManageGamesPanel"
+				<!-- Entry Form Overlay -->
+				<Border x:Name="EntryFormOverlay"
 						Grid.RowSpan="2"
 						Background="{DynamicResource ThemeBase}"
 						IsVisible="False"
 						ZIndex="100">
-					<Grid>
-						<Grid>
-							<ScrollViewer x:Name="ManageGamesTab" VerticalScrollBarVisibility="Auto" Margin="40" IsVisible="True">
-								<StackPanel Spacing="20">
-					
-									<Border Background="{DynamicResource ThemeDarker}"
-											BorderBrush="{DynamicResource ThemeBorder}"
-											BorderThickness="1"
-											CornerRadius="8"
-											Padding="16">
-										<StackPanel Spacing="12">
-											<Grid>
-												<Grid.ColumnDefinitions>
-													<ColumnDefinition Width="*"/>
-													<ColumnDefinition Width="Auto"/>
-												</Grid.ColumnDefinitions>
-												<TextBlock Grid.Column="0"
-														   Text="APPS"
-														   FontSize="16"
-														   FontWeight="Bold"
-														   Foreground="{DynamicResource ThemeText}"
-														   VerticalAlignment="Center"/>
-												<Button Grid.Column="1"
-														Classes="options"
-														Content="Unhide All"
-														FontSize="12"
-														Tag="Apps"
-														Click="UnhideAllManuallyHidden_Click"/>
-											</Grid>
-											<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,4,0,8"/>
-							
-											<ItemsControl x:Name="CustomGamesListControl">
-												<ItemsControl.ItemTemplate>
-													<DataTemplate>
-														<Border Background="{DynamicResource ThemeBase}"
-																BorderBrush="{DynamicResource ThemeBorder}"
-																BorderThickness="1"
-																CornerRadius="6"
-																Padding="12"
-																Margin="0,8,0,0">
-															<Grid>
-																<Grid.ColumnDefinitions>
-																	<ColumnDefinition Width="80"/>
-																	<ColumnDefinition Width="*"/>
-																	<ColumnDefinition Width="Auto"/>
-																</Grid.ColumnDefinitions>
+					<ScrollViewer VerticalScrollBarVisibility="Auto" Margin="40">
+						<StackPanel Spacing="20" MinWidth="640" MaxWidth="960" HorizontalAlignment="Center">
+							<Border Background="{DynamicResource ThemeDarker}"
+									BorderBrush="{DynamicResource ThemeBorder}"
+									BorderThickness="1"
+									CornerRadius="8"
+									Padding="16">
+								<StackPanel Spacing="12">
+									<TextBlock x:Name="FormTitleText"
+											   Text="Create New Entry"
+											   FontSize="18"
+											   FontWeight="Bold"
+											   Foreground="{DynamicResource ThemeText}"/>
+									<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,4,0,8"/>
 
-																<asyncImageLoader:AdvancedImage Grid.Column="0"
-																								Source="{Binding IconUrl}"
-																								Width="128"
-																								Height="128"
-																								VerticalAlignment="Center"
-																								HorizontalAlignment="Left"
-																								Stretch="Uniform"/>
+									<Grid>
+										<Grid.ColumnDefinitions>
+											<ColumnDefinition Width="130"/>
+											<ColumnDefinition Width="*"/>
+										</Grid.ColumnDefinitions>
+										<Grid.RowDefinitions>
+											<RowDefinition Height="Auto"/>
+											<RowDefinition Height="Auto"/>
+											<RowDefinition Height="Auto"/>
+											<RowDefinition Height="Auto"/>
+											<RowDefinition Height="Auto"/>
+										</Grid.RowDefinitions>
 
-																<StackPanel Grid.Column="1" Spacing="4" Margin="76,0,0,0">
-																	<TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="{DynamicResource ThemeText}" FontSize="14"/>
-																	<TextBlock Text="{Binding Repository}" Foreground="{DynamicResource ThemeTextSecondary}" FontSize="12"/>
-																	<TextBlock Text="{Binding FolderName}" Foreground="{DynamicResource ThemeTextSecondary}" FontSize="12"/>
-																</StackPanel>
+										<TextBlock Grid.Row="0" Grid.Column="0" Text="Name:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="0" Grid.Column="1"
+												 x:Name="NewGameNameTextBox"
+												 Foreground="{DynamicResource ThemeText}"
+												 Background="{DynamicResource ThemeBase}"
+												 BorderBrush="{DynamicResource ThemeBorder}"
+												 BorderThickness="1"
+												 CornerRadius="4"
+												 Padding="8"
+												 Margin="8,0,0,8"
+												 TextChanged="GameNameTextBox_TextChanged"/>
 
-																<StackPanel Grid.Column="2" Orientation="Vertical" Spacing="4">
-																	<Button Classes="options"
-																			Content="Edit"
-																			FontSize="12"
-																			Width="80"
-																			Click="EditGameEntry_Click"
-																			Tag="{Binding}"/>
-																	<Button Classes="options"
-																			Content="{Binding HideGameLabel}"
-																			FontSize="12"
-																			Width="80"
-																			Click="ToggleHideGame_Click"
-																			Tag="{Binding}"/>
-																	<Button Classes="options"
-																			Content="Remove"
-																			FontSize="12"
-																			Width="80"
-																			Click="RemoveGameEntry_Click"
-																			Tag="{Binding}"
-																			IsVisible="{Binding CanRemove}"/>
-																</StackPanel>
-															</Grid>
-														</Border>
-													</DataTemplate>
-												</ItemsControl.ItemTemplate>
-											</ItemsControl>
+										<TextBlock Grid.Row="1" Grid.Column="0" Text="Repository:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="1" Grid.Column="1"
+												 x:Name="NewGameRepoTextBox"
+												 Foreground="{DynamicResource ThemeText}"
+												 Background="{DynamicResource ThemeBase}"
+												 BorderBrush="{DynamicResource ThemeBorder}"
+												 BorderThickness="1"
+												 CornerRadius="4"
+												 Padding="8"
+												 Margin="8,0,0,8"
+												 TextChanged="GameRepoTextBox_TextChanged"/>
 
-											<Button Classes="options"
-													Content="+ Add New App"
-													HorizontalAlignment="Stretch"
-													Height="44"
-													Margin="0,8,0,0"
-													Click="SwitchToCreateEditTab"/>
-										</StackPanel>
-									</Border>
+										<TextBlock Grid.Row="2" Grid.Column="0" Text="Folder Name:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="2" Grid.Column="1"
+												 x:Name="NewGameFolderTextBox"
+												 Foreground="{DynamicResource ThemeText}"
+												 Background="{DynamicResource ThemeBase}"
+												 BorderBrush="{DynamicResource ThemeBorder}"
+												 BorderThickness="1"
+												 CornerRadius="4"
+												 Padding="8"
+												 Margin="8,0,0,8"
+												 TextChanged="GameFolderTextBox_TextChanged"/>
+
+										<TextBlock Grid.Row="3" Grid.Column="0" Text="Tags:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="3" Grid.Column="1"
+												 x:Name="NewGameTagsTextBox"
+												 Watermark="e.g. n64, recomp"
+												 Foreground="{DynamicResource ThemeText}"
+												 Background="{DynamicResource ThemeBase}"
+												 BorderBrush="{DynamicResource ThemeBorder}"
+												 BorderThickness="1"
+												 CornerRadius="4"
+												 Padding="8"
+												 Margin="8,0,0,8"/>
+
+										<TextBlock Grid.Row="4" Grid.Column="0" Text="Icon URL:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="4" Grid.Column="1"
+												 x:Name="NewGameIconTextBox"
+												 Foreground="{DynamicResource ThemeText}"
+												 Background="{DynamicResource ThemeBase}"
+												 BorderBrush="{DynamicResource ThemeBorder}"
+												 BorderThickness="1"
+												 CornerRadius="4"
+												 Padding="8"
+												 Margin="8,0,0,0"
+												 TextChanged="GameIconTextBox_TextChanged"/>
+									</Grid>
+
+									<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,12,0,0">
+										<Button x:Name="CancelButton"
+												Classes="options"
+												Content="Cancel"
+												FontSize="12"
+												Width="100"
+												Click="CancelForm_Click"/>
+										<Button x:Name="CreateEditButton"
+												Classes="options"
+												Content="Create Entry"
+												FontSize="12"
+												Width="120"
+												Click="CreateNewEntry_Click"/>
+									</StackPanel>
 								</StackPanel>
-							</ScrollViewer>
+							</Border>
 
-							<ScrollViewer x:Name="CreateEditTab" VerticalScrollBarVisibility="Auto" Margin="40" IsVisible="False">
-								<StackPanel Spacing="20">
-									<Border Background="{DynamicResource ThemeDarker}"
-											BorderBrush="{DynamicResource ThemeBorder}"
-											BorderThickness="1"
-											CornerRadius="8"
-											Padding="16">
-										<StackPanel Spacing="12">
-											<TextBlock x:Name="FormTitleText"
-													   Text="Create New Entry"
-													   FontSize="18"
-													   FontWeight="Bold"
-													   Foreground="{DynamicResource ThemeText}"/>
-											<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,4,0,8"/>
-							
-											<Grid>
-												<Grid.ColumnDefinitions>
-													<ColumnDefinition Width="Auto"/>
-													<ColumnDefinition Width="*"/>
-												</Grid.ColumnDefinitions>
-												<Grid.RowDefinitions>
-													<RowDefinition Height="Auto"/>
-													<RowDefinition Height="Auto"/>
-													<RowDefinition Height="Auto"/>
-													<RowDefinition Height="Auto"/>
-												</Grid.RowDefinitions>
+							<Border x:Name="ValidationStatusBorder"
+									Background="{DynamicResource ThemeDarker}"
+									BorderBrush="{DynamicResource ThemeBorder}"
+									BorderThickness="1"
+									CornerRadius="8"
+									Padding="12"
+									IsVisible="False">
+								<TextBlock x:Name="ValidationStatusText"
+										   Text=""
+										   Foreground="{DynamicResource ThemeText}"
+										   FontSize="12"
+										   TextWrapping="Wrap"/>
+							</Border>
+						</StackPanel>
+					</ScrollViewer>
+				</Border>
 
-												<TextBlock Grid.Row="0" Grid.Column="0" Text="Name:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-												<TextBox Grid.Row="0" Grid.Column="1" 
-														 x:Name="NewGameNameTextBox"
-														 Foreground="{DynamicResource ThemeText}"
-														 Background="{DynamicResource ThemeBase}"
-														 BorderBrush="{DynamicResource ThemeBorder}"
-														 BorderThickness="1"
-														 CornerRadius="4"
-														 Padding="8"
-														 Margin="8,0,0,0"
-														 TextChanged="GameNameTextBox_TextChanged"/>
+				<!-- Display Filter Overlay -->
+				<Border x:Name="DisplayFilterOverlay"
+						Grid.RowSpan="2"
+						Background="#CC000000"
+						IsVisible="False"
+						ZIndex="110">
+					<Border Background="{DynamicResource ThemeDarker}"
+							BorderBrush="{DynamicResource ThemeBorder}"
+							BorderThickness="1"
+							CornerRadius="8"
+							Padding="20"
+							MaxWidth="480"
+							HorizontalAlignment="Center"
+							VerticalAlignment="Center">
+						<StackPanel Spacing="12">
+							<TextBlock x:Name="DisplayFilterOverlayTitle"
+									   Text="Add Display Filter"
+									   FontSize="18"
+									   FontWeight="Bold"
+									   Foreground="{DynamicResource ThemeText}"/>
+							<TextBox x:Name="DisplayFilterNameTextBox"
+									 Watermark="Filter name"
+									 Foreground="{DynamicResource ThemeText}"
+									 Background="{DynamicResource ThemeBase}"
+									 BorderBrush="{DynamicResource ThemeBorder}"
+									 BorderThickness="1"
+									 CornerRadius="4"
+									 Padding="8"/>
+							<TextBox x:Name="DisplayFilterTagsTextBox"
+									 Watermark="Tags (comma-separated, e.g. n64, favorites)"
+									 Foreground="{DynamicResource ThemeText}"
+									 Background="{DynamicResource ThemeBase}"
+									 BorderBrush="{DynamicResource ThemeBorder}"
+									 BorderThickness="1"
+									 CornerRadius="4"
+									 Padding="8"/>
+							<TextBlock Text="Match mode"
+									   FontSize="13"
+									   FontWeight="SemiBold"
+									   Foreground="{DynamicResource ThemeText}"/>
+							<ComboBox x:Name="DisplayFilterMatchModeComboBox"
+									  SelectionChanged="DisplayFilterMatchModeComboBox_SelectionChanged">
+								<ComboBoxItem Content="Any tag"/>
+								<ComboBoxItem Content="All tags"/>
+							</ComboBox>
+							<TextBlock x:Name="DisplayFilterMatchModeHelpText"
+									   FontSize="11"
+									   Foreground="{DynamicResource ThemeTextSecondary}"
+									   TextWrapping="Wrap"/>
+							<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+								<Button Classes="options"
+										Content="Cancel"
+										Width="100"
+										Click="CancelDisplayFilterEdit_Click"/>
+								<Button Classes="options"
+										Content="Save"
+										Width="100"
+										Click="SaveDisplayFilter_Click"/>
+							</StackPanel>
+						</StackPanel>
+					</Border>
+				</Border>
 
-												<TextBlock Grid.Row="1" Grid.Column="0" Text="Repository:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-												<TextBox Grid.Row="1" Grid.Column="1" 
-														 x:Name="NewGameRepoTextBox"
-														 Foreground="{DynamicResource ThemeText}"
-														 Background="{DynamicResource ThemeBase}"
-														 BorderBrush="{DynamicResource ThemeBorder}"
-														 BorderThickness="1"
-														 CornerRadius="4"
-														 Padding="8"
-														 Margin="8,0,0,0"
-														 TextChanged="GameRepoTextBox_TextChanged"/>
-
-												<TextBlock Grid.Row="2" Grid.Column="0" Text="Folder Name:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-												<TextBox Grid.Row="2" Grid.Column="1" 
-														 x:Name="NewGameFolderTextBox"
-														 Foreground="{DynamicResource ThemeText}"
-														 Background="{DynamicResource ThemeBase}"
-														 BorderBrush="{DynamicResource ThemeBorder}"
-														 BorderThickness="1"
-														 CornerRadius="4"
-														 Padding="8"
-														 Margin="8,0,0,0"
-														 TextChanged="GameFolderTextBox_TextChanged"/>
-
-												<TextBlock Grid.Row="3" Grid.Column="0" Text="Icon URL:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-												<TextBox Grid.Row="3" Grid.Column="1" 
-														 x:Name="NewGameIconTextBox"
-														 Foreground="{DynamicResource ThemeText}"
-														 Background="{DynamicResource ThemeBase}"
-														 BorderBrush="{DynamicResource ThemeBorder}"
-														 BorderThickness="1"
-														 CornerRadius="4"
-														 Padding="8"
-														 Margin="8,0,0,0"
-														 TextChanged="GameIconTextBox_TextChanged"/>
-											</Grid>
-
-											<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-												<Button x:Name="CancelButton"
-														Classes="options"
-														Content="Cancel"
-														FontSize="12"
-														Width="100"
-														Click="CancelForm_Click"/>
-												<Button x:Name="CreateEditButton"
-														Classes="options"
-														Content="Create Entry"
-														FontSize="12"
-														Width="120"
-														Click="CreateNewEntry_Click"/>
-											</StackPanel>
-										</StackPanel>
-									</Border>
-
-									<Border Background="{DynamicResource ThemeDarker}"
-											BorderBrush="{DynamicResource ThemeBorder}"
-											BorderThickness="1"
-											CornerRadius="8"
-											Padding="12">
-										<TextBlock x:Name="ValidationStatusText"
-												   Text=""
-												   Foreground="{DynamicResource ThemeText}"
-												   FontSize="12"
-												   TextWrapping="Wrap"/>
-									</Border>
-								</StackPanel>
-							</ScrollViewer>
-						</Grid>
-					</Grid>
+				<!-- Tag Edit Overlay -->
+				<Border x:Name="TagEditOverlay"
+						Grid.RowSpan="2"
+						Background="#CC000000"
+						IsVisible="False"
+						ZIndex="110">
+					<Border Background="{DynamicResource ThemeDarker}"
+							BorderBrush="{DynamicResource ThemeBorder}"
+							BorderThickness="1"
+							CornerRadius="8"
+							Padding="20"
+							MaxWidth="480"
+							HorizontalAlignment="Center"
+							VerticalAlignment="Center">
+						<StackPanel Spacing="12">
+							<TextBlock Text="Edit Tags"
+									   FontSize="18"
+									   FontWeight="Bold"
+									   Foreground="{DynamicResource ThemeText}"/>
+							<TextBlock x:Name="TagEditAppNameText"
+									   FontSize="13"
+									   Foreground="{DynamicResource ThemeTextSecondary}"
+									   TextWrapping="Wrap"/>
+							<TextBox x:Name="TagEditTextBox"
+									 Watermark="Tags (comma-separated)"
+									 Foreground="{DynamicResource ThemeText}"
+									 Background="{DynamicResource ThemeBase}"
+									 BorderBrush="{DynamicResource ThemeBorder}"
+									 BorderThickness="1"
+									 CornerRadius="4"
+									 Padding="8"/>
+							<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+								<Button Classes="options"
+										Content="Cancel"
+										Width="100"
+										Click="CancelTagEdit_Click"/>
+								<Button Classes="options"
+										Content="Save"
+										Width="100"
+										Click="SaveTagEdit_Click"/>
+							</StackPanel>
+						</StackPanel>
+					</Border>
 				</Border>
 
 			</Grid>
@@ -1940,4 +2437,3 @@
 	</Grid>
   </Border>
 </Window>
-
