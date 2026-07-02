@@ -21,6 +21,16 @@ namespace Quiver.Services
         private List<GameInfo> _catalogApps = [];
         private List<GameInfo> _allGames = [];
 
+        public static Func<Action, Task>? UiThreadInvoker { get; set; }
+
+        private static async Task RunOnUiThreadAsync(Action action)
+        {
+            if (UiThreadInvoker != null)
+                await UiThreadInvoker(action);
+            else
+                action();
+        }
+
         public ObservableCollection<GameInfo> Games { get; set; } = [];
         public HttpClient HttpClient => _httpClient;
         public AppCatalogService CatalogService => _catalogService;
@@ -232,7 +242,7 @@ namespace Quiver.Services
                 }));
             }
 
-            RebuildVisibleGames(_settings);
+            await RebuildVisibleGamesAsync(_settings);
 
             await LoadCustomAndCachedIconsAsync();
         }
@@ -370,6 +380,19 @@ namespace Quiver.Services
             settings ??= _settingsStore.Load();
             settings.EnsureInitialized();
 
+            ApplyGamesList(GetVisibleGames(settings));
+        }
+
+        private async Task ApplyTagDisplayFilterAsync(AppSettings settings)
+        {
+            var gamesToShow = GetVisibleGames(settings);
+            await RunOnUiThreadAsync(() => ApplyGamesList(gamesToShow));
+        }
+
+        private List<GameInfo> GetVisibleGames(AppSettings settings)
+        {
+            settings.EnsureInitialized();
+
             IEnumerable<GameInfo> visibleGames = _allGames;
             if (!string.IsNullOrWhiteSpace(settings.ActiveTagDisplayFilterId))
             {
@@ -388,11 +411,31 @@ namespace Quiver.Services
                 }
             }
 
+            return visibleGames.ToList();
+        }
+
+        private void ApplyGamesList(List<GameInfo> gamesToShow)
+        {
             Games.Clear();
-            foreach (var app in visibleGames)
+            foreach (var app in gamesToShow)
                 Games.Add(app);
 
             OnPropertyChanged(nameof(Games));
+        }
+
+        private async Task RebuildVisibleGamesAsync(AppSettings settings)
+        {
+            settings.EnsureInitialized();
+
+            _allGames = _catalogApps
+                .Where(app => app != null && !IsGameManuallyHidden(settings, app))
+                .Where(app => settings.ListScope != AppListScope.InstalledOnly
+                    || app.Status != GameStatus.NotInstalled)
+                .ToList();
+
+            await ApplyTagDisplayFilterAsync(settings);
+
+            await RunOnUiThreadAsync(() => OnPropertyChanged(nameof(IsLibraryEmpty)));
         }
 
         private void RebuildVisibleGames(AppSettings settings)
@@ -406,7 +449,10 @@ namespace Quiver.Services
                 .ToList();
 
             ApplyTagDisplayFilter(settings);
+            OnPropertyChanged(nameof(IsLibraryEmpty));
         }
+
+        public bool IsLibraryEmpty => _catalogApps.Count == 0;
 
         internal void SetCatalogAppsAndFilter(List<GameInfo> catalogApps, AppSettings settings)
         {

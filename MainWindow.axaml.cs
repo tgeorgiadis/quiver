@@ -47,6 +47,7 @@ namespace Quiver
         private readonly GameGridViewModel _gameGridViewModel = new();
         private readonly SettingsViewModel _settingsViewModel = new();
         public ObservableCollection<GameInfo> Games => _gameManager?.Games ?? new ObservableCollection<GameInfo>();
+        public bool IsLibraryEmpty => _gameManager.IsLibraryEmpty;
         public ObservableCollection<TagDisplayFilterListItem> TagDisplayFilters { get; } = new();
         public ObservableCollection<CatalogSourceListItem> CatalogSources { get; } = new();
         public ObservableCollection<CatalogSyncRowItem> CatalogSyncRows { get; } = new();
@@ -424,6 +425,7 @@ namespace Quiver
             }
 
             _gameManager = new GameManager();
+            GameManager.UiThreadInvoker = action => Dispatcher.UIThread.InvokeAsync(action).GetTask();
 
             // Initialize theme
             ThemeColorBrush = new SolidColorBrush(Color.Parse(_settings?.PrimaryColor ?? "#18181b"));
@@ -469,20 +471,25 @@ namespace Quiver
             this.Activated += MainWindow_Activated;
             this.Deactivated += MainWindow_Deactivated;
 
-            _gameManager.PropertyChanged += (s, e) => {
-                if (e.PropertyName == nameof(GameManager.Games))
-                {
-                    OnPropertyChanged(nameof(Games));
-                    UpdateContinueButtonState();
-                    RefreshUpdateCheckStatus();
-                    Debug.WriteLine($"Games collection changed. Count: {_gameManager.Games?.Count ?? 0}");
-                    foreach (var game in _gameManager.Games ?? new())
-                    {
-                        SubscribeToGameEvents(game);
-                        Debug.WriteLine($"Game: {game.Name}, IconUrl: {game.IconUrl}");
-                    }
-                }
+            _gameManager.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName is nameof(GameManager.Games) or nameof(GameManager.IsLibraryEmpty))
+                    Dispatcher.UIThread.Post(UpdateGameCollectionUi);
             };
+
+            DataContext = this;
+        }
+
+        private void UpdateGameCollectionUi()
+        {
+            OnPropertyChanged(nameof(Games));
+            OnPropertyChanged(nameof(IsLibraryEmpty));
+            UpdateContinueButtonState();
+            RefreshUpdateCheckStatus();
+            UpdateLibraryEmptyState();
+
+            foreach (var game in _gameManager.Games)
+                SubscribeToGameEvents(game);
         }
 
         // Is Theme Color Light
@@ -1098,19 +1105,18 @@ namespace Quiver
                     _settings);
                 AppSettings.Save(_settings);
 
-                ApplySorting();
-
                 await RefreshAllCatalogPendingCountsAsync();
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    DataContext = this;
+                    ApplySorting();
                     UpdateContinueButtonState();
                     RefreshCatalogSourcesList();
                     RefreshTagDisplayFiltersUI();
                     RefreshSidebarFilterSelection();
                     UpdateMainViewUi();
                     RefreshUpdateCheckStatus();
+                    UpdateLibraryEmptyState();
 
                     if (!_hasInitializedFocus)
                     {
@@ -1123,8 +1129,11 @@ namespace Quiver
             }
             catch (Exception ex)
             {
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                    _ = ShowMessageBoxAsync($"Failed to load apps: {ex.Message}", "Load Error"));
+                await Dispatcher.UIThread.InvokeAsync(async () =>
+                {
+                    UpdateGameCollectionUi();
+                    await ShowMessageBoxAsync($"Failed to load apps: {ex.Message}", "Load Error");
+                });
             }
         }
 
@@ -2019,6 +2028,28 @@ namespace Quiver
             }
         }
 
+        public void OpenGitHubApiTokenSettings()
+        {
+            if (SettingsPanel == null)
+                return;
+
+            if (_isEntryFormOpen)
+                CloseEntryFormOverlay();
+
+            isSettingsPanelOpen = true;
+            SettingsPanel.IsVisible = true;
+            RefreshCatalogSourcesList();
+
+            if (SettingsTabControl != null)
+                SettingsTabControl.SelectedIndex = 3;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                GitHubTokenTextBox?.BringIntoView();
+                GitHubTokenTextBox?.Focus();
+            }, DispatcherPriority.Loaded);
+        }
+
         private bool CloseSettingsPanel()
         {
             if (!isSettingsPanelOpen || SettingsPanel == null)
@@ -2250,8 +2281,8 @@ namespace Quiver
             var isCatalog = _mainViewMode == MainViewMode.AppCatalog;
             var isReview = isCatalog && _appCatalogSubView == AppCatalogSubView.Review;
 
-            if (this.FindControl<ScrollViewer>("LibraryContentPanel") is ScrollViewer libraryPanel)
-                libraryPanel.IsVisible = isLibrary;
+            if (this.FindControl<Grid>("LibraryViewContainer") is Grid libraryView)
+                libraryView.IsVisible = isLibrary;
 
             if (this.FindControl<Grid>("CatalogContentPanel") is Grid catalogPanel)
                 catalogPanel.IsVisible = isCatalog;
@@ -2282,6 +2313,43 @@ namespace Quiver
                         ? $"Review: {_activeCatalogSyncSource.Name}"
                         : "App Catalog";
             }
+
+            UpdateLibraryEmptyState();
+        }
+
+        private void UpdateLibraryEmptyState()
+        {
+            var showLibrary = _mainViewMode == MainViewMode.Library;
+            var showEmptyState = showLibrary && IsLibraryEmpty;
+
+            if (EmptyLibraryPanel != null)
+                EmptyLibraryPanel.IsVisible = showEmptyState;
+
+            if (LibraryContentPanel != null)
+                LibraryContentPanel.IsVisible = showLibrary && !IsLibraryEmpty;
+        }
+
+        private void EmptyLibraryAddApp_Click(object? sender, RoutedEventArgs e) =>
+            ShowEntryFormOverlay(forCreate: true);
+
+        private async void EmptyLibraryBrowseCatalog_Click(object? sender, RoutedEventArgs e) =>
+            await OpenCommunityCatalogFromLibraryAsync();
+
+        private async Task OpenCommunityCatalogFromLibraryAsync()
+        {
+            AppCatalogService.MigrateLegacyCatalogSources(_settings);
+
+            var defaultSource = _settings.AppCatalogSources
+                .FirstOrDefault(CommunityCatalogDefaults.IsDefaultSource);
+
+            if (defaultSource == null)
+            {
+                defaultSource = CommunityCatalogDefaults.CreateDefaultSource();
+                _settings.AppCatalogSources.Add(defaultSource);
+                OnSettingChanged();
+            }
+
+            await OpenCatalogReviewAsync(defaultSource.Id, CatalogReviewFilter.New);
         }
 
         private static readonly (string Tag, CatalogReviewFilter Filter)[] CatalogReviewFilters =

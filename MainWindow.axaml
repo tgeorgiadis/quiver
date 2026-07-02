@@ -1501,15 +1501,12 @@
 								Width="216"
 								HorizontalAlignment="Left"
 								Click="AppCatalogNavButton_Click">
-							<Grid ColumnDefinitions="*,Auto">
-								<StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-									<Image Width="32" Height="32"
-										   Source="avares://Quiver/Assets/AppCatalog.png"
-										   Margin="0,0,12,0"/>
-									<TextBlock Text="App Catalog" VerticalAlignment="Center"/>
-								</StackPanel>
-								<Border Grid.Column="1"
-										Background="{DynamicResource ThemeLighter}"
+							<StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="10">
+								<Image Width="32" Height="32"
+									   Source="avares://Quiver/Assets/AppCatalog.png"
+									   Margin="0,0,2,0"/>
+								<TextBlock Text="App Catalog" VerticalAlignment="Center"/>
+								<Border Background="{DynamicResource ThemeLighter}"
 										CornerRadius="10"
 										MinWidth="20"
 										Height="20"
@@ -1522,7 +1519,7 @@
 											   HorizontalAlignment="Center"
 											   VerticalAlignment="Center"/>
 								</Border>
-							</Grid>
+							</StackPanel>
 						</Button>
 					</StackPanel>
 
@@ -1835,40 +1832,75 @@
 					Opacity="{Binding BackgroundOpacity}"/>
 
 				<!-- Main App List -->
-				<ScrollViewer x:Name="LibraryContentPanel" VerticalScrollBarVisibility="Auto" Margin="30,20,30,30">
-					<Grid>
-						<ItemsControl ItemsSource="{Binding Games}" x:Name="ListViewControl"
-									  IsVisible="{Binding ElementName=UseGridViewCheckBox, Path=!IsChecked}">
-							<ItemsControl.ItemTemplate>
-								<StaticResource ResourceKey="ListViewTemplate"/>
-							</ItemsControl.ItemTemplate>
-						</ItemsControl>
+				<Grid x:Name="LibraryViewContainer">
+					<ScrollViewer x:Name="LibraryContentPanel" VerticalScrollBarVisibility="Auto" Margin="30,20,30,30">
+						<Grid>
+							<ItemsControl ItemsSource="{Binding Games}" x:Name="ListViewControl"
+										  IsVisible="{Binding ElementName=UseGridViewCheckBox, Path=!IsChecked}">
+								<ItemsControl.ItemTemplate>
+									<StaticResource ResourceKey="ListViewTemplate"/>
+								</ItemsControl.ItemTemplate>
+							</ItemsControl>
 
-						<ItemsControl ItemsSource="{Binding Games}" x:Name="ClassicGridViewControl"
-									  IsVisible="False">
-							<ItemsControl.ItemsPanel>
-								<ItemsPanelTemplate>
-									<WrapPanel Orientation="Horizontal" />
-								</ItemsPanelTemplate>
-							</ItemsControl.ItemsPanel>
-							<ItemsControl.ItemTemplate>
-								<StaticResource ResourceKey="GridViewTemplate"/>
-							</ItemsControl.ItemTemplate>
-						</ItemsControl>
+							<ItemsControl ItemsSource="{Binding Games}" x:Name="ClassicGridViewControl"
+										  IsVisible="False">
+								<ItemsControl.ItemsPanel>
+									<ItemsPanelTemplate>
+										<WrapPanel Orientation="Horizontal" />
+									</ItemsPanelTemplate>
+								</ItemsControl.ItemsPanel>
+								<ItemsControl.ItemTemplate>
+									<StaticResource ResourceKey="GridViewTemplate"/>
+								</ItemsControl.ItemTemplate>
+							</ItemsControl>
 
-						<ItemsControl ItemsSource="{Binding Games}" x:Name="CompactGridViewControl"
-									  IsVisible="False">
-							<ItemsControl.ItemsPanel>
-								<ItemsPanelTemplate>
-									<WrapPanel Orientation="Horizontal" />
-								</ItemsPanelTemplate>
-							</ItemsControl.ItemsPanel>
-							<ItemsControl.ItemTemplate>
-								<StaticResource ResourceKey="CompactGridViewTemplate"/>
-							</ItemsControl.ItemTemplate>
-						</ItemsControl>
-					</Grid>
-				</ScrollViewer>
+							<ItemsControl ItemsSource="{Binding Games}" x:Name="CompactGridViewControl"
+										  IsVisible="False">
+								<ItemsControl.ItemsPanel>
+									<ItemsPanelTemplate>
+										<WrapPanel Orientation="Horizontal" />
+									</ItemsPanelTemplate>
+								</ItemsControl.ItemsPanel>
+								<ItemsControl.ItemTemplate>
+									<StaticResource ResourceKey="CompactGridViewTemplate"/>
+								</ItemsControl.ItemTemplate>
+							</ItemsControl>
+						</Grid>
+					</ScrollViewer>
+
+					<StackPanel x:Name="EmptyLibraryPanel"
+								HorizontalAlignment="Center"
+								VerticalAlignment="Center"
+								Spacing="16"
+								MaxWidth="520"
+								Margin="30,20,30,30"
+								IsVisible="False">
+						<TextBlock Text="Your library is empty"
+								   FontSize="24"
+								   FontWeight="Bold"
+								   Foreground="{DynamicResource ThemeText}"
+								   HorizontalAlignment="Center"
+								   TextAlignment="Center"/>
+						<TextBlock Text="Get started by adding an app yourself, or browse the Quiver Community App Catalog to add apps from the community."
+								   FontSize="14"
+								   Foreground="{DynamicResource ThemeTextSecondary}"
+								   TextWrapping="Wrap"
+								   TextAlignment="Center"/>
+						<StackPanel Orientation="Horizontal"
+									Spacing="12"
+									HorizontalAlignment="Center"
+									Margin="0,8,0,0">
+							<Button Classes="options"
+									Content="Add App Manually"
+									FontSize="13"
+									Click="EmptyLibraryAddApp_Click"/>
+							<Button Classes="options"
+									Content="Browse Community Catalog"
+									FontSize="13"
+									Click="EmptyLibraryBrowseCatalog_Click"/>
+						</StackPanel>
+					</StackPanel>
+				</Grid>
 
 				<!-- App Catalog Content -->
 				<Grid x:Name="CatalogContentPanel" IsVisible="False" Margin="30,20,30,30">
@@ -2026,7 +2058,8 @@
 							</Border>
 
 							<!-- Tab Control -->
-							<TabControl Background="Transparent"
+							<TabControl x:Name="SettingsTabControl"
+										Background="Transparent"
 										Foreground="{DynamicResource ThemeText}"
 										Padding="8,4,8,0"
 										Margin="0">

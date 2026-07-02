@@ -225,8 +225,7 @@ public static class GameDownloadInstallService
         }
         catch (HttpRequestException ex)
         {
-            if (ex.Message.Contains("403", StringComparison.OrdinalIgnoreCase) ||
-                ex.Message.Contains("rate limit", StringComparison.OrdinalIgnoreCase))
+            if (GameDialogService.IsGitHubRateLimitError(ex))
             {
                 await dialogs.ShowRateLimitExceededAsync();
             }

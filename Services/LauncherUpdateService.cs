@@ -1,4 +1,7 @@
+using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
+using Quiver.Core.Models;
 using Quiver.Core.Services;
 
 namespace Quiver.Services;
@@ -9,6 +12,15 @@ public sealed class LauncherUpdateCheckInfo
     public bool UpdateAvailable { get; init; }
     public string LastKnownVersion { get; init; } = string.Empty;
     public string CurrentVersion { get; init; } = string.Empty;
+}
+
+public readonly struct ReleaseFetchResult
+{
+    public bool IsNotModified { get; init; }
+    public bool IsSuccess { get; init; }
+    public GitHubRelease? Release { get; init; }
+    public string? TagName { get; init; }
+    public string? ETag { get; init; }
 }
 
 public sealed class LauncherUpdateService
@@ -29,6 +41,116 @@ public sealed class LauncherUpdateService
             return false;
 
         return utcNow - lastCheckTime < interval;
+    }
+
+    public static bool ShouldSendConditionalRequest(bool isManualCheck, string? etag, string? lastKnownVersion) =>
+        !isManualCheck
+        && !string.IsNullOrEmpty(etag)
+        && !string.IsNullOrWhiteSpace(lastKnownVersion);
+
+    public static void ConfigureGitHubReleaseClient(HttpClient client, string userAgent, string? apiToken = null)
+    {
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        client.DefaultRequestHeaders.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
+
+        if (!string.IsNullOrEmpty(apiToken))
+        {
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", apiToken);
+        }
+    }
+
+    public static string? TryParseReleaseTagFromJson(string releaseJson)
+    {
+        if (string.IsNullOrWhiteSpace(releaseJson))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(releaseJson);
+            if (!doc.RootElement.TryGetProperty("tag_name", out var tagElement))
+                return null;
+
+            var tag = tagElement.GetString();
+            return string.IsNullOrWhiteSpace(tag) ? null : tag;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static GitHubRelease? TryDeserializeRelease(string releaseJson)
+    {
+        if (string.IsNullOrWhiteSpace(releaseJson))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<GitHubRelease>(releaseJson);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static GitHubRelease? ParseReleaseFromJson(string releaseJson)
+    {
+        var tagName = TryParseReleaseTagFromJson(releaseJson);
+        if (string.IsNullOrWhiteSpace(tagName))
+            return null;
+
+        var release = TryDeserializeRelease(releaseJson);
+        if (release == null)
+        {
+            return new GitHubRelease
+            {
+                tag_name = tagName,
+                assets = [],
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(release.tag_name))
+            release.tag_name = tagName;
+
+        return release;
+    }
+
+    public static async Task<ReleaseFetchResult> FetchLatestReleaseAsync(
+        HttpClient httpClient,
+        string repository,
+        bool sendConditionalRequest,
+        string? etag,
+        CancellationToken cancellationToken = default)
+    {
+        var apiUrl = $"https://api.github.com/repos/{repository}/releases/latest";
+        using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
+
+        if (sendConditionalRequest && !string.IsNullOrEmpty(etag))
+            request.Headers.TryAddWithoutValidation("If-None-Match", etag);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+
+        if (response.StatusCode == HttpStatusCode.NotModified)
+        {
+            return new ReleaseFetchResult { IsNotModified = true };
+        }
+
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var release = ParseReleaseFromJson(body);
+        var tagName = release?.tag_name;
+
+        return new ReleaseFetchResult
+        {
+            IsSuccess = !string.IsNullOrWhiteSpace(tagName),
+            Release = release,
+            TagName = tagName,
+            ETag = response.Headers.ETag?.Tag,
+        };
     }
 
     public string ReadInstalledVersion(string? baseDirectory = null)
@@ -85,12 +207,14 @@ public sealed class LauncherUpdateService
 
         try
         {
-            var response = await httpClient
-                .GetStringAsync($"https://api.github.com/repos/{Profile.Repository}/releases/latest", cancellationToken)
-                .ConfigureAwait(false);
+            var result = await FetchLatestReleaseAsync(
+                httpClient,
+                Profile.Repository,
+                sendConditionalRequest: false,
+                etag: null,
+                cancellationToken).ConfigureAwait(false);
 
-            using var doc = JsonDocument.Parse(response);
-            return doc.RootElement.GetProperty("tag_name").GetString();
+            return result.TagName;
         }
         finally
         {
@@ -106,7 +230,7 @@ public sealed class LauncherUpdateService
     private static HttpClient CreateClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        client.DefaultRequestHeaders.Add("User-Agent", Profile.CliUserAgent);
+        ConfigureGitHubReleaseClient(client, Profile.CliUserAgent);
         return client;
     }
 }

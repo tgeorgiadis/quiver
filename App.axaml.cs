@@ -15,7 +15,9 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
+using Quiver.Core.Models;
 using Quiver.Services;
 
 namespace Quiver;
@@ -42,18 +44,6 @@ public class App : Application, INotifyPropertyChanged
     protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = "")
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-    }
-
-    private class GitHubAsset
-    {
-        public string name { get; set; } = string.Empty;
-        public string browser_download_url { get; set; } = string.Empty;
-    }
-
-    private class GitHubRelease
-    {
-        public string tag_name { get; set; } = string.Empty;
-        public GitHubAsset[] assets { get; set; } = [];
     }
 
     private class UpdateCheckInfo
@@ -131,6 +121,7 @@ public class App : Application, INotifyPropertyChanged
 
     private static bool _hasCheckedForAppUpdates = false;
     private static readonly object _updateLock = new object();
+    private static readonly SemaphoreSlim _updateCheckSemaphore = new(1, 1);
     private const string Repository = "tgeorgiadis/quiver";
     private const string VersionFileName = "version.txt";
     private const string UpdateCheckFileName = "update_check.json";
@@ -160,10 +151,7 @@ public class App : Application, INotifyPropertyChanged
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var mainWindow = new MainWindow
-            {
-                DataContext = this
-            };
+            var mainWindow = new MainWindow();
             mainWindow._app = this;
             desktop.MainWindow = mainWindow;
         }
@@ -239,6 +227,19 @@ public class App : Application, INotifyPropertyChanged
             return;
         }
 
+        await _updateCheckSemaphore.WaitAsync();
+        try
+        {
+            await CheckForUpdatesAndApplyCoreAsync(isManualCheck);
+        }
+        finally
+        {
+            _updateCheckSemaphore.Release();
+        }
+    }
+
+    private async Task CheckForUpdatesAndApplyCoreAsync(bool isManualCheck)
+    {
         string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
         string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
 
@@ -246,7 +247,6 @@ public class App : Application, INotifyPropertyChanged
         string currentVersionString = LauncherVersionService.ReadInstalledVersion(currentAppDirectory);
         updateCheckInfo.CurrentVersion = currentVersionString;
 
-        // Skip check if not manual and recently checked
         if (!isManualCheck && LauncherUpdateService.ShouldSkipUpdateCheck(
                 updateCheckInfo.LastCheckTime, DateTime.UtcNow, UpdateCheckInterval))
         {
@@ -258,242 +258,219 @@ public class App : Application, INotifyPropertyChanged
             {
                 Trace.WriteLine($"Cached app update available: {updateCheckInfo.LastKnownVersion}");
 
-                if (IsBootstrapVersion(currentVersionString))
+                using (var cachedHttpClient = CreateUpdateHttpClient())
                 {
-                    using (var httpClient = new HttpClient())
+                    if (IsBootstrapVersion(currentVersionString))
                     {
-                        httpClient.Timeout = DownloadTimeout;
-                        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Quiver-Updater");
-
-                        var settings = AppSettings.Load();
-                        if (!string.IsNullOrEmpty(settings?.GitHubApiToken))
-                        {
-                            httpClient.DefaultRequestHeaders.Authorization =
-                                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.GitHubApiToken);
-                        }
-
                         try
                         {
-                            string apiUrl = $"https://api.github.com/repos/{Repository}/releases/latest";
-                            var response = await httpClient.GetAsync(apiUrl);
-                            response.EnsureSuccessStatusCode();
-
-                            string releaseResponse = await response.Content.ReadAsStringAsync();
-                            GitHubRelease? latestRelease = JsonSerializer.Deserialize<GitHubRelease>(releaseResponse);
-
+                            GitHubRelease? latestRelease = await FetchLatestReleaseForUpdateAsync(cachedHttpClient);
                             if (latestRelease != null)
                             {
-                                await DownloadAndApplyUpdate(latestRelease, AppDomain.CurrentDomain.BaseDirectory, updateCheckInfo);
+                                await DownloadAndApplyUpdate(latestRelease, currentAppDirectory, updateCheckInfo);
                             }
                         }
                         catch (Exception ex)
                         {
                             await ShowMessageBoxAsync($"Failed to download bootstrap update: {ex.Message}", "Update Error");
                         }
+
+                        return;
                     }
 
-                    return;
+                    await PromptAndApplyUpdateAsync(
+                        updateCheckInfo.LastKnownVersion,
+                        currentAppDirectory,
+                        updateCheckInfo,
+                        cachedHttpClient);
                 }
-
-                // Prompt user about available update
-                await Dispatcher.UIThread.InvokeAsync(async () =>
-                {
-                    var result = await ShowMessageBoxWithChoiceAsync(
-                        $"Launcher update {updateCheckInfo.LastKnownVersion} is available!\n\nWould you like to update now?",
-                        "Update Available");
-
-                    if (result)
-                    {
-                        using (var httpClient = new HttpClient())
-                        {
-                            httpClient.Timeout = DownloadTimeout;
-                            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Quiver-Updater");
-
-                            var settings = AppSettings.Load();
-                            if (!string.IsNullOrEmpty(settings?.GitHubApiToken))
-                            {
-                                httpClient.DefaultRequestHeaders.Authorization =
-                                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.GitHubApiToken);
-                            }
-
-                            try
-                            {
-                                string apiUrl = $"https://api.github.com/repos/{Repository}/releases/latest";
-                                var response = await httpClient.GetAsync(apiUrl);
-                                response.EnsureSuccessStatusCode();
-
-                                string releaseResponse = await response.Content.ReadAsStringAsync();
-                                GitHubRelease? latestRelease = JsonSerializer.Deserialize<GitHubRelease>(releaseResponse);
-
-                                if (latestRelease != null)
-                                {
-                                    await DownloadAndApplyUpdate(latestRelease, AppDomain.CurrentDomain.BaseDirectory, updateCheckInfo);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                await ShowMessageBoxAsync($"Failed to download update: {ex.Message}", "Update Error");
-                            }
-                        }
-                    }
-                });
             }
 
             return;
         }
 
-        using (var httpClient = new HttpClient())
+        using var httpClient = CreateUpdateHttpClient();
+
+        try
         {
-            httpClient.Timeout = DownloadTimeout;
-            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Quiver-Updater");
+            bool sendConditional = LauncherUpdateService.ShouldSendConditionalRequest(
+                isManualCheck, updateCheckInfo.ETag, updateCheckInfo.LastKnownVersion);
 
-            var settings = AppSettings.Load();
-            if (!string.IsNullOrEmpty(settings?.GitHubApiToken))
+            ReleaseFetchResult fetchResult = await LauncherUpdateService.FetchLatestReleaseAsync(
+                httpClient, Repository, sendConditional, updateCheckInfo.ETag);
+
+            if (fetchResult.IsNotModified)
             {
-                httpClient.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.GitHubApiToken);
-            }
-
-            if (!isManualCheck && !string.IsNullOrEmpty(updateCheckInfo.ETag))
-            {
-                httpClient.DefaultRequestHeaders.TryAddWithoutValidation("If-None-Match", updateCheckInfo.ETag);
-            }
-
-            try
-            {
-                string apiUrl = $"https://api.github.com/repos/{Repository}/releases/latest";
-                var response = await httpClient.GetAsync(apiUrl);
-
-                updateCheckInfo.LastCheckTime = DateTime.UtcNow;
-                updateCheckInfo.CurrentVersion = currentVersionString;
-
-                if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+                if (string.IsNullOrWhiteSpace(updateCheckInfo.LastKnownVersion))
+                {
+                    Trace.WriteLine("Received 304 with empty LastKnownVersion; retrying without If-None-Match.");
+                    fetchResult = await LauncherUpdateService.FetchLatestReleaseAsync(
+                        httpClient, Repository, sendConditionalRequest: false, etag: null);
+                }
+                else
                 {
                     Trace.WriteLine("No app updates available (304 Not Modified)");
-                    updateCheckInfo.UpdateAvailable = false;
+                    updateCheckInfo.LastCheckTime = DateTime.UtcNow;
+                    updateCheckInfo.CurrentVersion = currentVersionString;
+                    updateCheckInfo.UpdateAvailable = IsNewerVersion(updateCheckInfo.LastKnownVersion, currentVersionString);
                     await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
 
-                    if (isManualCheck)
+                    if (isManualCheck && !updateCheckInfo.UpdateAvailable)
                     {
                         await Dispatcher.UIThread.InvokeAsync(async () =>
                         {
                             await ShowMessageBoxAsync("Launcher is up to date!", "No Updates");
                         });
                     }
+
                     return;
-                }
-
-                response.EnsureSuccessStatusCode();
-
-                if (response.Headers.ETag != null)
-                {
-                    updateCheckInfo.ETag = response.Headers.ETag.Tag;
-                }
-
-                string releaseResponse = await response.Content.ReadAsStringAsync();
-                GitHubRelease? latestRelease = JsonSerializer.Deserialize<GitHubRelease>(releaseResponse);
-
-                if (latestRelease == null || string.IsNullOrWhiteSpace(latestRelease.tag_name))
-                {
-                    Trace.WriteLine("No valid latest release information found on GitHub.");
-                    updateCheckInfo.UpdateAvailable = false;
-                    await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
-
-                    if (isManualCheck)
-                    {
-                        await Dispatcher.UIThread.InvokeAsync(async () =>
-                        {
-                            await ShowMessageBoxAsync("Could not find launcher update information.", "No Updates");
-                        });
-                    }
-                    return;
-                }
-
-                updateCheckInfo.LastKnownVersion = latestRelease.tag_name;
-
-                if (!IsNewerVersion(latestRelease.tag_name, currentVersionString))
-                {
-                    Trace.WriteLine($"Current launcher version {currentVersionString} is up to date or newer than {latestRelease.tag_name}. No update needed.");
-                    updateCheckInfo.UpdateAvailable = false;
-                    await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
-
-                    if (isManualCheck)
-                    {
-                        await Dispatcher.UIThread.InvokeAsync(async () =>
-                        {
-                            await ShowMessageBoxAsync($"Launcher is up to date! (v{currentVersionString})", "No Updates");
-                        });
-                    }
-                    return;
-                }
-
-                Trace.WriteLine($"Newer launcher version {latestRelease.tag_name} available. Current version is {currentVersionString}.");
-                updateCheckInfo.UpdateAvailable = true;
-                await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
-
-                if (IsBootstrapVersion(currentVersionString))
-                {
-                    await DownloadAndApplyUpdate(latestRelease, currentAppDirectory, updateCheckInfo);
-                    return;
-                }
-
-                if (!isManualCheck)
-                {
-                    await Dispatcher.UIThread.InvokeAsync(async () =>
-                    {
-                        var result = await ShowMessageBoxWithChoiceAsync(
-                            $"Launcher update {latestRelease.tag_name} is available!\n\nWould you like to update now?",
-                            "Update Available");
-
-                        if (result)
-                        {
-                            await DownloadAndApplyUpdate(latestRelease, currentAppDirectory, updateCheckInfo);
-                        }
-                    });
-                }
-
-                if (isManualCheck)
-                {
-                    await Dispatcher.UIThread.InvokeAsync(async () =>
-                    {
-                        var result = await ShowMessageBoxWithChoiceAsync(
-                            $"Launcher update {latestRelease.tag_name} is available!\n\nWould you like to update now?",
-                            "Update Available");
-
-                        if (result)
-                        {
-                            await DownloadAndApplyUpdate(latestRelease, currentAppDirectory, updateCheckInfo);
-                        }
-                    });
                 }
             }
-            catch (HttpRequestException httpEx)
+
+            if (fetchResult.IsNotModified)
             {
+                Trace.WriteLine("Still received 304 after retry without If-None-Match.");
+                return;
+            }
+
+            if (!fetchResult.IsSuccess || fetchResult.Release == null || string.IsNullOrWhiteSpace(fetchResult.TagName))
+            {
+                Trace.WriteLine("No valid latest release information found on GitHub.");
+
+                if (isManualCheck)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(async () =>
+                    {
+                        await ShowMessageBoxAsync("Could not find launcher update information.", "No Updates");
+                    });
+                }
+
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(fetchResult.ETag))
+            {
+                updateCheckInfo.ETag = fetchResult.ETag;
+            }
+
+            updateCheckInfo.LastKnownVersion = fetchResult.TagName;
+            updateCheckInfo.LastCheckTime = DateTime.UtcNow;
+            updateCheckInfo.CurrentVersion = currentVersionString;
+
+            if (!IsNewerVersion(fetchResult.TagName, currentVersionString))
+            {
+                Trace.WriteLine($"Current launcher version {currentVersionString} is up to date or newer than {fetchResult.TagName}. No update needed.");
+                updateCheckInfo.UpdateAvailable = false;
                 await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
 
                 if (isManualCheck)
                 {
                     await Dispatcher.UIThread.InvokeAsync(async () =>
                     {
+                        await ShowMessageBoxAsync(
+                            $"Launcher is up to date! (v{currentVersionString.TrimStart('v', 'V')})",
+                            "No Updates");
+                    });
+                }
+
+                return;
+            }
+
+            Trace.WriteLine($"Newer launcher version {fetchResult.TagName} available. Current version is {currentVersionString}.");
+            updateCheckInfo.UpdateAvailable = true;
+            await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
+
+            if (IsBootstrapVersion(currentVersionString))
+            {
+                await DownloadAndApplyUpdate(fetchResult.Release, currentAppDirectory, updateCheckInfo);
+                return;
+            }
+
+            await PromptAndApplyUpdateAsync(
+                fetchResult.TagName,
+                currentAppDirectory,
+                updateCheckInfo,
+                httpClient);
+        }
+        catch (HttpRequestException httpEx)
+        {
+            if (isManualCheck)
+            {
+                await Dispatcher.UIThread.InvokeAsync(async () =>
+                {
+                    if (GameDialogService.IsGitHubRateLimitError(httpEx))
+                        await GameDialogService.ShowRateLimitErrorAsync();
+                    else
                         await ShowMessageBoxAsync($"Could not check for launcher updates (Network Error): {httpEx.Message}",
                             "Update Check Failed");
-                    });
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            if (isManualCheck)
+            {
+                await Dispatcher.UIThread.InvokeAsync(async () =>
+                {
+                    await ShowMessageBoxAsync($"An error occurred during launcher update check: {ex.Message}",
+                        "Update Check Failed");
+                });
+            }
+        }
+    }
+
+    private static HttpClient CreateUpdateHttpClient()
+    {
+        var httpClient = new HttpClient { Timeout = DownloadTimeout };
+        var settings = AppSettings.Load();
+        LauncherUpdateService.ConfigureGitHubReleaseClient(
+            httpClient, "Quiver-Updater", settings?.GitHubApiToken);
+        return httpClient;
+    }
+
+    private static async Task<GitHubRelease?> FetchLatestReleaseForUpdateAsync(HttpClient httpClient)
+    {
+        ReleaseFetchResult result = await LauncherUpdateService.FetchLatestReleaseAsync(
+            httpClient, Repository, sendConditionalRequest: false, etag: null);
+
+        if (!result.IsSuccess || result.Release == null)
+            return null;
+
+        return result.Release;
+    }
+
+    private async Task PromptAndApplyUpdateAsync(
+        string versionTag,
+        string currentAppDirectory,
+        UpdateCheckInfo updateCheckInfo,
+        HttpClient httpClient)
+    {
+        await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            bool accepted = await ShowMessageBoxWithChoiceAsync(
+                $"Launcher update {versionTag} is available!\n\nWould you like to update now?",
+                "Update Available");
+
+            if (!accepted)
+                return;
+
+            try
+            {
+                GitHubRelease? latestRelease = await FetchLatestReleaseForUpdateAsync(httpClient);
+                if (latestRelease != null)
+                {
+                    await DownloadAndApplyUpdate(latestRelease, currentAppDirectory, updateCheckInfo);
+                }
+                else
+                {
+                    await ShowMessageBoxAsync("Failed to download update: could not fetch release information.", "Update Error");
                 }
             }
             catch (Exception ex)
             {
-                await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
-
-                if (isManualCheck)
-                {
-                    await Dispatcher.UIThread.InvokeAsync(async () =>
-                    {
-                        await ShowMessageBoxAsync($"An error occurred during launcher update check: {ex.Message}",
-                            "Update Check Failed");
-                    });
-                }
+                await ShowMessageBoxAsync($"Failed to download update: {ex.Message}", "Update Error");
             }
-        }
+        });
     }
 
     private async Task<bool> ShowMessageBoxWithChoiceAsync(string message, string title)

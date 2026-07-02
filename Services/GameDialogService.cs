@@ -7,11 +7,18 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Quiver;
 
 namespace Quiver.Services;
 
 public static class GameDialogService
 {
+    public static bool IsGitHubRateLimitError(Exception ex)
+    {
+        var message = ex.Message;
+        return message.Contains("403", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
+    }
     public static async Task ShowMessageBoxAsync(string message, string title)
     {
         await Dispatcher.UIThread.InvokeAsync(async () =>
@@ -208,11 +215,15 @@ public static class GameDialogService
                 }
             };
 
-            var okButton = new Button
+            var openSettingsButton = new Button
             {
-                Content = "OK",
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 10, 0, 0),
+                Content = "Open Settings",
+                MinWidth = 120,
+            };
+
+            var closeButton = new Button
+            {
+                Content = "Close",
                 MinWidth = 100,
             };
 
@@ -244,7 +255,7 @@ public static class GameDialogService
                             },
                             new TextBlock
                             {
-                                Text = "To avoid this, add a GitHub API token in Settings:",
+                                Text = "To avoid this, add a GitHub API token in Settings → Advanced:",
                                 FontWeight = FontWeight.SemiBold,
                                 TextWrapping = TextWrapping.Wrap,
                                 Margin = new Thickness(0, 10, 0, 0),
@@ -258,7 +269,7 @@ public static class GameDialogService
                             new TextBlock { Text = "2. Click 'Generate new token (classic)'", TextWrapping = TextWrapping.Wrap },
                             new TextBlock { Text = "3. Give it a name (no special permissions needed)", TextWrapping = TextWrapping.Wrap },
                             new TextBlock { Text = "4. Click 'Generate token' at the bottom", TextWrapping = TextWrapping.Wrap },
-                            new TextBlock { Text = "5. Copy the token and paste it in the launcher Settings", TextWrapping = TextWrapping.Wrap },
+                            new TextBlock { Text = "5. Copy the token and paste it in Settings → Advanced → GitHub API Token", TextWrapping = TextWrapping.Wrap },
                             new TextBlock
                             {
                                 Text = "Do not share your token with anyone!",
@@ -267,13 +278,26 @@ public static class GameDialogService
                                 TextWrapping = TextWrapping.Wrap,
                                 Margin = new Thickness(0, 10, 0, 0),
                             },
-                            okButton,
+                            new StackPanel
+                            {
+                                Orientation = Orientation.Horizontal,
+                                HorizontalAlignment = HorizontalAlignment.Center,
+                                Spacing = 10,
+                                Margin = new Thickness(0, 10, 0, 0),
+                                Children = { openSettingsButton, closeButton },
+                            },
                         },
                     },
                 },
             };
 
-            okButton.Click += (_, _) => messageBox.Close();
+            openSettingsButton.Click += (_, _) =>
+            {
+                messageBox.Close();
+                if (desktop.MainWindow is MainWindow mainWindow)
+                    mainWindow.OpenGitHubApiTokenSettings();
+            };
+            closeButton.Click += (_, _) => messageBox.Close();
             await messageBox.ShowDialog(desktop.MainWindow);
         });
     }
