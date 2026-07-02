@@ -3,18 +3,19 @@
 [![.NET 9](https://img.shields.io/badge/.NET-9-512BD4)](https://dotnet.microsoft.com/)
 [![License](https://img.shields.io/github/license/tgeorgiadis/quiver)](https://github.com/tgeorgiadis/quiver/blob/main/LICENSE)
 
->## Important
->This software was previously knows as the "N64Recomp Launcher", but this had to be changed due to the continued requests by the N64Recomp Tool Developers. If you are interested in a version of the launcher that is primarily for N64 Recompiled Games, then check out [this version](https://github.com/SirDiabo/GithubLauncher/releases/tag/v1.70).
+> **About** — Quiver is a fork of [GithubLauncher](https://github.com/SirDiabo/GithubLauncher), extended with the features I wanted: **tag filters**, **library management with App Catalog**, and **UI improvements**. It was rebranded to **Quiver** to avoid using the GitHub trademark.
 
 ![Quiver Screenshot](Assets/LauncherScreenshot.png)
-A modern, user-friendly launcher application for managing and running GitHub-hosted applications. This tool streamlines the process of downloading, installing, and launching your favorite projects.
+
+A modern launcher for downloading, installing, and running apps from GitHub releases — with a personal library, community catalog subscriptions, and flexible filtering.
 
 ## Features
 
-- **Automated Updates**: Seamlessly download and install the latest releases from GitHub
-- **Version Management**: Stay up-to-date with automatic version checking and updates
-- **App Management**: Easy-to-use interface for launching GitHub-hosted apps
-- **Smart Integration**: Direct integration with GitHub releases for smooth updates
+- **Tag filters** — Organize and filter your library with custom tags
+- **App Catalog** — Subscribe to community app lists, review changes, and build your library from `apps.json`
+- **Automated updates** — Download and install the latest releases from GitHub
+- **Version management** — Automatic version checking and in-app update checks
+- **UI improvements** — Refined layout, catalog review workflow, and top-bar controls
 
 ## Getting Started
 
