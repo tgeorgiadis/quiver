@@ -59,4 +59,67 @@ public class LauncherUpdateServiceTests
             Directory.Delete(tempDir, true);
         }
     }
+
+    [Fact]
+    public void ReadInstalledVersion_prefers_version_txt_over_stale_update_check_cache()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        File.WriteAllText(Path.Combine(tempDir, "version.txt"), "v2.0.0");
+        File.WriteAllText(Path.Combine(tempDir, "update_check.json"),
+            """{"LastCheckTime":"2026-01-01T00:00:00Z","UpdateAvailable":false,"LastKnownVersion":"v2.0.0","CurrentVersion":"v2.1.0"}""");
+
+        try
+        {
+            new LauncherUpdateService().ReadInstalledVersion(tempDir).Should().Be("v2.0.0");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ShouldSkipUpdateCheck_skips_only_within_interval()
+    {
+        var interval = LauncherUpdateService.DefaultUpdateCheckInterval;
+        var lastCheck = new DateTime(2026, 6, 17, 12, 0, 0, DateTimeKind.Utc);
+
+        LauncherUpdateService.ShouldSkipUpdateCheck(
+            lastCheck, lastCheck.Add(interval - TimeSpan.FromSeconds(1)), interval).Should().BeTrue();
+
+        LauncherUpdateService.ShouldSkipUpdateCheck(
+            lastCheck, lastCheck.Add(interval), interval).Should().BeFalse();
+
+        LauncherUpdateService.ShouldSkipUpdateCheck(
+            DateTime.MinValue, DateTime.UtcNow, interval).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldSkipUpdateCheck_does_not_permanently_skip_when_cache_says_up_to_date()
+    {
+        var interval = LauncherUpdateService.DefaultUpdateCheckInterval;
+        var lastCheck = DateTime.UtcNow - interval - TimeSpan.FromMinutes(1);
+
+        LauncherUpdateService.ShouldSkipUpdateCheck(lastCheck, DateTime.UtcNow, interval).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsLauncherUpdatePending_uses_version_txt_when_cache_current_version_is_stale()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        File.WriteAllText(Path.Combine(tempDir, "version.txt"), "v2.0.0");
+        File.WriteAllText(Path.Combine(tempDir, "update_check.json"),
+            """{"LastCheckTime":"2026-01-01T00:00:00Z","UpdateAvailable":true,"LastKnownVersion":"v2.1.0","CurrentVersion":"v2.1.0"}""");
+
+        try
+        {
+            new LauncherUpdateService().IsLauncherUpdatePending(tempDir).Should().BeTrue();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
 }

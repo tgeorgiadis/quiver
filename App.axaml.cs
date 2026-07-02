@@ -137,7 +137,7 @@ public class App : Application, INotifyPropertyChanged
     private const string BackupDirectoryPrefix = "backup_";
     private const int UpdaterProcessExitTimeoutSeconds = 120;
 
-    private static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan UpdateCheckInterval = LauncherUpdateService.DefaultUpdateCheckInterval;
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan StaleBackupCleanupThreshold = TimeSpan.FromMinutes(10);
 
@@ -160,10 +160,12 @@ public class App : Application, INotifyPropertyChanged
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow
+            var mainWindow = new MainWindow
             {
                 DataContext = this
             };
+            mainWindow._app = this;
+            desktop.MainWindow = mainWindow;
         }
 
         base.OnFrameworkInitializationCompleted();
@@ -241,35 +243,12 @@ public class App : Application, INotifyPropertyChanged
         string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
 
         UpdateCheckInfo updateCheckInfo = await LoadUpdateCheckInfo(updateCheckFilePath);
-        string currentVersionString = updateCheckInfo.CurrentVersion;
-
-        // get it from version.txt if it exists
-        if (string.IsNullOrEmpty(currentVersionString))
-        {
-            string versionFilePath = Path.Combine(currentAppDirectory, VersionFileName);
-            if (File.Exists(versionFilePath))
-            {
-                try
-                {
-                    currentVersionString = (await File.ReadAllTextAsync(versionFilePath).ConfigureAwait(false))?.Trim() ?? "0.0";
-                }
-                catch
-                {
-                    currentVersionString = "0.0";
-                }
-            }
-            else
-            {
-                currentVersionString = "0.0";
-            }
-
-            // Store it in update check info
-            updateCheckInfo.CurrentVersion = currentVersionString;
-            await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
-        }
+        string currentVersionString = LauncherVersionService.ReadInstalledVersion(currentAppDirectory);
+        updateCheckInfo.CurrentVersion = currentVersionString;
 
         // Skip check if not manual and recently checked
-        if (!isManualCheck && ShouldSkipUpdateCheck(updateCheckInfo, currentVersionString))
+        if (!isManualCheck && LauncherUpdateService.ShouldSkipUpdateCheck(
+                updateCheckInfo.LastCheckTime, DateTime.UtcNow, UpdateCheckInterval))
         {
             Trace.WriteLine($"Skipping app update check - last checked {updateCheckInfo.LastCheckTime}, current version {currentVersionString}");
 
@@ -375,7 +354,7 @@ public class App : Application, INotifyPropertyChanged
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.GitHubApiToken);
             }
 
-            if (!string.IsNullOrEmpty(updateCheckInfo.ETag))
+            if (!isManualCheck && !string.IsNullOrEmpty(updateCheckInfo.ETag))
             {
                 httpClient.DefaultRequestHeaders.TryAddWithoutValidation("If-None-Match", updateCheckInfo.ETag);
             }
@@ -666,30 +645,6 @@ public class App : Application, INotifyPropertyChanged
         {
             Trace.WriteLine($"Error saving update check info: {ex.Message}");
         }
-    }
-
-    private bool ShouldSkipUpdateCheck(UpdateCheckInfo info, string currentVersion)
-    {
-        if (info.LastCheckTime == DateTime.MinValue)
-            return false;
-
-        if (DateTime.UtcNow - info.LastCheckTime < UpdateCheckInterval)
-            return true;
-
-        if (!string.IsNullOrEmpty(info.CurrentVersion) &&
-            !info.CurrentVersion.Equals(currentVersion.TrimStart('v'), StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (!string.IsNullOrEmpty(info.LastKnownVersion) &&
-            !string.IsNullOrEmpty(currentVersion) &&
-            !IsNewerVersion(info.LastKnownVersion, currentVersion))
-        {
-            return true;
-        }
-
-        return false;
     }
 
     private bool IsNewerVersion(string latestVersion, string currentVersion) =>

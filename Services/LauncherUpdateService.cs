@@ -15,34 +15,25 @@ public sealed class LauncherUpdateService
 {
     private static readonly QuiverProfile Profile = QuiverProfile.Instance;
 
+    public static readonly TimeSpan DefaultUpdateCheckInterval = TimeSpan.FromMinutes(5);
+
     public static int ComputePendingUpdatesCount(bool launcherUpdatePending, int gameUpdatesPending) =>
         (launcherUpdatePending ? 1 : 0) + Math.Max(0, gameUpdatesPending);
+
+    /// <summary>
+    /// Returns true when a non-manual update check can be skipped (time-based throttle only).
+    /// </summary>
+    public static bool ShouldSkipUpdateCheck(DateTime lastCheckTime, DateTime utcNow, TimeSpan interval)
+    {
+        if (lastCheckTime == DateTime.MinValue)
+            return false;
+
+        return utcNow - lastCheckTime < interval;
+    }
 
     public string ReadInstalledVersion(string? baseDirectory = null)
     {
         baseDirectory ??= AppDomain.CurrentDomain.BaseDirectory;
-        var updateCheckFilePath = Path.Combine(baseDirectory, "update_check.json");
-
-        try
-        {
-            if (File.Exists(updateCheckFilePath))
-            {
-                var json = File.ReadAllText(updateCheckFilePath);
-                var updateInfo = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
-                if (updateInfo != null &&
-                    updateInfo.TryGetValue("CurrentVersion", out var versionElement))
-                {
-                    var version = versionElement.GetString();
-                    if (!string.IsNullOrWhiteSpace(version))
-                        return version;
-                }
-            }
-        }
-        catch
-        {
-            // Fall through to version.txt
-        }
-
         return LauncherVersionService.ReadInstalledVersion(baseDirectory);
     }
 
@@ -83,10 +74,7 @@ public sealed class LauncherUpdateService
         if (!info.UpdateAvailable || string.IsNullOrWhiteSpace(info.LastKnownVersion))
             return false;
 
-        var installedVersion = string.IsNullOrWhiteSpace(info.CurrentVersion)
-            ? ReadInstalledVersion(baseDirectory)
-            : info.CurrentVersion;
-
+        var installedVersion = ReadInstalledVersion(baseDirectory);
         return LauncherVersionService.IsNewerVersion(info.LastKnownVersion, installedVersion);
     }
 

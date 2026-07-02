@@ -1070,37 +1070,7 @@ namespace Quiver
             try
             {
                 string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
-                string updateCheckFilePath = Path.Combine(currentAppDirectory, "update_check.json");
-
-                if (File.Exists(updateCheckFilePath))
-                {
-                    try
-                    {
-                        var json = File.ReadAllText(updateCheckFilePath);
-                        var updateInfo = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
-                        if (updateInfo != null && updateInfo.TryGetValue("CurrentVersion", out var versionElement))
-                        {
-                            currentVersionString = versionElement.GetString() ?? "v0.0";
-                            return;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"Failed to parse update_check.json: {ex.Message}");
-                        // Fall through to version.txt check
-                    }
-                }
-
-                // Fallback to version.txt
-                string versionFilePath = Path.Combine(currentAppDirectory, "version.txt");
-                if (File.Exists(versionFilePath))
-                {
-                    currentVersionString = File.ReadAllText(versionFilePath).Trim();
-                }
-                else
-                {
-                    currentVersionString = "v0.0";
-                }
+                currentVersionString = LauncherVersionService.ReadInstalledVersion(currentAppDirectory);
             }
             catch (Exception ex)
             {
