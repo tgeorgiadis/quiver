@@ -105,7 +105,7 @@ You can add more catalogs in **App Catalog → Add Source** (remote raw GitHub U
 
 When a subscribed list changes remotely, Quiver detects the diff on startup or when you click **Refresh All Sources**, then shows **Review changes** with per-app actions (Add, Replace, Merge, Ignore, Hide). Use **Not in library** to browse catalog apps you haven't added yet (including ignored ones). When every review item is synced or resolved, the catalog version is marked reviewed automatically. Use **Skip & mark reviewed** only to dismiss remaining items without syncing them.
 
-See [`community-app-lists/README.md`](community-app-lists/README.md) for sample list format. The canonical community catalog lives in [`tgeorgiadis/quiver-community-app-catalog`](https://github.com/tgeorgiadis/quiver-community-app-catalog).
+See the [Quiver Community App Catalog](https://github.com/tgeorgiadis/quiver-community-app-catalog) repo for sample list format and the canonical community catalog.
 
 #### App Entry Properties
 

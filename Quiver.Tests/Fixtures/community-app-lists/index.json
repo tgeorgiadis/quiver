@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "lists": [
+    {
+      "id": "n64-recomp",
+      "name": "N64 Recomp Games",
+      "description": "N64 recompilation ports and related Harbour Masters projects",
+      "location": "community-app-lists/n64-recomp.json",
+      "listVersion": "1.0.0"
+    }
+  ]
+}
