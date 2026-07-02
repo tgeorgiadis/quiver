@@ -76,4 +76,87 @@ public class TagHelperTests
         TagHelper.MatchesFilterTags(["recomp"], ["n64"], TagFilterMatchMode.Any).Should().BeFalse();
         TagHelper.MatchesFilterTags(["recomp"], ["n64"], TagFilterMatchMode.All).Should().BeFalse();
     }
+
+    [Fact]
+    public void MatchesDisplayFilter_include_only_matches_include_rules()
+    {
+        TagHelper.MatchesDisplayFilter(
+            ["n64", "recomp"],
+            ["n64"],
+            TagFilterMatchMode.Any,
+            [],
+            TagFilterMatchMode.Any).Should().BeTrue();
+
+        TagHelper.MatchesDisplayFilter(
+            ["pc"],
+            ["n64"],
+            TagFilterMatchMode.Any,
+            [],
+            TagFilterMatchMode.Any).Should().BeFalse();
+    }
+
+    [Fact]
+    public void MatchesDisplayFilter_include_and_exclude_any_hides_matching_apps()
+    {
+        TagHelper.MatchesDisplayFilter(
+            ["n64"],
+            ["n64"],
+            TagFilterMatchMode.Any,
+            ["ai"],
+            TagFilterMatchMode.Any).Should().BeTrue();
+
+        TagHelper.MatchesDisplayFilter(
+            ["n64", "ai"],
+            ["n64"],
+            TagFilterMatchMode.Any,
+            ["ai"],
+            TagFilterMatchMode.Any).Should().BeFalse();
+    }
+
+    [Fact]
+    public void MatchesDisplayFilter_exclude_all_requires_every_exclude_tag()
+    {
+        TagHelper.MatchesDisplayFilter(
+            ["n64", "ai"],
+            ["n64"],
+            TagFilterMatchMode.Any,
+            ["ai", "wip"],
+            TagFilterMatchMode.All).Should().BeTrue();
+
+        TagHelper.MatchesDisplayFilter(
+            ["n64", "ai", "wip"],
+            ["n64"],
+            TagFilterMatchMode.Any,
+            ["ai", "wip"],
+            TagFilterMatchMode.All).Should().BeFalse();
+    }
+
+    [Fact]
+    public void MatchesDisplayFilter_exclude_only_shows_non_matching_apps()
+    {
+        TagHelper.MatchesDisplayFilter(
+            ["pc"],
+            [],
+            TagFilterMatchMode.Any,
+            ["ai"],
+            TagFilterMatchMode.Any).Should().BeTrue();
+
+        TagHelper.MatchesDisplayFilter(
+            ["ai"],
+            [],
+            TagFilterMatchMode.Any,
+            ["ai"],
+            TagFilterMatchMode.Any).Should().BeFalse();
+    }
+
+    [Fact]
+    public void MatchesDisplayFilter_empty_exclude_does_not_filter_out()
+    {
+        TagHelper.MatchesDisplayFilter(
+            ["n64", "ai"],
+            ["n64"],
+            TagFilterMatchMode.Any,
+            [],
+            TagFilterMatchMode.Any).Should().BeTrue();
+    }
 }

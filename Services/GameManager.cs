@@ -197,16 +197,16 @@ namespace Quiver.Services
         public async Task LoadGamesAsync(bool forceUpdateCheck = false)
         {
             _settings = _settingsStore.Load();
+            _settings.EnsureInitialized();
+
+            if (AppCatalogService.MigrateLegacyCatalogSources(_settings))
+                _settingsStore.Save(_settings);
+
+            await _catalogService.RefreshAllSourcesAsync(_httpClient, _settings).ConfigureAwait(false);
+            _settingsStore.Save(_settings);
 
             Games ??= [];
-            var localApps = await _catalogService.LoadLocalAppsAsync();
-            var localRepos = new HashSet<string>(
-                localApps
-                    .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                    .Select(a => a.Repository!),
-                StringComparer.OrdinalIgnoreCase);
-
-            var allApps = await _catalogService.LoadMergedCatalogAsync(_httpClient, _settings);
+            var allApps = await _catalogService.LoadLocalCatalogAsync(_settings).ConfigureAwait(false);
             _catalogApps = allApps.Where(app => app != null).Cast<GameInfo>().ToList();
 
             foreach (var app in _catalogApps)
@@ -214,8 +214,7 @@ namespace Quiver.Services
                 if (app == null)
                     continue;
 
-                app.IsInLocalAppsJson = !string.IsNullOrWhiteSpace(app.Repository) &&
-                    localRepos.Contains(app.Repository);
+                app.IsInLocalAppsJson = true;
             }
 
             if (!string.IsNullOrEmpty(_appsFolder))
@@ -380,7 +379,12 @@ namespace Quiver.Services
                 if (filter != null)
                 {
                     visibleGames = _allGames.Where(game =>
-                        TagHelper.MatchesFilterTags(game.Tags, filter.Tags, filter.MatchMode));
+                        TagHelper.MatchesDisplayFilter(
+                            game.Tags,
+                            filter.Tags,
+                            filter.MatchMode,
+                            filter.ExcludeTags,
+                            filter.ExcludeMatchMode));
                 }
             }
 

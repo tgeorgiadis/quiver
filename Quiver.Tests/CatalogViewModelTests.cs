@@ -17,6 +17,8 @@ public class CatalogViewModelTests
             Name = "Local",
             Location = "apps.json",
             Enabled = true,
+            CachedListVersion = "1.0.0",
+            AcknowledgedListVersion = "1.0.0",
         });
 
         var viewModel = new CatalogViewModel();
@@ -24,40 +26,17 @@ public class CatalogViewModelTests
 
         items.Should().ContainSingle();
         items[0].Name.Should().Be("Local");
+        items[0].StatusText.Should().Contain("Cached v1.0.0");
     }
 
     [Fact]
-    public void IsAlreadySubscribed_matches_community_id_or_location()
-    {
-        var settings = new AppSettings();
-        settings.EnsureInitialized();
-        settings.AppCatalogSources.Add(new AppCatalogSource
-        {
-            CommunityListId = "n64-recomp",
-            Location = "https://example.com/n64-recomp.json",
-        });
-
-        var viewModel = new CatalogViewModel();
-        viewModel.IsAlreadySubscribed(settings, new CommunityCatalogListEntry
-        {
-            Id = "n64-recomp",
-            Location = "https://example.com/other.json",
-        }).Should().BeTrue();
-    }
-
-    [Fact]
-    public void CreateSourceFromCommunityEntry_uses_entry_name()
+    public void CreateSource_sets_enabled_defaults()
     {
         var viewModel = new CatalogViewModel();
-        var source = viewModel.CreateSourceFromCommunityEntry(new CommunityCatalogListEntry
-        {
-            Id = "list-id",
-            Name = "N64 Recomp",
-            Location = "https://example.com/list.json",
-        });
+        var source = viewModel.CreateSource("My List", "https://example.com/list.json");
 
-        source.Name.Should().Be("N64 Recomp");
-        source.CommunityListId.Should().Be("list-id");
+        source.Name.Should().Be("My List");
+        source.Location.Should().Be("https://example.com/list.json");
         source.Enabled.Should().BeTrue();
     }
 }

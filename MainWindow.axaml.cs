@@ -28,6 +28,18 @@ using NAudio.Wave;
 
 namespace Quiver
 {
+    public enum MainViewMode
+    {
+        Library,
+        AppCatalog,
+    }
+
+    public enum AppCatalogSubView
+    {
+        Sources,
+        Review,
+    }
+
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
         private readonly GameManager _gameManager;
@@ -37,9 +49,132 @@ namespace Quiver
         public ObservableCollection<GameInfo> Games => _gameManager?.Games ?? new ObservableCollection<GameInfo>();
         public ObservableCollection<TagDisplayFilterListItem> TagDisplayFilters { get; } = new();
         public ObservableCollection<CatalogSourceListItem> CatalogSources { get; } = new();
+        public ObservableCollection<CatalogSyncRowItem> CatalogSyncRows { get; } = new();
+
+        public int CatalogReviewBadgeCount =>
+            CatalogSources.Where(s => s.Enabled).Sum(s => s.PendingReviewCount);
+
+        public bool CatalogReviewBadgeVisible => CatalogReviewBadgeCount > 0;
+        private readonly LauncherUpdateService _launcherUpdateService = new();
+        private bool _isCheckingUpdates;
+        private int _pendingUpdatesCount;
+        private DateTime? _lastUpdateCheckTime;
+
+        public bool IsCheckingUpdates
+        {
+            get => _isCheckingUpdates;
+            private set
+            {
+                if (_isCheckingUpdates == value)
+                    return;
+
+                _isCheckingUpdates = value;
+                OnPropertyChanged(nameof(IsCheckingUpdates));
+                NotifyUpdateCheckUiProperties();
+            }
+        }
+
+        public int PendingUpdatesCount
+        {
+            get => _pendingUpdatesCount;
+            private set
+            {
+                if (_pendingUpdatesCount == value)
+                    return;
+
+                _pendingUpdatesCount = value;
+                OnPropertyChanged(nameof(PendingUpdatesCount));
+                NotifyUpdateCheckUiProperties();
+            }
+        }
+
+        public bool UpdatesBadgeVisible => PendingUpdatesCount > 0 && !IsCheckingUpdates;
+
+        public string UpdatesBadgeText =>
+            PendingUpdatesCount > 9 ? "9+" : PendingUpdatesCount.ToString();
+
+        public double CheckForUpdatesIconOpacity => IsCheckingUpdates ? 0.55 : 1.0;
+
+        public DateTime? LastUpdateCheckTime
+        {
+            get => _lastUpdateCheckTime;
+            private set
+            {
+                if (_lastUpdateCheckTime == value)
+                    return;
+
+                _lastUpdateCheckTime = value;
+                OnPropertyChanged(nameof(LastUpdateCheckTime));
+                NotifyUpdateCheckUiProperties();
+            }
+        }
+
+        public string CheckForUpdatesToolTip
+        {
+            get
+            {
+                if (IsCheckingUpdates)
+                    return "Checking launcher and games…";
+
+                var lastChecked = GetLastCheckedText();
+                if (PendingUpdatesCount > 0)
+                {
+                    var updateLabel = PendingUpdatesCount == 1
+                        ? "1 update available"
+                        : $"{PendingUpdatesCount} updates available";
+                    return string.IsNullOrEmpty(lastChecked)
+                        ? updateLabel
+                        : $"{updateLabel} · {lastChecked}";
+                }
+
+                if (!string.IsNullOrEmpty(lastChecked))
+                    return $"Up to date · {lastChecked}";
+
+                return "Check for updates";
+            }
+        }
+
+        private void NotifyUpdateCheckUiProperties()
+        {
+            OnPropertyChanged(nameof(UpdatesBadgeVisible));
+            OnPropertyChanged(nameof(UpdatesBadgeText));
+            OnPropertyChanged(nameof(CheckForUpdatesIconOpacity));
+            OnPropertyChanged(nameof(CheckForUpdatesToolTip));
+        }
+
+        private void RefreshUpdateCheckStatus(DateTime? manualCheckTime = null)
+        {
+            if (manualCheckTime.HasValue)
+                LastUpdateCheckTime = manualCheckTime.Value;
+            else
+            {
+                var info = _launcherUpdateService.LoadUpdateCheckInfo();
+                if (info.LastCheckTime != default)
+                    LastUpdateCheckTime = info.LastCheckTime.ToLocalTime();
+            }
+
+            var launcherPending = _launcherUpdateService.IsLauncherUpdatePending();
+            var gamePending = Games.Count(g => g.Status == GameStatus.UpdateAvailable);
+            PendingUpdatesCount = LauncherUpdateService.ComputePendingUpdatesCount(launcherPending, gamePending);
+        }
+
+        private readonly CatalogSyncViewModel _catalogSyncViewModel = new();
+        private AppCatalogSource? _activeCatalogSyncSource;
+        private MainViewMode _mainViewMode = MainViewMode.Library;
+        private AppCatalogSubView _appCatalogSubView = AppCatalogSubView.Sources;
         private bool _suppressCatalogSourceUiEvents;
+        private bool _suppressSettingsUiEvents;
         private bool _isRefreshingCatalogSources;
         private string? _editingDisplayFilterId;
+        private string? _tagFilterDragId;
+        private double _tagFilterDragStartY;
+        private double _tagFilterDragListTop;
+        private double _tagFilterDragRowStride;
+        private bool _tagFilterDragActive;
+        private bool _tagFilterSuppressRowClick;
+        private List<string>? _tagFilterOrderAtDragStart;
+        private Button? _tagFilterDragRowButton;
+        private IPointer? _tagFilterDragPointer;
         public AppSettings _settings = new();
         public App _app = null!;
         public AppSettings Settings => _settings;
@@ -296,6 +431,13 @@ namespace Quiver
             UpdateThemeColors();
 
             _settings.EnsureInitialized();
+            if (_settings.FirstStartup)
+            {
+                ApplySquareLayoutPreset();
+                _settings.FirstStartup = false;
+                AppSettings.Save(_settings);
+            }
+
             LoadCurrentVersion();
             LoadCurrentPlatform();
             UpdateSettingsUI();
@@ -332,6 +474,7 @@ namespace Quiver
                 {
                     OnPropertyChanged(nameof(Games));
                     UpdateContinueButtonState();
+                    RefreshUpdateCheckStatus();
                     Debug.WriteLine($"Games collection changed. Count: {_gameManager.Games?.Count ?? 0}");
                     foreach (var game in _gameManager.Games ?? new())
                     {
@@ -980,7 +1123,14 @@ namespace Quiver
                 await _gameManager.LoadGamesAsync();
                 _settings = AppSettings.Load();
 
+                await _gameManager.CatalogService.EnsureDefaultCommunitySourceFetchedAsync(
+                    _gameManager.HttpClient,
+                    _settings);
+                AppSettings.Save(_settings);
+
                 ApplySorting();
+
+                await RefreshAllCatalogPendingCountsAsync();
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
@@ -989,6 +1139,8 @@ namespace Quiver
                     RefreshCatalogSourcesList();
                     RefreshTagDisplayFiltersUI();
                     RefreshSidebarFilterSelection();
+                    UpdateMainViewUi();
+                    RefreshUpdateCheckStatus();
 
                     if (!_hasInitializedFocus)
                     {
@@ -997,7 +1149,7 @@ namespace Quiver
                     }
                 });
 
-                await ProcessPendingCatalogUpdatesAsync();
+                await NotifyCatalogUpdatesIfNeededAsync();
             }
             catch (Exception ex)
             {
@@ -1018,10 +1170,10 @@ namespace Quiver
                     return;
                 }
 
-                // Try Settings button
-                if (this.FindControl<Button>("SettingsButton") is Button settingsBtn)
+                // Try Library nav button
+                if (this.FindControl<Button>("LibraryNavButton") is Button libraryBtn)
                 {
-                    settingsBtn.Focus();
+                    libraryBtn.Focus();
                     return;
                 }
 
@@ -1076,9 +1228,9 @@ namespace Quiver
 
         public void LayoutPreset_Landscape_Click(object sender, RoutedEventArgs e)
         {
-            _settings.IconFill = true;
+            _settings.IconFill = false;
             _settings.UseGridView = true;
-            _settings.GridCompactCards = true;
+            _settings.GridCompactCards = false;
             _settings.SlotSize = 304;
             _settings.IconSize = 220;
             _settings.IconMargin = 0;
@@ -1091,9 +1243,9 @@ namespace Quiver
 
         public void LayoutPreset_Portrait_Click(object sender, RoutedEventArgs e)
         {
-            _settings.IconFill = true;
+            _settings.IconFill = false;
             _settings.UseGridView = true;
-            _settings.GridCompactCards = true;
+            _settings.GridCompactCards = false;
             _settings.SlotSize = 144;
             _settings.IconSize = 200;
             _settings.IconMargin = 0;
@@ -1106,16 +1258,7 @@ namespace Quiver
 
         public void LayoutPreset_Square_Click(object sender, RoutedEventArgs e)
         {
-            _settings.IconFill = false;
-            _settings.UseGridView = true;
-            _settings.GridCompactCards = false;
-            _settings.SlotSize = 152;
-            _settings.IconSize = 124;
-            _settings.ActionButtonSize = 36;
-            _settings.IconMargin = 0;
-            _settings.SlotTextMargin = 0;
-            _settings.IconOpacity = 1.0f;
-            InfoTextLength = "*";
+            ApplySquareLayoutPreset();
             OnSettingChanged();
             UpdateSettingsUI();
         }
@@ -1147,6 +1290,20 @@ namespace Quiver
             InfoTextLength = "*";
             OnSettingChanged();
             UpdateSettingsUI();
+        }
+
+        private void ApplySquareLayoutPreset()
+        {
+            _settings.IconFill = false;
+            _settings.UseGridView = true;
+            _settings.GridCompactCards = false;
+            _settings.SlotSize = 152;
+            _settings.IconSize = 124;
+            _settings.ActionButtonSize = 36;
+            _settings.IconMargin = 0;
+            _settings.SlotTextMargin = 0;
+            _settings.IconOpacity = 1.0f;
+            InfoTextLength = "*";
         }
 
         private async void GameButton_Click(object sender, RoutedEventArgs e)
@@ -1399,7 +1556,22 @@ namespace Quiver
 
             contextMenu.PlacementTarget = anchor;
             contextMenu.Placement = PlacementMode.Bottom;
+            AttachOptionsMenuClosedHandler(contextMenu, anchor);
             contextMenu.Open(anchor);
+        }
+
+        private void AttachOptionsMenuClosedHandler(ContextMenu contextMenu, Control anchor)
+        {
+            void OnClosed(object? sender, EventArgs e)
+            {
+                contextMenu.Closed -= OnClosed;
+                var focusManager = TopLevel.GetTopLevel(this)?.FocusManager;
+                if (ReferenceEquals(focusManager?.GetFocusedElement(), anchor))
+                    focusManager.ClearFocus();
+            }
+
+            contextMenu.Closed -= OnClosed;
+            contextMenu.Closed += OnClosed;
         }
 
         private void GameCard_PointerPressed(object? sender, PointerPressedEventArgs e)
@@ -1414,24 +1586,38 @@ namespace Quiver
                 return;
             }
 
-            var optionsButton = card.GetVisualDescendants()
-                .OfType<Button>()
-                .FirstOrDefault(button => button.ContextMenu != null);
+            Control? placementTarget = null;
+            ContextMenu? contextMenu = card.ContextMenu;
 
-            if (optionsButton?.ContextMenu == null)
+            if (contextMenu != null)
+            {
+                placementTarget = card;
+            }
+            else
+            {
+                var optionsButton = card.GetVisualDescendants()
+                    .OfType<Button>()
+                    .FirstOrDefault(button => button.ContextMenu != null);
+
+                contextMenu = optionsButton?.ContextMenu;
+                placementTarget = optionsButton;
+            }
+
+            if (contextMenu == null || placementTarget == null)
             {
                 return;
             }
 
-            optionsButton.ContextMenu.PlacementTarget = optionsButton;
-            optionsButton.ContextMenu.Placement = PlacementMode.Bottom;
-            if (double.IsNaN(optionsButton.ContextMenu.MaxHeight) || optionsButton.ContextMenu.MaxHeight <= 0)
+            contextMenu.PlacementTarget = placementTarget;
+            contextMenu.Placement = PlacementMode.Bottom;
+            if (double.IsNaN(contextMenu.MaxHeight) || contextMenu.MaxHeight <= 0)
             {
                 var availableHeight = Bounds.Height > 0 ? Bounds.Height - 120 : 560;
-                optionsButton.ContextMenu.MaxHeight = Math.Max(240, availableHeight);
+                contextMenu.MaxHeight = Math.Max(240, availableHeight);
             }
 
-            optionsButton.ContextMenu.Open(optionsButton);
+            AttachOptionsMenuClosedHandler(contextMenu, placementTarget);
+            contextMenu.Open(placementTarget);
             e.Handled = true;
         }
 
@@ -1817,6 +2003,7 @@ namespace Quiver
             {
                 button.ContextMenu.PlacementTarget = button;
                 button.ContextMenu.Placement = PlacementMode.Bottom;
+                AttachOptionsMenuClosedHandler(button.ContextMenu, button);
                 button.ContextMenu.Open();
             }
         }
@@ -1891,7 +2078,11 @@ namespace Quiver
 
         private void UpdateSettingsUI()
         {
-            if (_settings != null)
+            if (_settings == null)
+                return;
+
+            _suppressSettingsUiEvents = true;
+            try
             {
                 if (IconOpacitySlider != null)
                     IconOpacitySlider.Value = _settings.IconOpacity;
@@ -1982,6 +2173,10 @@ namespace Quiver
                 RefreshTagDisplayFiltersUI();
                 RefreshSidebarFilterSelection();
             }
+            finally
+            {
+                _suppressSettingsUiEvents = false;
+            }
         }
 
         private void RefreshTagDisplayFiltersUI()
@@ -2027,13 +2222,172 @@ namespace Quiver
                 _suppressCatalogSourceUiEvents = false;
                 _isRefreshingCatalogSources = false;
             }
+
+            RefreshCatalogBadgeCounts();
+            UpdateCatalogSourcesEmptyState();
         }
 
-        private enum CatalogSourceRemovalChoice
+        private void RefreshCatalogBadgeCounts()
         {
-            Cancel,
-            KeepApps,
-            RemoveApps,
+            OnPropertyChanged(nameof(CatalogReviewBadgeCount));
+            OnPropertyChanged(nameof(CatalogReviewBadgeVisible));
+        }
+
+        private void UpdateCatalogSourcesEmptyState()
+        {
+            if (this.FindControl<TextBlock>("CatalogSourcesEmptyText") is TextBlock emptyText)
+                emptyText.IsVisible = CatalogSources.Count == 0;
+        }
+
+        private void LibraryNavButton_Click(object? sender, RoutedEventArgs e) => ShowLibraryView();
+
+        private void AppCatalogNavButton_Click(object? sender, RoutedEventArgs e) =>
+            ShowAppCatalogSourcesView();
+
+        private void CatalogReviewBack_Click(object? sender, RoutedEventArgs e) =>
+            ShowAppCatalogSourcesView();
+
+        private void ShowLibraryView()
+        {
+            _mainViewMode = MainViewMode.Library;
+            _appCatalogSubView = AppCatalogSubView.Sources;
+            UpdateMainViewUi();
+        }
+
+        private void ShowAppCatalogSourcesView()
+        {
+            _mainViewMode = MainViewMode.AppCatalog;
+            _appCatalogSubView = AppCatalogSubView.Sources;
+            _activeCatalogSyncSource = null;
+            CatalogSyncRows.Clear();
+            UpdateMainViewUi();
+        }
+
+        private void ShowAppCatalogReviewView(AppCatalogSource source)
+        {
+            _mainViewMode = MainViewMode.AppCatalog;
+            _appCatalogSubView = AppCatalogSubView.Review;
+            _activeCatalogSyncSource = source;
+            UpdateMainViewUi();
+
+            if (this.FindControl<TextBlock>("HeaderTitleText") is TextBlock headerTitle)
+                headerTitle.Text = $"Review: {source.Name}";
+        }
+
+        private void UpdateMainViewUi()
+        {
+            var isLibrary = _mainViewMode == MainViewMode.Library;
+            var isCatalog = _mainViewMode == MainViewMode.AppCatalog;
+            var isReview = isCatalog && _appCatalogSubView == AppCatalogSubView.Review;
+
+            if (this.FindControl<ScrollViewer>("LibraryContentPanel") is ScrollViewer libraryPanel)
+                libraryPanel.IsVisible = isLibrary;
+
+            if (this.FindControl<Grid>("CatalogContentPanel") is Grid catalogPanel)
+                catalogPanel.IsVisible = isCatalog;
+
+            if (this.FindControl<ScrollViewer>("CatalogSourcesPanel") is ScrollViewer sourcesPanel)
+                sourcesPanel.IsVisible = isCatalog && !isReview;
+
+            if (this.FindControl<Grid>("CatalogReviewPanel") is Grid reviewPanel)
+                reviewPanel.IsVisible = isReview;
+
+            if (this.FindControl<StackPanel>("LibraryTopBarPanel") is StackPanel libraryTopBar)
+                libraryTopBar.IsVisible = isLibrary;
+
+            if (this.FindControl<Button>("CatalogReviewBackButton") is Button backButton)
+                backButton.IsVisible = isReview;
+
+            if (this.FindControl<Grid>("LibraryFiltersPanel") is Grid libraryFilters)
+                libraryFilters.IsVisible = isLibrary;
+
+            LibraryNavButton?.Classes.Set("selected", isLibrary);
+            AppCatalogNavButton?.Classes.Set("selected", isCatalog);
+
+            if (this.FindControl<TextBlock>("HeaderTitleText") is TextBlock headerTitle)
+            {
+                headerTitle.Text = isLibrary
+                    ? "Library"
+                    : isReview && _activeCatalogSyncSource != null
+                        ? $"Review: {_activeCatalogSyncSource.Name}"
+                        : "App Catalog";
+            }
+        }
+
+        private static readonly (string Tag, CatalogReviewFilter Filter)[] CatalogReviewFilters =
+        [
+            ("All", CatalogReviewFilter.All),
+            ("NeedsReview", CatalogReviewFilter.NeedsReview),
+            ("New", CatalogReviewFilter.New),
+            ("NotInLibrary", CatalogReviewFilter.NotInLibrary),
+            ("Changed", CatalogReviewFilter.Changed),
+            ("UpToDate", CatalogReviewFilter.UpToDate),
+            ("LocalOnly", CatalogReviewFilter.LocalOnly),
+            ("Hidden", CatalogReviewFilter.Hidden),
+        ];
+
+        private void CatalogReviewFilter_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string tag })
+                return;
+
+            var filter = CatalogReviewFilters.FirstOrDefault(f => f.Tag == tag).Filter;
+            _catalogSyncViewModel.ReviewFilter = filter;
+            RefreshCatalogReviewFilterButtons(tag);
+            ApplyCatalogSyncFilter();
+        }
+
+        private void RefreshCatalogReviewFilterButtons(string selectedTag)
+        {
+            foreach (var (tag, _) in CatalogReviewFilters)
+            {
+                var buttonName = tag switch
+                {
+                    "All" => "CatalogFilterAllButton",
+                    "NeedsReview" => "CatalogFilterNeedsReviewButton",
+                    "New" => "CatalogFilterNewButton",
+                    "NotInLibrary" => "CatalogFilterNotInLibraryButton",
+                    "Changed" => "CatalogFilterChangedButton",
+                    "UpToDate" => "CatalogFilterUpToDateButton",
+                    "LocalOnly" => "CatalogFilterLocalOnlyButton",
+                    "Hidden" => "CatalogFilterHiddenButton",
+                    _ => null,
+                };
+
+                if (buttonName != null && this.FindControl<Button>(buttonName) is Button button)
+                    button.Classes.Set("selected", tag == selectedTag);
+            }
+
+            UpdateCatalogReviewFilterChipLabels();
+        }
+
+        private void UpdateCatalogReviewFilterChipLabels()
+        {
+            if (this.FindControl<Button>("CatalogFilterNeedsReviewButton") is Button needsReviewButton)
+            {
+                var count = _catalogSyncViewModel.NeedsReviewCount;
+                needsReviewButton.Content = count > 0 ? $"Needs review ({count})" : "Needs review";
+            }
+
+            if (this.FindControl<Button>("CatalogFilterNotInLibraryButton") is Button notInLibraryButton)
+            {
+                var count = _catalogSyncViewModel.NotInLibraryCount;
+                notInLibraryButton.Content = count > 0 ? $"Not in library ({count})" : "Not in library";
+            }
+
+            if (this.FindControl<Button>("CatalogFilterHiddenButton") is Button hiddenButton)
+            {
+                var count = _catalogSyncViewModel.HiddenCount;
+                hiddenButton.Content = count > 0 ? $"Hidden ({count})" : "Hidden";
+            }
+        }
+
+        private async Task RefreshAllCatalogPendingCountsAsync()
+        {
+            foreach (var source in _settings.AppCatalogSources.Where(s => s.Enabled))
+                await _gameManager.CatalogService.RefreshUpdateAvailableAsync(source);
+
+            RefreshCatalogSourcesList();
         }
 
         private async void AddCatalogSource_Click(object? sender, RoutedEventArgs e)
@@ -2043,7 +2397,7 @@ namespace Quiver
                 return;
 
             var (name, location) = result.Value;
-            var (apps, error) = await _gameManager.CatalogService.TryLoadSourceAsync(_gameManager.HttpClient, location);
+            var (apps, version, error) = await _gameManager.CatalogService.TryLoadSourceAsync(_gameManager.HttpClient, location);
             if (error != null)
             {
                 await ShowMessageBoxAsync($"Could not load catalog source:\n{error}", "Invalid Source");
@@ -2057,16 +2411,24 @@ namespace Quiver
             }
 
             var source = _catalogViewModel.CreateSource(name, location);
+            string? rawJson = null;
+            try
+            {
+                rawJson = await CatalogLocationReader.Default.ReadAsync(_gameManager.HttpClient, location);
+            }
+            catch
+            {
+                // RegisterNewSourceAsync will re-fetch if needed.
+            }
 
-            await _gameManager.CatalogService.RegisterNewSourceAsync(source, apps);
+            await _gameManager.CatalogService.RegisterNewSourceAsync(_gameManager.HttpClient, source, rawJson);
 
             _settings.AppCatalogSources.Add(source);
             OnSettingChanged();
             RefreshCatalogSourcesList();
 
-            await _gameManager.LoadGamesAsync();
-            ApplySorting();
-            await ShowMessageBoxAsync($"Added \"{name}\" with {apps.Count} app(s).", "Source Added");
+            var versionLabel = string.IsNullOrWhiteSpace(version) ? "unknown" : version;
+            await ShowMessageBoxAsync($"Added \"{name}\" ({apps.Count} app(s), v{versionLabel}). Use App Catalog → Review to add apps to your library.", "Source Added");
         }
 
         private async void RemoveCatalogSource_Click(object? sender, RoutedEventArgs e)
@@ -2078,39 +2440,18 @@ namespace Quiver
             if (source == null)
                 return;
 
-            var exclusiveApps = await _gameManager.CatalogService.GetExclusiveAppsForSourceAsync(
-                _gameManager.HttpClient,
-                _settings,
-                source);
+            var confirmed = await ShowMessageBoxAsync(
+                $"Remove catalog source \"{source.Name}\"?\n\nApps already in your local apps.json will stay in your library.",
+                "Remove Source",
+                true);
 
-            CatalogSourceRemovalChoice choice;
-            if (exclusiveApps.Count > 0)
-            {
-                choice = await ShowCatalogSourceRemovalDialogAsync(
-                    source.Name,
-                    exclusiveApps.Count);
-            }
-            else
-            {
-                var confirmed = await ShowMessageBoxAsync(
-                    $"Remove catalog source \"{source.Name}\"?",
-                    "Remove Source",
-                    true);
-                choice = confirmed ? CatalogSourceRemovalChoice.RemoveApps : CatalogSourceRemovalChoice.Cancel;
-            }
-
-            if (choice == CatalogSourceRemovalChoice.Cancel)
+            if (!confirmed)
                 return;
 
-            if (choice == CatalogSourceRemovalChoice.KeepApps)
-                await _gameManager.CatalogService.PromoteAppsToLocalAsync(exclusiveApps);
-
+            _gameManager.CatalogService.DeleteSourceCache(sourceId);
             _settings.AppCatalogSources.RemoveAll(s => s.Id == sourceId);
             OnSettingChanged();
             RefreshCatalogSourcesList();
-
-            await _gameManager.LoadGamesAsync();
-            ApplySorting();
         }
 
         private async void CatalogSourceEnabled_Changed(object? sender, RoutedEventArgs e)
@@ -2129,6 +2470,9 @@ namespace Quiver
             source.Enabled = checkBox.IsChecked == true;
             OnSettingChanged();
 
+            await _gameManager.CatalogService.RefreshUpdateAvailableAsync(source);
+            RefreshCatalogSourcesList();
+
             await _gameManager.LoadGamesAsync();
             ApplySorting();
         }
@@ -2137,15 +2481,22 @@ namespace Quiver
         {
             try
             {
-                await _gameManager.LoadGamesAsync();
+                await _gameManager.CatalogService.RefreshAllSourcesAsync(_gameManager.HttpClient, _settings);
+                OnSettingChanged();
                 _settings = AppSettings.Load();
                 _settings.EnsureInitialized();
                 RefreshCatalogSourcesList();
-                ApplySorting();
 
-                var prompted = await ProcessPendingCatalogUpdatesAsync();
-                if (!prompted)
+                if (_settings.AppCatalogSources.Any(s => s.Enabled && s.UpdateAvailable))
+                {
+                    await ShowMessageBoxAsync(
+                        "Catalog updates are available. Open App Catalog to review and sync apps.",
+                        "Updates Available");
+                }
+                else
+                {
                     await ShowMessageBoxAsync("Catalog sources refreshed.", "Refresh Complete");
+                }
             }
             catch (Exception ex)
             {
@@ -2153,276 +2504,312 @@ namespace Quiver
             }
         }
 
-        private void CommunityCatalogIndexUrlTextBox_TextChanged(object? sender, TextChangedEventArgs e)
+        private async Task NotifyCatalogUpdatesIfNeededAsync()
         {
-            if (_settings == null || sender is not TextBox textBox)
+            if (!_settings.LocalFirstCatalogMigrationComplete)
+            {
+                await RunLocalFirstCatalogMigrationAsync();
                 return;
+            }
 
-            _settings.CommunityCatalogIndexUrl = textBox.Text ?? string.Empty;
+            if (_settings.AppCatalogSources.Any(s => s.Enabled && s.UpdateAvailable))
+            {
+                var openCatalog = await ShowMessageBoxAsync(
+                    "Catalog updates are available. Open App Catalog now to review changes?",
+                    "Catalog Updates",
+                    true);
+
+                if (openCatalog)
+                    await OpenAppCatalogForReviewAsync();
+            }
+        }
+
+        private async Task OpenAppCatalogForReviewAsync()
+        {
+            ShowAppCatalogSourcesView();
+
+            var source = _settings.AppCatalogSources
+                .Where(s => s.Enabled && s.PendingReviewCount > 0)
+                .OrderByDescending(s => s.PendingReviewCount)
+                .FirstOrDefault();
+
+            if (source != null)
+                await OpenCatalogReviewAsync(source.Id);
+        }
+
+        private async Task RunLocalFirstCatalogMigrationAsync()
+        {
+            AppCatalogService.MigrateLegacyCatalogSources(_settings);
+
+            await ShowFirstRunWelcomeAsync();
+
+            var defaultSource = _settings.AppCatalogSources
+                .FirstOrDefault(CommunityCatalogDefaults.IsDefaultSource);
+
+            if (defaultSource != null && defaultSource.Enabled)
+                await OpenCatalogReviewAsync(defaultSource.Id, CatalogReviewFilter.New);
+            else
+                await OpenAppCatalogForReviewAsync();
+
+            _settings.LocalFirstCatalogMigrationComplete = true;
             OnSettingChanged();
         }
 
-        private async void BrowseCommunityCatalogLists_Click(object? sender, RoutedEventArgs e)
+        private Task ShowFirstRunWelcomeAsync() =>
+            ShowWelcomeMessageBoxAsync(
+                CommunityCatalogDefaults.FirstRunWelcomeMessage,
+                CommunityCatalogDefaults.FirstRunWelcomeTitle);
+
+        private static string GetCatalogReviewFilterTag(CatalogReviewFilter filter)
         {
-            var indexUrl = _settings.CommunityCatalogIndexUrl?.Trim() ?? "";
-            var (index, error) = await CommunityCatalogIndexService.FetchIndexAsync(
-                _gameManager.HttpClient,
-                indexUrl);
-
-            if (error != null || index == null)
+            foreach (var (tag, value) in CatalogReviewFilters)
             {
-                await ShowMessageBoxAsync(error ?? "Could not load community index.", "Community Lists");
-                return;
+                if (value == filter)
+                    return tag;
             }
 
-            if (index.Lists.Count == 0)
-            {
-                await ShowMessageBoxAsync("The community index contains no lists.", "Community Lists");
-                return;
-            }
-
-            await ShowBrowseCommunityListsDialogAsync(index);
+            return "All";
         }
 
-        private async Task<bool> ProcessPendingCatalogUpdatesAsync()
+        private async void ReviewCatalogSource_Click(object? sender, RoutedEventArgs e)
         {
-            var pending = await _gameManager.CatalogService.CheckPendingCatalogUpdatesAsync(
-                _gameManager.HttpClient,
-                _settings);
+            if (sender is not Button { Tag: string sourceId })
+                return;
 
-            if (pending.Count == 0)
-                return false;
-
-            foreach (var update in pending)
-            {
-                var choice = await ShowCatalogUpdateDialogAsync(update);
-                if (choice == null)
-                    continue;
-
-                await _gameManager.CatalogService.AcceptCatalogUpdateAsync(
-                    update.Source,
-                    update.RemoteApps,
-                    update.AcceptedApps,
-                    choice.Value);
-
-                OnSettingChanged();
-
-                if (choice.Value != CatalogUpdateChoice.KeepCurrent)
-                {
-                    await _gameManager.LoadGamesAsync();
-                    ApplySorting();
-                }
-            }
-
-            _settings = AppSettings.Load();
-            RefreshCatalogSourcesList();
-            return true;
+            await OpenCatalogReviewAsync(sourceId);
         }
 
-        private async Task<CatalogUpdateChoice?> ShowCatalogUpdateDialogAsync(PendingCatalogUpdate update)
+        private async Task OpenCatalogReviewAsync(
+            string sourceId,
+            CatalogReviewFilter initialFilter = CatalogReviewFilter.All)
         {
-            return await Dispatcher.UIThread.InvokeAsync(async () =>
-            {
-                if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
-                    desktop.MainWindow == null)
-                    return (CatalogUpdateChoice?)null;
-
-                var diff = update.Diff;
-                var summary = $"{diff.AddedCount} new app(s), {diff.RemovedCount} removed, {diff.ChangedCount} changed";
-                var removedNames = diff.Removed
-                    .Select(a => a.Name)
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .Take(8)
-                    .ToList();
-
-                var removedText = removedNames.Count > 0
-                    ? $"\n\nRemoved: {string.Join(", ", removedNames)}{(diff.RemovedCount > removedNames.Count ? ", …" : "")}"
-                    : "";
-
-                CatalogUpdateChoice? choice = null;
-                var applyAllButton = new Button { Content = "Apply All", MinWidth = 100 };
-                var applyNewButton = new Button { Content = "Apply New Only", MinWidth = 120 };
-                var keepButton = new Button { Content = "Keep Current", MinWidth = 100 };
-
-                var dialog = new Window
-                {
-                    Title = "Catalog Update Available",
-                    Width = 500,
-                    Height = 280,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    Content = new StackPanel
-                    {
-                        Margin = new Thickness(20),
-                        Children =
-                        {
-                            new TextBlock
-                            {
-                                Text = $"\"{update.Source.Name}\" has been updated.\n\n{summary}{removedText}\n\nApply All syncs your library to the new list (removals drop exclusive apps).\nApply New Only adds/updates apps but keeps previously listed apps even if removed remotely.",
-                                TextWrapping = TextWrapping.Wrap,
-                                Margin = new Thickness(0, 0, 0, 16),
-                            },
-                            new StackPanel
-                            {
-                                Orientation = Orientation.Horizontal,
-                                HorizontalAlignment = HorizontalAlignment.Center,
-                                Spacing = 8,
-                                Children = { applyAllButton, applyNewButton, keepButton },
-                            },
-                        },
-                    },
-                };
-
-                applyAllButton.Click += (_, _) => { choice = CatalogUpdateChoice.ApplyAll; dialog.Close(); };
-                applyNewButton.Click += (_, _) => { choice = CatalogUpdateChoice.ApplyNewOnly; dialog.Close(); };
-                keepButton.Click += (_, _) => { choice = CatalogUpdateChoice.KeepCurrent; dialog.Close(); };
-
-                await dialog.ShowDialog(desktop.MainWindow);
-                return choice;
-            });
-        }
-
-        private async Task ShowBrowseCommunityListsDialogAsync(CommunityCatalogIndex index)
-        {
-            if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
-                desktop.MainWindow == null)
+            var source = _settings.AppCatalogSources.FirstOrDefault(s => s.Id == sourceId);
+            if (source == null)
                 return;
 
-            var listPanel = new StackPanel { Spacing = 8 };
-
-            foreach (var entry in index.Lists)
-            {
-                if (string.IsNullOrWhiteSpace(entry.Location))
-                    continue;
-
-                var subscribeButton = new Button
-                {
-                    Content = "Subscribe",
-                    MinWidth = 90,
-                    Tag = entry,
-                };
-
-                var row = new Border
-                {
-                    Background = new SolidColorBrush(Color.Parse(_settings?.SecondaryColor ?? "#404040")),
-                    CornerRadius = new CornerRadius(4),
-                    Padding = new Thickness(10),
-                    Child = new Grid
-                    {
-                        ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-                        Children =
-                        {
-                            new StackPanel
-                            {
-                                Spacing = 2,
-                                Children =
-                                {
-                                    new TextBlock
-                                    {
-                                        Text = string.IsNullOrWhiteSpace(entry.Name) ? entry.Id : entry.Name,
-                                        FontWeight = FontWeight.SemiBold,
-                                    },
-                                    new TextBlock
-                                    {
-                                        Text = entry.Description,
-                                        TextWrapping = TextWrapping.Wrap,
-                                        FontSize = 11,
-                                        Opacity = 0.8,
-                                    },
-                                    new TextBlock
-                                    {
-                                        Text = string.IsNullOrWhiteSpace(entry.ListVersion)
-                                            ? entry.Location
-                                            : $"v{entry.ListVersion} · {entry.Location}",
-                                        FontSize = 10,
-                                        Opacity = 0.6,
-                                        TextTrimming = TextTrimming.CharacterEllipsis,
-                                    },
-                                },
-                            },
-                            subscribeButton,
-                        },
-                    },
-                };
-
-                Grid.SetColumn(subscribeButton, 1);
-                listPanel.Children.Add(row);
-
-                subscribeButton.Click += async (_, _) =>
-                {
-                    await SubscribeToCommunityListAsync(entry);
-                };
-            }
-
-            var scroll = new ScrollViewer
-            {
-                MaxHeight = 360,
-                Content = listPanel,
-            };
-
-            var closeButton = new Button { Content = "Close", MinWidth = 80, HorizontalAlignment = HorizontalAlignment.Center };
-            var dialog = new Window
-            {
-                Title = "Browse Community Lists",
-                Width = 520,
-                Height = 480,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Content = new StackPanel
-                {
-                    Margin = new Thickness(20),
-                    Spacing = 12,
-                    Children =
-                    {
-                        new TextBlock
-                        {
-                            Text = "Subscribe to a community-maintained app list.",
-                            TextWrapping = TextWrapping.Wrap,
-                        },
-                        scroll,
-                        closeButton,
-                    },
-                },
-            };
-
-            closeButton.Click += (_, _) => dialog.Close();
-            await dialog.ShowDialog(desktop.MainWindow);
-        }
-
-        private async Task SubscribeToCommunityListAsync(CommunityCatalogListEntry entry)
-        {
-            var alreadySubscribed = _catalogViewModel.IsAlreadySubscribed(_settings, entry);
-
-            if (alreadySubscribed)
-            {
-                await ShowMessageBoxAsync($"You are already subscribed to \"{entry.Name}\".", "Already Subscribed");
-                return;
-            }
-
-            var (apps, error) = await _gameManager.CatalogService.TryLoadSourceAsync(
-                _gameManager.HttpClient,
-                entry.Location);
-
-            if (error != null)
-            {
-                await ShowMessageBoxAsync($"Could not load list:\n{error}", "Subscribe Failed");
-                return;
-            }
-
-            if (apps.Count == 0)
-            {
-                await ShowMessageBoxAsync("The list loaded successfully but contains no apps.", "Empty List");
-                return;
-            }
-
-            var source = _catalogViewModel.CreateSourceFromCommunityEntry(entry);
-
-            await _gameManager.CatalogService.RegisterNewSourceAsync(source, apps);
-            _settings.AppCatalogSources.Add(source);
+            await _gameManager.CatalogService.FetchSourceAsync(_gameManager.HttpClient, source);
             OnSettingChanged();
-            RefreshCatalogSourcesList();
 
+            var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var externalApps = await _gameManager.CatalogService.LoadCachedAppsAsync(source.Id);
+
+            _activeCatalogSyncSource = source;
+            _catalogSyncViewModel.ReviewFilter = initialFilter;
+            _catalogSyncViewModel.Refresh(source, localApps, externalApps);
+
+            RefreshCatalogReviewFilterButtons(GetCatalogReviewFilterTag(initialFilter));
+            ApplyCatalogSyncFilter();
+            UpdateCatalogSyncBulkButtons();
+
+            ShowAppCatalogReviewView(source);
+        }
+
+        private void ApplyCatalogSyncFilter()
+        {
+            CatalogSyncRows.Clear();
+            var isHiddenFilter = _catalogSyncViewModel.ReviewFilter == CatalogReviewFilter.Hidden;
+            foreach (var row in _catalogSyncViewModel.GetFilteredRows())
+            {
+                row.ShowHideButton = !isHiddenFilter &&
+                                     _activeCatalogSyncSource != null &&
+                                     !CatalogCompareService.IsHiddenFromReview(_activeCatalogSyncSource, row.Repository);
+                row.ShowUnhideButton = isHiddenFilter;
+                CatalogSyncRows.Add(row);
+            }
+
+            if (this.FindControl<TextBlock>("CatalogReviewVersionText") is TextBlock versionText)
+                versionText.Text = _catalogSyncViewModel.VersionSummary;
+
+            if (this.FindControl<TextBlock>("CatalogSyncEmptyText") is TextBlock emptyText)
+            {
+                var showNeedsReviewComplete = _catalogSyncViewModel.ShowNeedsReviewCompleteState;
+                emptyText.Text = isHiddenFilter
+                    ? "No hidden apps for this source."
+                    : "No apps match this filter.";
+                emptyText.IsVisible = CatalogSyncRows.Count == 0 && !showNeedsReviewComplete;
+            }
+
+            if (this.FindControl<StackPanel>("CatalogSyncNeedsReviewEmptyPanel") is StackPanel needsReviewEmptyPanel)
+                needsReviewEmptyPanel.IsVisible = _catalogSyncViewModel.ShowNeedsReviewCompleteState;
+
+            UpdateCatalogReviewFilterChipLabels();
+        }
+
+        private void CatalogSyncBackToLibrary_Click(object? sender, RoutedEventArgs e) =>
+            ShowLibraryView();
+
+        private void CatalogSyncBackToSources_Click(object? sender, RoutedEventArgs e) =>
+            ShowAppCatalogSourcesView();
+
+        private void UpdateCatalogSyncBulkButtons()
+        {
+            if (this.FindControl<Button>("CatalogSyncAddAllButton") is Button addAllButton)
+                addAllButton.IsEnabled = _catalogSyncViewModel.ExternalOnlyCount > 0;
+
+            if (this.FindControl<Button>("CatalogSyncReplaceAllButton") is Button replaceAllButton)
+                replaceAllButton.IsEnabled = _catalogSyncViewModel.ChangedCount > 0;
+
+            if (this.FindControl<Button>("CatalogSyncAcknowledgeButton") is Button skipReviewButton)
+                skipReviewButton.IsVisible = _catalogSyncViewModel.ShowSkipReviewButton;
+        }
+
+        private CatalogSyncRowItem? FindCatalogSyncRow(string repository) =>
+            _catalogSyncViewModel.AllRows.FirstOrDefault(r =>
+                r.Repository.Equals(repository, StringComparison.OrdinalIgnoreCase));
+
+        private IReadOnlyList<CatalogSyncRowItem> GetActionableCatalogSyncRows() =>
+            _catalogSyncViewModel.AllRows
+                .Where(r => _activeCatalogSyncSource != null &&
+                            CatalogCompareService.IsActionableRow(r, _activeCatalogSyncSource))
+                .ToList();
+
+        private async Task ApplyCatalogSyncLocalAppsAsync(List<GameInfo> localApps)
+        {
+            await _gameManager.CatalogService.SaveLocalAppsAsync(localApps);
             await _gameManager.LoadGamesAsync();
             ApplySorting();
-            await ShowMessageBoxAsync($"Subscribed to \"{source.Name}\" with {apps.Count} app(s).", "Subscribed");
+
+            if (_activeCatalogSyncSource != null)
+            {
+                await _gameManager.CatalogService.RefreshUpdateAvailableAsync(_activeCatalogSyncSource);
+                OnSettingChanged();
+                RefreshCatalogSourcesList();
+            }
+
+            await RefreshActiveCatalogSyncRowsAsync(localApps);
+        }
+
+        private async Task RefreshActiveCatalogSyncRowsAsync(List<GameInfo>? localApps = null)
+        {
+            if (_activeCatalogSyncSource == null)
+                return;
+
+            localApps ??= await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var externalApps = await _gameManager.CatalogService.LoadCachedAppsAsync(_activeCatalogSyncSource.Id);
+            _catalogSyncViewModel.Refresh(_activeCatalogSyncSource, localApps, externalApps);
+            ApplyCatalogSyncFilter();
+            UpdateCatalogSyncBulkButtons();
+        }
+
+        private async Task AfterCatalogSyncMutationAsync()
+        {
+            if (_activeCatalogSyncSource == null)
+                return;
+
+            await _gameManager.CatalogService.RefreshUpdateAvailableAsync(_activeCatalogSyncSource);
+            OnSettingChanged();
+            RefreshCatalogSourcesList();
+            await RefreshActiveCatalogSyncRowsAsync();
+        }
+
+        private async void CatalogSyncAddAll_Click(object? sender, RoutedEventArgs e)
+        {
+            var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var updated = CatalogCompareService.ApplyAddAllExternalOnly(localApps, GetActionableCatalogSyncRows());
+            await ApplyCatalogSyncLocalAppsAsync(updated);
+        }
+
+        private async void CatalogSyncReplaceAll_Click(object? sender, RoutedEventArgs e)
+        {
+            var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var updated = CatalogCompareService.ApplyReplaceAllChanged(localApps, GetActionableCatalogSyncRows());
+            await ApplyCatalogSyncLocalAppsAsync(updated);
+        }
+
+        private async void CatalogSyncAcknowledge_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_activeCatalogSyncSource == null)
+                return;
+
+            _gameManager.CatalogService.AcknowledgeSourceVersion(_activeCatalogSyncSource);
+            OnSettingChanged();
+            RefreshCatalogSourcesList();
+            ApplyCatalogSyncFilter();
+            UpdateCatalogSyncBulkButtons();
+        }
+
+        private async void CatalogSyncRowIgnore_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string repository } || _activeCatalogSyncSource == null)
+                return;
+
+            var row = FindCatalogSyncRow(repository);
+            if (row == null || !row.CanIgnore)
+                return;
+
+            CatalogCompareService.IgnoreChangesForCurrentVersion(_activeCatalogSyncSource, repository);
+            await AfterCatalogSyncMutationAsync();
+        }
+
+        private async void CatalogSyncRowHide_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string repository } || _activeCatalogSyncSource == null)
+                return;
+
+            var row = FindCatalogSyncRow(repository);
+            if (row == null)
+                return;
+
+            CatalogCompareService.HideFromReview(_activeCatalogSyncSource, repository);
+            await AfterCatalogSyncMutationAsync();
+        }
+
+        private async void CatalogSyncRowUnhide_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string repository } || _activeCatalogSyncSource == null)
+                return;
+
+            var row = FindCatalogSyncRow(repository);
+            if (row == null)
+                return;
+
+            CatalogCompareService.UnhideFromReview(_activeCatalogSyncSource, repository);
+            await AfterCatalogSyncMutationAsync();
+        }
+
+        private async void CatalogSyncRowAdd_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string repository })
+                return;
+
+            var row = FindCatalogSyncRow(repository);
+            if (row == null)
+                return;
+
+            var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var updated = CatalogCompareService.ApplyRowAdd(localApps, row);
+            CatalogCompareService.ClearIgnoredChange(_activeCatalogSyncSource!, row.Repository);
+            await ApplyCatalogSyncLocalAppsAsync(updated);
+        }
+
+        private async void CatalogSyncRowReplace_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string repository })
+                return;
+
+            var row = FindCatalogSyncRow(repository);
+            if (row == null)
+                return;
+
+            var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var updated = CatalogCompareService.ApplyRowReplace(localApps, row);
+            CatalogCompareService.ClearIgnoredChange(_activeCatalogSyncSource!, row.Repository);
+            await ApplyCatalogSyncLocalAppsAsync(updated);
+        }
+
+        private async void CatalogSyncRowMerge_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string repository })
+                return;
+
+            var row = FindCatalogSyncRow(repository);
+            if (row == null)
+                return;
+
+            var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var updated = CatalogCompareService.ApplyRowMerge(localApps, row);
+            CatalogCompareService.ClearIgnoredChange(_activeCatalogSyncSource!, row.Repository);
+            await ApplyCatalogSyncLocalAppsAsync(updated);
         }
 
         private async Task<(string Name, string Location)?> ShowAddCatalogSourceDialogAsync()
@@ -2520,65 +2907,11 @@ namespace Quiver
             return result;
         }
 
-        private async Task<CatalogSourceRemovalChoice> ShowCatalogSourceRemovalDialogAsync(string sourceName, int appCount)
-        {
-            return await Dispatcher.UIThread.InvokeAsync(async () =>
-            {
-                if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
-                    desktop.MainWindow == null)
-                    return CatalogSourceRemovalChoice.Cancel;
-
-                var choice = CatalogSourceRemovalChoice.Cancel;
-                var messageBox = new Window
-                {
-                    Title = "Remove Catalog Source",
-                    Width = 480,
-                    Height = 220,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    Content = new StackPanel
-                    {
-                        Margin = new Thickness(20),
-                        Children =
-                        {
-                            new TextBlock
-                            {
-                                Text = $"Removing \"{sourceName}\" affects {appCount} app(s) only available from this source.\n\nKeep apps copies them into your local app list.\nRemove apps drops them from your library (installed files are not deleted).",
-                                TextWrapping = TextWrapping.Wrap,
-                                Margin = new Thickness(0, 0, 0, 16),
-                            },
-                            new StackPanel
-                            {
-                                Orientation = Orientation.Horizontal,
-                                HorizontalAlignment = HorizontalAlignment.Center,
-                                Spacing = 8,
-                                Children =
-                                {
-                                    new Button { Content = "Keep Apps", MinWidth = 90 },
-                                    new Button { Content = "Remove Apps", MinWidth = 90 },
-                                    new Button { Content = "Cancel", MinWidth = 90 },
-                                },
-                            },
-                        },
-                    },
-                };
-
-                if (((StackPanel)messageBox.Content!).Children[1] is StackPanel buttonPanel)
-                {
-                    if (buttonPanel.Children[0] is Button keepButton)
-                        keepButton.Click += (_, _) => { choice = CatalogSourceRemovalChoice.KeepApps; messageBox.Close(); };
-                    if (buttonPanel.Children[1] is Button removeButton)
-                        removeButton.Click += (_, _) => { choice = CatalogSourceRemovalChoice.RemoveApps; messageBox.Close(); };
-                    if (buttonPanel.Children[2] is Button cancelButton)
-                        cancelButton.Click += (_, _) => { choice = CatalogSourceRemovalChoice.Cancel; messageBox.Close(); };
-                }
-
-                await messageBox.ShowDialog(desktop.MainWindow);
-                return choice;
-            });
-        }
-
         private void OnSettingChanged()
         {
+            if (_suppressSettingsUiEvents)
+                return;
+
             try
             {
                 AppSettings.Save(_settings);
@@ -2818,169 +3151,50 @@ namespace Quiver
             }
         }
 
-        private DateTime? _lastUpdateTime = null;
-
         private async void CheckforUpdates_Click(object sender, RoutedEventArgs e)
         {
+            IsCheckingUpdates = true;
             try
             {
-                var button = sender as Button;
-                bool wasEnabled = button?.IsEnabled ?? true;
-                string originalContent = string.Empty;
-
-                if (button != null)
-                {
-                    // Store original content
-                    if (button.Content is StackPanel panel)
-                    {
-                        originalContent = "original_stackpanel";
-                    }
-
-                    button.IsEnabled = false;
-
-                    // Create a temporary text block for status
-                    var statusText = new TextBlock
-                    {
-                        Text = "Checking launcher...",
-                        VerticalAlignment = VerticalAlignment.Center,
-                        HorizontalAlignment = HorizontalAlignment.Center
-                    };
-                    button.Content = statusText;
-                }
-
-                // Check for app updates
                 if (_app != null)
-                {
                     await _app.CheckForAppUpdatesManually();
-                }
 
-                // Update status text
-                if (button?.Content is TextBlock textBlock)
-                {
-                    textBlock.Text = "Checking games...";
-                }
-
-                // Check game updates
                 await _gameManager.CheckAllUpdatesAsync();
                 ApplySorting();
-
-                // Restore original button state
-                _lastUpdateTime = DateTime.Now;
-                if (button != null)
-                {
-                    button.IsEnabled = true;
-
-                    // Restore original content
-                    button.Content = new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        Children =
-                {
-                    new Image
-                    {
-                        Width = 32,
-                        Height = 32,
-                        Source = new Avalonia.Media.Imaging.Bitmap(
-                            Avalonia.Platform.AssetLoader.Open(
-                                new Uri("avares://Quiver/Assets/CheckForUpdates.png"))),
-                        Margin = new Thickness(0, 0, 12, 0),
-                        VerticalAlignment = VerticalAlignment.Center
-                    },
-                    new StackPanel
-                    {
-                        Orientation = Orientation.Vertical,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Children =
-                        {
-                            new TextBlock
-                            {
-                                Text = "Up to Date",
-                                FontSize = 12,
-                                FontWeight = FontWeight.Bold
-                            },
-                            new TextBlock
-                            {
-                                Text = GetLastCheckedText(),
-                                FontSize = 11,
-                                Foreground = new SolidColorBrush(Color.Parse("#B8B8B8"))
-                            }
-                        }
-                    }
-                }
-                    };
-                }
+                RefreshUpdateCheckStatus(DateTime.Now);
             }
             catch (Exception ex)
             {
-                var button = sender as Button;
-                if (button != null)
-                {
-                    button.IsEnabled = true;
-
-                    // Restore original content on error
-                    button.Content = new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        Children =
-                {
-                    new Image
-                    {
-                        Width = 32,
-                        Height = 32,
-                        Source = new Avalonia.Media.Imaging.Bitmap(
-                            Avalonia.Platform.AssetLoader.Open(
-                                new Uri("avares://Quiver/Assets/CheckForUpdates.png"))),
-                        Margin = new Thickness(0, 0, 12, 0)
-                    },
-                    new TextBlock
-                    {
-                        Text = "Check for Updates",
-                        VerticalAlignment = VerticalAlignment.Center
-                    }
-                }
-                    };
-                }
                 await ShowMessageBoxAsync($"Failed to check for updates: {ex.Message}", "Error");
+                RefreshUpdateCheckStatus();
+            }
+            finally
+            {
+                IsCheckingUpdates = false;
             }
         }
 
         private string GetLastCheckedText()
         {
-            if (_lastUpdateTime == null)
-            {
-                return "Check for Updates";
-            }
+            if (_lastUpdateCheckTime == null)
+                return string.Empty;
 
-            var timeSince = DateTime.Now - _lastUpdateTime.Value;
-            
+            var timeSince = DateTime.Now - _lastUpdateCheckTime.Value;
+
             if (timeSince.TotalMinutes < 1)
-            {
-                return "Last Checked Just Now";
-            }
-            else if (timeSince.TotalMinutes < 2)
-            {
-                return "Last Checked 1 Minute Ago";
-            }
-            else if (timeSince.TotalMinutes < 60)
-            {
-                return $"Last Checked {timeSince.Minutes} Minutes Ago";
-            }
-            else if (timeSince.TotalHours < 2)
-            {
-                return "Last Checked 1 Hour Ago";
-            }
-            else if (timeSince.TotalHours < 24)
-            {
-                return $"Last Checked {timeSince.Hours} Hours Ago";
-            }
-            else if (timeSince.TotalDays < 2)
-            {
-                return "Last Checked 1 Day Ago";
-            }
-            else
-            {
-                return $"Last Checked {timeSince.Days} Days Ago";
-            }
+                return "checked just now";
+            if (timeSince.TotalMinutes < 2)
+                return "checked 1 minute ago";
+            if (timeSince.TotalMinutes < 60)
+                return $"checked {timeSince.Minutes} minutes ago";
+            if (timeSince.TotalHours < 2)
+                return "checked 1 hour ago";
+            if (timeSince.TotalHours < 24)
+                return $"checked {timeSince.Hours} hours ago";
+            if (timeSince.TotalDays < 2)
+                return "checked 1 day ago";
+
+            return $"checked {timeSince.Days} days ago";
         }
 
         private void OpenFolder_Click(object sender, RoutedEventArgs e)
@@ -3336,6 +3550,49 @@ namespace Quiver
             }
         }
 
+        private async Task ShowWelcomeMessageBoxAsync(string message, string title)
+        {
+            await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+                    desktop.MainWindow != null)
+                {
+                    var messageBox = new Window
+                    {
+                        Title = title,
+                        Width = 480,
+                        Height = 260,
+                        CanResize = false,
+                        WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                        Content = new StackPanel
+                        {
+                            Margin = new Thickness(20),
+                            Children =
+                            {
+                                new TextBlock
+                                {
+                                    Text = message,
+                                    TextWrapping = TextWrapping.Wrap,
+                                    Margin = new Thickness(0, 0, 0, 20),
+                                },
+                                new Button
+                                {
+                                    Content = "OK",
+                                    HorizontalAlignment = HorizontalAlignment.Center,
+                                    MinWidth = 80,
+                                },
+                            },
+                        },
+                    };
+
+                    if (((StackPanel)messageBox.Content).Children[1] is Button okButton)
+                        okButton.Click += (_, _) => messageBox.Close();
+
+                    await messageBox.ShowDialog(desktop.MainWindow);
+                }
+            });
+        }
+
         private async Task ShowMessageBoxAsync(string message, string title)
         {
             await Dispatcher.UIThread.InvokeAsync(async () =>
@@ -3402,11 +3659,13 @@ namespace Quiver
             }
         }
 
-        private void TagDisplayFilterButton_Click(object sender, RoutedEventArgs e)
+        private void AddDisplayFilter_Click(object? sender, RoutedEventArgs e)
         {
-            if (sender is not Button button || button.Tag is not string filterId)
-                return;
+            ShowDisplayFilterOverlay(null);
+        }
 
+        private void ToggleTagDisplayFilter(string filterId)
+        {
             if (string.Equals(_settings.ActiveTagDisplayFilterId, filterId, StringComparison.OrdinalIgnoreCase))
                 _settings.ActiveTagDisplayFilterId = null;
             else
@@ -3420,9 +3679,280 @@ namespace Quiver
             ApplySorting();
         }
 
-        private void AddDisplayFilter_Click(object? sender, RoutedEventArgs e)
+        private void TagDisplayFilterButton_Click(object sender, RoutedEventArgs e)
         {
-            ShowDisplayFilterOverlay(null);
+            if (_tagFilterSuppressRowClick)
+            {
+                _tagFilterSuppressRowClick = false;
+                return;
+            }
+
+            if (sender is not Button button || button.Tag is not string filterId)
+                return;
+
+            ToggleTagDisplayFilter(filterId);
+        }
+
+        private void TagDisplayFilterReorder_PointerPressed(object? sender, PointerPressedEventArgs e)
+        {
+            if (sender is not Border handle || handle.Tag is not string filterId)
+                return;
+
+            if (!e.GetCurrentPoint(handle).Properties.IsLeftButtonPressed)
+                return;
+
+            if (TagDisplayFiltersItemsControl == null)
+                return;
+
+            _tagFilterSuppressRowClick = true;
+            _tagFilterDragId = filterId;
+            _tagFilterDragStartY = e.GetPosition(TagDisplayFiltersItemsControl).Y;
+            _tagFilterDragActive = false;
+            _tagFilterDragPointer = e.Pointer;
+            _tagFilterDragRowButton = handle.GetVisualAncestors().OfType<Button>()
+                .FirstOrDefault(b => b.Classes.Contains("display-filter-row"));
+
+            if (_tagFilterDragRowButton != null)
+                BeginTagDisplayFilterDragVisuals(_tagFilterDragRowButton);
+
+            TagDisplayFiltersItemsControl.AddHandler(
+                InputElement.PointerMovedEvent,
+                TagDisplayFilterDragPointerMoved,
+                RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
+            TagDisplayFiltersItemsControl.AddHandler(
+                InputElement.PointerReleasedEvent,
+                TagDisplayFilterDragPointerReleased,
+                RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
+
+            e.Pointer.Capture(TagDisplayFiltersItemsControl);
+            e.Handled = true;
+        }
+
+        private void TagDisplayFilterDragPointerMoved(object? sender, PointerEventArgs e)
+        {
+            if (_tagFilterDragId == null || TagDisplayFiltersItemsControl == null)
+                return;
+
+            if (!e.GetCurrentPoint(TagDisplayFiltersItemsControl).Properties.IsLeftButtonPressed)
+                return;
+
+            var currentY = e.GetPosition(TagDisplayFiltersItemsControl).Y;
+            if (!_tagFilterDragActive && Math.Abs(currentY - _tagFilterDragStartY) >= 3)
+            {
+                _tagFilterDragActive = true;
+                _tagFilterOrderAtDragStart = _settings.TagDisplayFilters.Select(f => f.Id).ToList();
+                if (TryMeasureTagFilterDragMetrics(_tagFilterDragId, out var listTop, out var rowStride))
+                {
+                    _tagFilterDragListTop = listTop;
+                    _tagFilterDragRowStride = rowStride;
+                }
+
+                ReapplyTagDisplayFilterDragVisuals();
+                _tagFilterDragPointer?.Capture(TagDisplayFiltersItemsControl);
+            }
+
+            if (!_tagFilterDragActive)
+                return;
+
+            var currentIndex = GetTagDisplayFilterIndex(_tagFilterDragId);
+            if (currentIndex < 0 || _tagFilterDragRowStride <= 0)
+                return;
+
+            var targetIndex = TagDisplayFilterDragDrop.ResolveInsertIndex(
+                TagDisplayFilters.Count,
+                currentIndex,
+                currentY,
+                _tagFilterDragListTop,
+                _tagFilterDragRowStride);
+
+            if (targetIndex != currentIndex)
+                PreviewMoveTagDisplayFilter(_tagFilterDragId, targetIndex);
+
+            e.Handled = true;
+        }
+
+        private void TagDisplayFilterDragPointerReleased(object? sender, PointerReleasedEventArgs e)
+        {
+            if (_tagFilterDragId == null)
+                return;
+
+            var didDrag = _tagFilterDragActive;
+            var orderAtStart = _tagFilterOrderAtDragStart;
+
+            EndTagFilterDragSession();
+
+            if (e.Pointer.Captured != null)
+                e.Pointer.Capture(null);
+
+            if (didDrag)
+            {
+                if (orderAtStart != null &&
+                    !orderAtStart.SequenceEqual(_settings.TagDisplayFilters.Select(f => f.Id)))
+                {
+                    OnSettingChanged();
+                }
+            }
+            else
+            {
+                _tagFilterSuppressRowClick = true;
+            }
+
+            e.Handled = true;
+        }
+
+        private void BeginTagDisplayFilterDragVisuals(Button row)
+        {
+            row.Classes.Add("dragging");
+            row.ZIndex = 10;
+            _tagFilterDragRowButton = row;
+            SetTagDisplayFilterTooltipsEnabled(false);
+        }
+
+        private void SetTagDisplayFilterTooltipsEnabled(bool enabled)
+        {
+            if (TagDisplayFiltersItemsControl == null)
+                return;
+
+            foreach (var row in TagDisplayFiltersItemsControl.GetVisualDescendants()
+                         .OfType<Button>()
+                         .Where(b => b.Classes.Contains("display-filter-row")))
+            {
+                ToolTip.SetServiceEnabled(row, enabled);
+                if (!enabled)
+                    ToolTip.SetIsOpen(row, false);
+            }
+        }
+
+        private void ReapplyTagDisplayFilterDragVisuals()
+        {
+            if (_tagFilterDragId == null)
+                return;
+
+            var row = GetTagDisplayFilterRow(_tagFilterDragId);
+            if (row == null)
+                return;
+
+            row.Classes.Add("dragging");
+            row.ZIndex = 10;
+            _tagFilterDragRowButton = row;
+        }
+
+        private Button? GetTagDisplayFilterRow(string filterId)
+        {
+            if (TagDisplayFiltersItemsControl == null)
+                return null;
+
+            return TagDisplayFiltersItemsControl.GetVisualDescendants()
+                .OfType<Button>()
+                .FirstOrDefault(b =>
+                    b.Classes.Contains("display-filter-row") &&
+                    b.Tag is string id &&
+                    string.Equals(id, filterId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private int GetTagDisplayFilterIndex(string? filterId)
+        {
+            if (filterId == null)
+                return -1;
+
+            return _settings.TagDisplayFilters.FindIndex(f =>
+                string.Equals(f.Id, filterId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void PreviewMoveTagDisplayFilter(string filterId, int targetIndex)
+        {
+            _settings.EnsureInitialized();
+
+            var fromIndex = GetTagDisplayFilterIndex(filterId);
+            if (fromIndex < 0 || fromIndex == targetIndex)
+                return;
+
+            TagDisplayFilterReorder.Move(_settings.TagDisplayFilters, fromIndex, targetIndex);
+
+            var uiFromIndex = TagDisplayFilters
+                .Select((item, index) => new { item, index })
+                .FirstOrDefault(x => string.Equals(x.item.Id, filterId, StringComparison.OrdinalIgnoreCase))
+                ?.index ?? -1;
+
+            if (uiFromIndex >= 0)
+            {
+                var item = TagDisplayFilters[uiFromIndex];
+                TagDisplayFilters.RemoveAt(uiFromIndex);
+                TagDisplayFilters.Insert(targetIndex, item);
+            }
+
+            _tagFilterDragRowButton = GetTagDisplayFilterRow(filterId);
+        }
+
+        private void ClearTagDisplayFilterDragVisuals()
+        {
+            SetTagDisplayFilterTooltipsEnabled(true);
+
+            if (_tagFilterDragId != null)
+            {
+                var row = GetTagDisplayFilterRow(_tagFilterDragId);
+                if (row != null)
+                {
+                    row.Classes.Remove("dragging");
+                    row.ZIndex = 0;
+                }
+            }
+
+            _tagFilterDragRowButton?.Classes.Remove("dragging");
+        }
+
+        private void EndTagFilterDragSession()
+        {
+            if (TagDisplayFiltersItemsControl != null)
+            {
+                TagDisplayFiltersItemsControl.RemoveHandler(
+                    InputElement.PointerMovedEvent,
+                    TagDisplayFilterDragPointerMoved);
+                TagDisplayFiltersItemsControl.RemoveHandler(
+                    InputElement.PointerReleasedEvent,
+                    TagDisplayFilterDragPointerReleased);
+            }
+
+            ClearTagDisplayFilterDragVisuals();
+
+            _tagFilterDragId = null;
+            _tagFilterDragActive = false;
+            _tagFilterDragRowButton = null;
+            _tagFilterDragPointer = null;
+            _tagFilterOrderAtDragStart = null;
+            _tagFilterDragListTop = 0;
+            _tagFilterDragRowStride = 0;
+            _tagFilterSuppressRowClick = false;
+        }
+
+        private bool TryMeasureTagFilterDragMetrics(string filterId, out double listTop, out double rowStride)
+        {
+            listTop = 0;
+            rowStride = 0;
+
+            if (TagDisplayFiltersItemsControl == null)
+                return false;
+
+            var row = GetTagDisplayFilterRow(filterId);
+            if (row == null)
+                return false;
+
+            var transform = row.TransformToVisual(TagDisplayFiltersItemsControl);
+            if (transform == null)
+                return false;
+
+            var rowHeight = row.Bounds.Height;
+            if (rowHeight <= 0)
+                return false;
+
+            rowStride = rowHeight + 4;
+            var dragIndex = GetTagDisplayFilterIndex(filterId);
+            if (dragIndex < 0)
+                return false;
+
+            var rowTop = transform.Value.Transform(new Point(0, 0)).Y;
+            listTop = rowTop - dragIndex * rowStride;
+            return true;
         }
 
         private void DisplayFilterOverflow_Click(object? sender, RoutedEventArgs e)
@@ -3464,7 +3994,9 @@ namespace Quiver
                 DisplayFilterOverlayTitle.Text = "Add Display Filter";
                 DisplayFilterNameTextBox.Text = string.Empty;
                 DisplayFilterTagsTextBox.Text = string.Empty;
+                DisplayFilterExcludeTagsTextBox.Text = string.Empty;
                 SetDisplayFilterMatchModeComboBox(TagFilterMatchMode.Any);
+                SetDisplayFilterExcludeMatchModeComboBox(TagFilterMatchMode.Any);
             }
             else
             {
@@ -3475,7 +4007,9 @@ namespace Quiver
                 DisplayFilterOverlayTitle.Text = "Edit Display Filter";
                 DisplayFilterNameTextBox.Text = filter.Name;
                 DisplayFilterTagsTextBox.Text = TagHelper.FormatTagsForDisplay(filter.Tags);
+                DisplayFilterExcludeTagsTextBox.Text = TagHelper.FormatTagsForDisplay(filter.ExcludeTags);
                 SetDisplayFilterMatchModeComboBox(filter.MatchMode);
+                SetDisplayFilterExcludeMatchModeComboBox(filter.ExcludeMatchMode);
             }
 
             DisplayFilterOverlay.IsVisible = true;
@@ -3496,8 +4030,8 @@ namespace Quiver
         private void UpdateDisplayFilterMatchModeHelpText()
         {
             DisplayFilterMatchModeHelpText.Text = GetSelectedDisplayFilterMatchMode() == TagFilterMatchMode.All
-                ? "Show apps that have every tag listed."
-                : "Show apps that have at least one of these tags.";
+                ? "Show apps that have every include tag listed. Exclude rules are applied next."
+                : "Show apps that have at least one include tag listed. Exclude rules are applied next.";
         }
 
         private void DisplayFilterMatchModeComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -3508,19 +4042,48 @@ namespace Quiver
             UpdateDisplayFilterMatchModeHelpText();
         }
 
+        private void SetDisplayFilterExcludeMatchModeComboBox(TagFilterMatchMode matchMode)
+        {
+            DisplayFilterExcludeMatchModeComboBox.SelectedIndex = matchMode == TagFilterMatchMode.All ? 1 : 0;
+            UpdateDisplayFilterExcludeMatchModeHelpText();
+        }
+
+        private TagFilterMatchMode GetSelectedDisplayFilterExcludeMatchMode() =>
+            DisplayFilterExcludeMatchModeComboBox.SelectedIndex == 1
+                ? TagFilterMatchMode.All
+                : TagFilterMatchMode.Any;
+
+        private void UpdateDisplayFilterExcludeMatchModeHelpText()
+        {
+            DisplayFilterExcludeMatchModeHelpText.Text = GetSelectedDisplayFilterExcludeMatchMode() == TagFilterMatchMode.All
+                ? "Hide apps that have every exclude tag listed."
+                : "Hide apps that have at least one of these tags.";
+        }
+
+        private void DisplayFilterExcludeMatchModeComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (DisplayFilterExcludeMatchModeHelpText == null)
+                return;
+
+            UpdateDisplayFilterExcludeMatchModeHelpText();
+        }
+
         private void CancelDisplayFilterEdit_Click(object? sender, RoutedEventArgs e)
         {
             _editingDisplayFilterId = null;
             DisplayFilterOverlay.IsVisible = false;
             DisplayFilterNameTextBox.Text = string.Empty;
             DisplayFilterTagsTextBox.Text = string.Empty;
+            DisplayFilterExcludeTagsTextBox.Text = string.Empty;
             SetDisplayFilterMatchModeComboBox(TagFilterMatchMode.Any);
+            SetDisplayFilterExcludeMatchModeComboBox(TagFilterMatchMode.Any);
         }
 
         private void SaveDisplayFilter_Click(object? sender, RoutedEventArgs e)
         {
             var name = DisplayFilterNameTextBox.Text?.Trim();
             var tags = TagHelper.ParseCommaSeparatedTags(DisplayFilterTagsTextBox.Text);
+            var excludeTags = TagHelper.ParseCommaSeparatedTags(DisplayFilterExcludeTagsTextBox.Text);
 
             if (string.IsNullOrWhiteSpace(name))
             {
@@ -3528,9 +4091,9 @@ namespace Quiver
                 return;
             }
 
-            if (tags.Count == 0)
+            if (tags.Count == 0 && excludeTags.Count == 0)
             {
-                _ = ShowMessageBoxAsync("Please enter at least one tag.", "Validation Error");
+                _ = ShowMessageBoxAsync("Please enter at least one include or exclude tag.", "Validation Error");
                 return;
             }
 
@@ -3547,6 +4110,7 @@ namespace Quiver
 
             var isEdit = !string.IsNullOrWhiteSpace(_editingDisplayFilterId);
             var matchMode = GetSelectedDisplayFilterMatchMode();
+            var excludeMatchMode = GetSelectedDisplayFilterExcludeMatchMode();
             if (isEdit)
             {
                 var filter = _settings.TagDisplayFilters.FirstOrDefault(f => f.Id == _editingDisplayFilterId);
@@ -3556,6 +4120,8 @@ namespace Quiver
                 filter.Name = name;
                 filter.Tags = tags;
                 filter.MatchMode = matchMode;
+                filter.ExcludeTags = excludeTags;
+                filter.ExcludeMatchMode = excludeMatchMode;
             }
             else
             {
@@ -3564,6 +4130,8 @@ namespace Quiver
                     Name = name,
                     Tags = tags,
                     MatchMode = matchMode,
+                    ExcludeTags = excludeTags,
+                    ExcludeMatchMode = excludeMatchMode,
                 });
             }
 
@@ -4140,8 +4708,6 @@ namespace Quiver
         {
             game.SetVersionPreferences(preferredVersion, skippedUpdateVersion);
 
-            await _gameManager.CatalogService.PromoteAppToLocalIfNeededAsync(game);
-
             var allGames = await LoadGamesFromJsonAsync();
             var matchingGame = allGames.FirstOrDefault(g =>
                 !string.IsNullOrWhiteSpace(g.Repository) &&
@@ -4158,8 +4724,6 @@ namespace Quiver
 
         private async Task PersistGameInstallLocationAsync(GameInfo game)
         {
-            await _gameManager.CatalogService.PromoteAppToLocalIfNeededAsync(game);
-
             var allGames = await LoadGamesFromJsonAsync();
             var matchingGame = allGames.FirstOrDefault(g =>
                 !string.IsNullOrWhiteSpace(g.Repository) &&
@@ -4302,15 +4866,6 @@ namespace Quiver
                 if (!string.IsNullOrEmpty(_editingGameRepository))
                 {
                     var appToUpdate = games.FirstOrDefault(g => g.Repository == _editingGameRepository);
-                    if (appToUpdate == null && _editingGame != null)
-                    {
-                        await _gameManager.CatalogService.PromoteAppToLocalIfNeededAsync(_editingGame);
-                        games = await LoadGamesFromJsonAsync();
-                        appToUpdate = games.FirstOrDefault(g =>
-                            !string.IsNullOrWhiteSpace(g.Repository) &&
-                            g.Repository.Equals(_editingGameRepository, StringComparison.OrdinalIgnoreCase));
-                    }
-
                     if (appToUpdate == null)
                     {
                         _ = ShowMessageBoxAsync("Could not find the app to update.", "Error");

@@ -18,6 +18,20 @@ public class CatalogSourceListItemTests
     }
 
     [Fact]
+    public void GetStatusText_includes_version_summary_when_available()
+    {
+        var source = new AppCatalogSource
+        {
+            UpdateAvailable = true,
+            CachedListVersion = "2.0.0",
+            AcknowledgedListVersion = "1.0.0",
+        };
+
+        CatalogSourceListItem.GetStatusText(source).Should().Contain("Update available");
+        CatalogSourceListItem.GetStatusText(source).Should().Contain("Cached v2.0.0");
+    }
+
+    [Fact]
     public void GetStatusText_returns_last_error_when_present()
     {
         var source = new AppCatalogSource
@@ -42,5 +56,37 @@ public class CatalogSourceListItemTests
         var source = new AppCatalogSource { LastFetchedUtc = fetchedAt };
 
         CatalogSourceListItem.GetStatusText(source).Should().Be($"Updated {fetchedAt.ToLocalTime():g}");
+    }
+
+    [Fact]
+    public void GetReviewButtonText_shows_count_when_pending()
+    {
+        var source = new AppCatalogSource { PendingReviewCount = 3 };
+
+        CatalogSourceListItem.GetReviewButtonText(source).Should().Be("Review (3)");
+    }
+
+    [Fact]
+    public void GetReviewButtonText_without_pending_uses_plain_label()
+    {
+        CatalogSourceListItem.GetReviewButtonText(new AppCatalogSource()).Should().Be("Review");
+    }
+
+    [Fact]
+    public void FromSource_maps_pending_review_count()
+    {
+        var source = new AppCatalogSource
+        {
+            Id = "id-1",
+            Name = "NAS",
+            Location = "http://example/apps.json",
+            PendingReviewCount = 5,
+        };
+
+        var item = CatalogSourceListItem.FromSource(source);
+
+        item.PendingReviewCount.Should().Be(5);
+        item.ReviewButtonText.Should().Be("Review (5)");
+        item.PendingReviewBadgeVisible.Should().BeTrue();
     }
 }

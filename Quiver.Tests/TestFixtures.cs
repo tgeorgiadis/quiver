@@ -16,4 +16,7 @@ internal static class TestFixtures
 
     public static string ReadN64RecompListJson() =>
         File.ReadAllText(N64RecompListPath);
+
+    public static string CommunityCatalogPath =>
+        Path.Combine(AppContext.BaseDirectory, "Fixtures", "quiver-community-apps-catalog.json");
 }

@@ -73,5 +73,21 @@ namespace Quiver.Services
             matchMode == TagFilterMatchMode.All
                 ? MatchesAllFilterTags(appTags, filterTags)
                 : MatchesAnyFilterTags(appTags, filterTags);
+
+        public static bool MatchesDisplayFilter(
+            IEnumerable<string>? appTags,
+            IEnumerable<string>? includeTags,
+            TagFilterMatchMode includeMode,
+            IEnumerable<string>? excludeTags,
+            TagFilterMatchMode excludeMode)
+        {
+            if (!MatchesFilterTags(appTags, includeTags, includeMode))
+                return false;
+
+            if (NormalizeTags(excludeTags).Count == 0)
+                return true;
+
+            return !MatchesFilterTags(appTags, excludeTags, excludeMode);
+        }
     }
 }

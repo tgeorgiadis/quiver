@@ -53,7 +53,7 @@ namespace Quiver.Services
             await SaveLocalAppsAsync(apps).ConfigureAwait(false);
         }
 
-        public async Task<List<GameInfo>> LoadMergedCatalogAsync(HttpClient httpClient, AppSettings settings)
+        public async Task<List<GameInfo>> LoadLocalCatalogAsync(AppSettings settings)
         {
             settings.EnsureInitialized();
             var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
@@ -63,35 +63,243 @@ namespace Quiver.Services
                 app.GameManager = _gameManager;
             }
 
-            var merged = new List<GameInfo>(localApps);
-            var seenRepos = new HashSet<string>(
+            foreach (var app in localApps)
+                ApplyUserAppTags(app, settings);
+
+            return localApps;
+        }
+
+        public async Task RefreshAllSourcesAsync(HttpClient httpClient, AppSettings settings)
+        {
+            settings.EnsureInitialized();
+            foreach (var source in settings.AppCatalogSources.Where(s => s.Enabled))
+                await FetchSourceAsync(httpClient, source).ConfigureAwait(false);
+        }
+
+        public bool HasSourceCache(string sourceId) =>
+            File.Exists(GetSourceCachePath(sourceId));
+
+        public async Task EnsureDefaultCommunitySourceFetchedAsync(HttpClient httpClient, AppSettings settings)
+        {
+            settings.EnsureInitialized();
+            var source = settings.AppCatalogSources.FirstOrDefault(CommunityCatalogDefaults.IsDefaultSource);
+            if (source == null || !source.Enabled || HasSourceCache(source.Id))
+                return;
+
+            await FetchSourceAsync(httpClient, source).ConfigureAwait(false);
+        }
+
+        public async Task<(List<GameInfo> Apps, string? Version, string? Error)> TryLoadSourceAsync(
+            HttpClient httpClient,
+            string location)
+        {
+            try
+            {
+                var json = await _locationReader.ReadAsync(httpClient, location).ConfigureAwait(false);
+                using var document = JsonDocument.Parse(json);
+                var version = ResolveListVersion(document.RootElement, out var apps);
+                foreach (var app in apps)
+                    app.GameManager = _gameManager;
+
+                return (apps, version, null);
+            }
+            catch (Exception ex)
+            {
+                return ([], null, ex.Message);
+            }
+        }
+
+        public async Task<bool> FetchSourceAsync(HttpClient httpClient, AppCatalogSource source)
+        {
+            var cachePath = GetSourceCachePath(source.Id);
+
+            try
+            {
+                var json = await _locationReader.ReadAsync(httpClient, source.Location).ConfigureAwait(false);
+                await File.WriteAllTextAsync(cachePath, json).ConfigureAwait(false);
+
+                using var document = JsonDocument.Parse(json);
+                var version = ResolveListVersion(document.RootElement, out _);
+
+                source.LastFetchedUtc = DateTime.UtcNow;
+                source.LastError = null;
+                source.CachedListVersion = version;
+                CatalogCompareService.PruneIgnoredChanges(source);
+                await RefreshUpdateAvailableAsync(source).ConfigureAwait(false);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (File.Exists(cachePath))
+                {
+                    source.LastError = $"{ex.Message} (using cached copy)";
+                    await ApplyCachedVersionMetadataAsync(source).ConfigureAwait(false);
+                    return true;
+                }
+
+                source.LastError = ex.Message;
+                return false;
+            }
+        }
+
+        public async Task RegisterNewSourceAsync(
+            HttpClient httpClient,
+            AppCatalogSource source,
+            string? rawJson = null)
+        {
+            if (string.IsNullOrWhiteSpace(rawJson))
+            {
+                rawJson = await _locationReader.ReadAsync(httpClient, source.Location).ConfigureAwait(false);
+            }
+
+            var cachePath = GetSourceCachePath(source.Id);
+            await File.WriteAllTextAsync(cachePath, rawJson).ConfigureAwait(false);
+
+            using var document = JsonDocument.Parse(rawJson);
+            var version = ResolveListVersion(document.RootElement, out _);
+
+            source.LastFetchedUtc = DateTime.UtcNow;
+            source.LastError = null;
+            source.CachedListVersion = version;
+            source.AcknowledgedListVersion = version;
+            source.UpdateAvailable = false;
+        }
+
+        public void AcknowledgeSourceVersion(AppCatalogSource source)
+        {
+            source.AcknowledgedListVersion = source.CachedListVersion;
+            source.UpdateAvailable = false;
+            source.IgnoredChangesAtVersion?.Clear();
+        }
+
+        public async Task RefreshUpdateAvailableAsync(AppCatalogSource source)
+        {
+            if (CatalogCompareService.IsReviewedVersion(source.AcknowledgedListVersion) &&
+                string.Equals(source.CachedListVersion, source.AcknowledgedListVersion, StringComparison.Ordinal))
+            {
+                source.UpdateAvailable = false;
+                source.PendingReviewCount = 0;
+                return;
+            }
+
+            var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
+            var externalApps = await LoadCachedAppsAsync(source.Id).ConfigureAwait(false);
+            var rows = CatalogCompareService.BuildCompareRows(localApps, externalApps);
+            source.PendingReviewCount = rows.Count(r => CatalogCompareService.IsActionableRow(r, source));
+            if (TryAutoAcknowledgeIfReviewComplete(source, source.PendingReviewCount))
+                return;
+
+            source.UpdateAvailable = source.PendingReviewCount > 0;
+        }
+
+        public static bool TryAutoAcknowledgeIfReviewComplete(AppCatalogSource source, int pendingCount)
+        {
+            if (pendingCount > 0)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(source.CachedListVersion))
+                return false;
+
+            if (CatalogCompareService.IsReviewedVersion(source.AcknowledgedListVersion) &&
+                string.Equals(source.CachedListVersion, source.AcknowledgedListVersion, StringComparison.Ordinal))
+                return false;
+
+            source.AcknowledgedListVersion = source.CachedListVersion;
+            source.UpdateAvailable = false;
+            source.PendingReviewCount = 0;
+            return true;
+        }
+
+        public async Task<List<GameInfo>> LoadCachedAppsAsync(string sourceId)
+        {
+            var path = GetSourceCachePath(sourceId);
+            if (!File.Exists(path))
+                return [];
+
+            return await LoadAppsFromFileAsync(path).ConfigureAwait(false);
+        }
+
+        public void DeleteSourceCache(string sourceId)
+        {
+            var cachePath = GetSourceCachePath(sourceId);
+            if (File.Exists(cachePath))
+                File.Delete(cachePath);
+
+            var legacyAcceptedPath = GetLegacyAcceptedCachePath(sourceId);
+            if (File.Exists(legacyAcceptedPath))
+                File.Delete(legacyAcceptedPath);
+        }
+
+        public static bool MigrateLegacyCatalogSources(AppSettings settings, string? cacheFolder = null)
+        {
+            settings.EnsureInitialized();
+            cacheFolder ??= Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache", "CatalogSources");
+            Directory.CreateDirectory(cacheFolder);
+
+            var changed = false;
+            foreach (var source in settings.AppCatalogSources)
+            {
+                var legacyAcceptedPath = Path.Combine(cacheFolder, $"{source.Id}.accepted.json");
+                if (File.Exists(legacyAcceptedPath))
+                {
+                    File.Delete(legacyAcceptedPath);
+                    changed = true;
+                }
+
+                var cachePath = Path.Combine(cacheFolder, $"{source.Id}.json");
+                if (string.IsNullOrWhiteSpace(source.CachedListVersion) && File.Exists(cachePath))
+                {
+                    try
+                    {
+                        var json = File.ReadAllText(cachePath);
+                        using var document = JsonDocument.Parse(json);
+                        source.CachedListVersion = ResolveListVersion(document.RootElement, out _);
+                        changed = true;
+                    }
+                    catch
+                    {
+                        source.CachedListVersion = "0";
+                        changed = true;
+                    }
+                }
+
+                if (source.AcknowledgedListVersion == "0")
+                {
+                    source.AcknowledgedListVersion = null;
+                    changed = true;
+                }
+
+                var updateAvailable = !string.IsNullOrWhiteSpace(source.CachedListVersion) &&
+                    (!CatalogCompareService.IsReviewedVersion(source.AcknowledgedListVersion) ||
+                     !string.Equals(
+                         source.CachedListVersion,
+                         source.AcknowledgedListVersion,
+                         StringComparison.Ordinal));
+
+                if (source.UpdateAvailable != updateAvailable)
+                {
+                    source.UpdateAvailable = updateAvailable;
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        public async Task<List<GameInfo>> GetExternalOnlyAppsForSourceAsync(string sourceId, List<GameInfo>? localApps = null)
+        {
+            localApps ??= await LoadLocalAppsAsync().ConfigureAwait(false);
+            var localRepos = new HashSet<string>(
                 localApps
                     .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
                     .Select(a => a.Repository!),
                 StringComparer.OrdinalIgnoreCase);
 
-            foreach (var source in settings.AppCatalogSources.Where(s => s.Enabled))
-            {
-                var acceptedApps = await SyncAndGetAcceptedAppsAsync(httpClient, source).ConfigureAwait(false);
-                foreach (var app in acceptedApps)
-                {
-                    if (string.IsNullOrWhiteSpace(app.Repository))
-                        continue;
-
-                    if (seenRepos.Add(app.Repository))
-                    {
-                        app.CatalogSourceId = source.Id;
-                        app.GameManager = _gameManager;
-                        merged.Add(app);
-                    }
-                }
-            }
-
-            foreach (var app in merged)
-                ApplyUserAppTags(app, settings);
-
-            AppSettings.Save(settings);
-            return merged;
+            var externalApps = await LoadCachedAppsAsync(sourceId).ConfigureAwait(false);
+            return externalApps
+                .Where(a => !string.IsNullOrWhiteSpace(a.Repository) && !localRepos.Contains(a.Repository))
+                .ToList();
         }
 
         public static void ApplyUserAppTags(GameInfo app, AppSettings settings)
@@ -110,132 +318,6 @@ namespace Quiver.Services
                 app.Tags = TagHelper.NormalizeTags(app.Tags);
         }
 
-        public async Task<List<PendingCatalogUpdate>> CheckPendingCatalogUpdatesAsync(
-            HttpClient httpClient,
-            AppSettings settings)
-        {
-            settings.EnsureInitialized();
-            var pending = new List<PendingCatalogUpdate>();
-
-            foreach (var source in settings.AppCatalogSources.Where(s => s.Enabled && s.UpdateAvailable))
-            {
-                var acceptedApps = await LoadAcceptedAppsAsync(source.Id).ConfigureAwait(false);
-                var remoteApps = await LoadFetchedAppsFromCacheAsync(source.Id).ConfigureAwait(false);
-
-                if (remoteApps.Count == 0)
-                    continue;
-
-                pending.Add(new PendingCatalogUpdate
-                {
-                    Source = source,
-                    AcceptedApps = acceptedApps,
-                    RemoteApps = remoteApps,
-                    Diff = GetCatalogDiff(acceptedApps, remoteApps),
-                });
-            }
-
-            return pending;
-        }
-
-        public async Task AcceptCatalogUpdateAsync(
-            AppCatalogSource source,
-            List<GameInfo> remoteApps,
-            List<GameInfo> acceptedApps,
-            CatalogUpdateChoice choice)
-        {
-            if (choice == CatalogUpdateChoice.KeepCurrent)
-            {
-                source.UpdateAvailable = false;
-                return;
-            }
-
-            var newAccepted = CatalogMerge.ApplyChoice(choice, acceptedApps, remoteApps, CloneCatalogApp);
-            if (newAccepted == null)
-                return;
-
-            await SaveAcceptedSnapshotAsync(source, newAccepted).ConfigureAwait(false);
-            source.UpdateAvailable = false;
-        }
-
-        public async Task InitializeAcceptedSnapshotAsync(AppCatalogSource source, List<GameInfo> apps)
-        {
-            await SaveAcceptedSnapshotAsync(source, apps).ConfigureAwait(false);
-            source.UpdateAvailable = false;
-        }
-
-        public async Task RegisterNewSourceAsync(AppCatalogSource source, List<GameInfo> apps)
-        {
-            await WriteAppsToFileAsync(GetSourceCachePath(source.Id), apps).ConfigureAwait(false);
-            source.LastFetchedUtc = DateTime.UtcNow;
-            source.LastError = null;
-            await InitializeAcceptedSnapshotAsync(source, apps).ConfigureAwait(false);
-        }
-
-        public async Task<(List<GameInfo> Apps, string? Error)> TryLoadSourceAsync(
-            HttpClient httpClient,
-            string location)
-        {
-            try
-            {
-                var json = await _locationReader.ReadAsync(httpClient, location).ConfigureAwait(false);
-                using var document = JsonDocument.Parse(json);
-                var apps = ParseAppsRoot(document.RootElement);
-                foreach (var app in apps)
-                    app.GameManager = _gameManager;
-
-                return (apps, null);
-            }
-            catch (Exception ex)
-            {
-                return ([], ex.Message);
-            }
-        }
-
-        public async Task<List<GameInfo>> GetExclusiveAppsForSourceAsync(
-            HttpClient httpClient,
-            AppSettings settings,
-            AppCatalogSource source)
-        {
-            settings.EnsureInitialized();
-            var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
-            var localRepos = new HashSet<string>(
-                localApps
-                    .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                    .Select(a => a.Repository!),
-                StringComparer.OrdinalIgnoreCase);
-
-            var sourceApps = await LoadAcceptedAppsAsync(source.Id).ConfigureAwait(false);
-            if (sourceApps.Count == 0)
-            {
-                sourceApps = await SyncAndGetAcceptedAppsAsync(httpClient, source, persistSettings: false)
-                    .ConfigureAwait(false);
-            }
-
-            var sourceRepos = sourceApps
-                .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
-
-            var otherSourceRepos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var other in settings.AppCatalogSources.Where(s => s.Enabled && s.Id != source.Id))
-            {
-                var otherApps = await LoadAcceptedAppsAsync(other.Id).ConfigureAwait(false);
-                foreach (var app in otherApps)
-                {
-                    if (!string.IsNullOrWhiteSpace(app.Repository))
-                        otherSourceRepos.Add(app.Repository);
-                }
-            }
-
-            var exclusive = new List<GameInfo>();
-            foreach (var (repo, app) in sourceRepos)
-            {
-                if (!localRepos.Contains(repo) && !otherSourceRepos.Contains(repo))
-                    exclusive.Add(app);
-            }
-
-            return exclusive;
-        }
-
         public async Task PromoteAppsToLocalAsync(IEnumerable<GameInfo> apps)
         {
             var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
@@ -250,29 +332,11 @@ namespace Quiver.Services
                 if (string.IsNullOrWhiteSpace(app.Repository) || localRepos.Contains(app.Repository))
                     continue;
 
-                localApps.Add(CloneForLocal(app));
+                localApps.Add(CatalogCompareService.CloneForLocal(app));
                 localRepos.Add(app.Repository);
             }
 
             await SaveLocalAppsAsync(localApps).ConfigureAwait(false);
-        }
-
-        public async Task PromoteAppToLocalIfNeededAsync(GameInfo app)
-        {
-            if (string.IsNullOrWhiteSpace(app.Repository))
-                return;
-
-            var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
-            var exists = localApps.Any(g =>
-                g.Repository != null &&
-                g.Repository.Equals(app.Repository, StringComparison.OrdinalIgnoreCase));
-
-            if (exists)
-                return;
-
-            localApps.Add(CloneForLocal(app));
-            await SaveLocalAppsAsync(localApps).ConfigureAwait(false);
-            app.CatalogSourceId = null;
         }
 
         public async Task SaveLocalAppsAsync(List<GameInfo> apps)
@@ -306,9 +370,9 @@ namespace Quiver.Services
             return Convert.ToHexString(hashBytes);
         }
 
-        public static CatalogDiff GetCatalogDiff(List<GameInfo> acceptedApps, List<GameInfo> remoteApps)
+        public static CatalogDiff GetCatalogDiff(List<GameInfo> baselineApps, List<GameInfo> remoteApps)
         {
-            var acceptedByRepo = acceptedApps
+            var baselineByRepo = baselineApps
                 .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
                 .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
 
@@ -320,122 +384,61 @@ namespace Quiver.Services
 
             foreach (var (repo, remote) in remoteByRepo)
             {
-                if (!acceptedByRepo.ContainsKey(repo))
+                if (!baselineByRepo.ContainsKey(repo))
                     diff.Added.Add(remote);
-                else if (!AppsEquivalent(acceptedByRepo[repo], remote))
+                else if (!AreCatalogFieldsEquivalent(baselineByRepo[repo], remote))
                     diff.Changed.Add(remote);
             }
 
-            foreach (var (repo, accepted) in acceptedByRepo)
+            foreach (var (repo, baseline) in baselineByRepo)
             {
                 if (!remoteByRepo.ContainsKey(repo))
-                    diff.Removed.Add(accepted);
+                    diff.Removed.Add(baseline);
             }
 
             return diff;
         }
 
-        private static bool AppsEquivalent(GameInfo a, GameInfo b) =>
+        public static bool AreCatalogFieldsEquivalent(GameInfo a, GameInfo b) =>
             string.Equals(a.Name, b.Name, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.FolderName, b.FolderName, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.InstallPath ?? "", b.InstallPath ?? "", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.GameIconUrl ?? "", b.GameIconUrl ?? "", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.PreferredVersion ?? "", b.PreferredVersion ?? "", StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(a.SkippedUpdateVersion ?? "", b.SkippedUpdateVersion ?? "", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(TagHelper.FormatTagsForDisplay(a.Tags), TagHelper.FormatTagsForDisplay(b.Tags), StringComparison.OrdinalIgnoreCase);
 
-        private async Task<List<GameInfo>> SyncAndGetAcceptedAppsAsync(
-            HttpClient httpClient,
-            AppCatalogSource source,
-            bool persistSettings = true)
-        {
-            var fetchSucceeded = await FetchSourceToCacheAsync(httpClient, source, persistMetadata: persistSettings)
-                .ConfigureAwait(false);
-
-            var acceptedApps = await LoadAcceptedAppsAsync(source.Id).ConfigureAwait(false);
-            var fetchedApps = await LoadFetchedAppsFromCacheAsync(source.Id).ConfigureAwait(false);
-
-            if (acceptedApps.Count == 0 && fetchSucceeded && fetchedApps.Count > 0)
-            {
-                await SaveAcceptedSnapshotAsync(source, fetchedApps).ConfigureAwait(false);
-                source.UpdateAvailable = false;
-                return fetchedApps;
-            }
-
-            if (fetchSucceeded && fetchedApps.Count > 0)
-            {
-                var remoteHash = ComputeCatalogContentHash(fetchedApps);
-                source.UpdateAvailable = !string.Equals(
-                    remoteHash,
-                    source.AcceptedContentHash,
-                    StringComparison.OrdinalIgnoreCase);
-            }
-            else if (acceptedApps.Count > 0)
-            {
-                return acceptedApps;
-            }
-
-            return acceptedApps;
-        }
-
-        private async Task<bool> FetchSourceToCacheAsync(
-            HttpClient httpClient,
-            AppCatalogSource source,
-            bool persistMetadata = true)
+        private async Task ApplyCachedVersionMetadataAsync(AppCatalogSource source)
         {
             var cachePath = GetSourceCachePath(source.Id);
+            if (!File.Exists(cachePath))
+                return;
 
             try
             {
-                var json = await _locationReader.ReadAsync(httpClient, source.Location).ConfigureAwait(false);
-                await File.WriteAllTextAsync(cachePath, json).ConfigureAwait(false);
-
-                if (persistMetadata)
-                {
-                    source.LastFetchedUtc = DateTime.UtcNow;
-                    source.LastError = null;
-                }
-
-                return true;
+                var json = await File.ReadAllTextAsync(cachePath).ConfigureAwait(false);
+                using var document = JsonDocument.Parse(json);
+                source.CachedListVersion = ResolveListVersion(document.RootElement, out _);
+                CatalogCompareService.PruneIgnoredChanges(source);
+                await RefreshUpdateAvailableAsync(source).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch
             {
-                if (File.Exists(cachePath))
-                {
-                    if (persistMetadata)
-                        source.LastError = $"{ex.Message} (using cached copy)";
-                    return true;
-                }
-
-                if (persistMetadata)
-                    source.LastError = ex.Message;
-
-                return false;
+                // Keep existing metadata when cache is unreadable.
             }
         }
 
-        private async Task<List<GameInfo>> LoadAcceptedAppsAsync(string sourceId)
+        private static string ResolveListVersion(JsonElement root, out List<GameInfo> apps)
         {
-            var path = GetAcceptedCachePath(sourceId);
-            if (!File.Exists(path))
-                return [];
+            apps = ParseAppsFromRootStatic(root);
+            if (root.TryGetProperty("version", out var versionElement) &&
+                versionElement.ValueKind == JsonValueKind.String)
+            {
+                var version = versionElement.GetString()?.Trim();
+                if (!string.IsNullOrEmpty(version))
+                    return version;
+            }
 
-            return await LoadAppsFromFileAsync(path).ConfigureAwait(false);
-        }
-
-        private async Task<List<GameInfo>> LoadFetchedAppsFromCacheAsync(string sourceId)
-        {
-            var path = GetSourceCachePath(sourceId);
-            if (!File.Exists(path))
-                return [];
-
-            return await LoadAppsFromFileAsync(path).ConfigureAwait(false);
-        }
-
-        private async Task SaveAcceptedSnapshotAsync(AppCatalogSource source, List<GameInfo> apps)
-        {
-            await WriteAppsToFileAsync(GetAcceptedCachePath(source.Id), apps).ConfigureAwait(false);
-            source.AcceptedContentHash = ComputeCatalogContentHash(apps);
+            return ComputeCatalogContentHash(apps);
         }
 
         private static async Task WriteAppsToFileAsync(string path, List<GameInfo> apps)
@@ -492,8 +495,8 @@ namespace Quiver.Services
         private string GetSourceCachePath(string sourceId) =>
             Path.Combine(_catalogSourcesCacheFolder, $"{sourceId}.json");
 
-        private string GetAcceptedCachePath(string sourceId) =>
-            Path.Combine(_catalogSourcesCacheFolder, $"{sourceId}.accepted.json");
+        private static string GetLegacyAcceptedCachePath(string sourceId) =>
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache", "CatalogSources", $"{sourceId}.accepted.json");
 
         private async Task<List<GameInfo>> LoadAppsFromFileAsync(string path)
         {
@@ -514,23 +517,26 @@ namespace Quiver.Services
             }
         }
 
-        private List<GameInfo> ParseAppsRoot(JsonElement root)
+        private List<GameInfo> ParseAppsRoot(JsonElement root) =>
+            ParseAppsFromRootStatic(root, _gameManager);
+
+        private static List<GameInfo> ParseAppsFromRootStatic(JsonElement root, GameManager? gameManager = null)
         {
             var apps = new List<GameInfo>();
 
             if (root.ValueKind == JsonValueKind.Array)
             {
-                apps.AddRange(ParseAppArray(root));
+                apps.AddRange(ParseAppArrayStatic(root, gameManager));
                 return DedupeByRepository(apps);
             }
 
             if (root.TryGetProperty("apps", out var appsArray))
-                apps.AddRange(ParseAppArray(appsArray));
+                apps.AddRange(ParseAppArrayStatic(appsArray, gameManager));
 
             foreach (var legacySection in new[] { "standard", "experimental", "custom" })
             {
                 if (root.TryGetProperty(legacySection, out var legacyArray))
-                    apps.AddRange(ParseAppArray(legacyArray));
+                    apps.AddRange(ParseAppArrayStatic(legacyArray, gameManager));
             }
 
             return DedupeByRepository(apps);
@@ -542,7 +548,10 @@ namespace Quiver.Services
                 .Select(group => group.First())
                 .ToList();
 
-        private List<GameInfo> ParseAppArray(JsonElement appsArray)
+        private List<GameInfo> ParseAppArray(JsonElement appsArray) =>
+            ParseAppArrayStatic(appsArray, _gameManager);
+
+        private static List<GameInfo> ParseAppArrayStatic(JsonElement appsArray, GameManager? gameManager)
         {
             var apps = new List<GameInfo>();
 
@@ -562,7 +571,7 @@ namespace Quiver.Services
                         Tags = ParseTagsProperty(appElement),
                         IsExperimental = false,
                         IsCustom = true,
-                        GameManager = _gameManager,
+                        GameManager = gameManager,
                     };
 
                     apps.Add(app);
@@ -608,42 +617,6 @@ namespace Quiver.Services
 
             return TagHelper.NormalizeTags(tags);
         }
-
-        private static List<string> CloneTags(IEnumerable<string>? tags) =>
-            TagHelper.NormalizeTags(tags);
-
-        private static GameInfo CloneCatalogApp(GameInfo app) =>
-            new()
-            {
-                Name = app.Name,
-                Repository = app.Repository,
-                FolderName = app.FolderName,
-                InstallPath = app.InstallPath,
-                GameIconUrl = app.GameIconUrl,
-                PreferredVersion = app.PreferredVersion,
-                SkippedUpdateVersion = app.SkippedUpdateVersion,
-                Tags = CloneTags(app.Tags),
-                IsExperimental = false,
-                IsCustom = true,
-                GameManager = app.GameManager,
-            };
-
-        private static GameInfo CloneForLocal(GameInfo app) =>
-            new()
-            {
-                Name = app.Name,
-                Repository = app.Repository,
-                FolderName = app.FolderName,
-                InstallPath = app.InstallPath,
-                GameIconUrl = app.GameIconUrl,
-                PreferredVersion = app.PreferredVersion,
-                SkippedUpdateVersion = app.SkippedUpdateVersion,
-                Tags = CloneTags(app.Tags),
-                IsExperimental = false,
-                IsCustom = true,
-                GameManager = app.GameManager,
-                CatalogSourceId = null,
-            };
 
         private static object SerializeApp(GameInfo app)
         {

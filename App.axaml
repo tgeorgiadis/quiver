@@ -1,9 +1,49 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Quiver.App"
-             RequestedThemeVariant="Default">
-	
+             RequestedThemeVariant="Dark">
+
+	<Application.Resources>
+		<SolidColorBrush x:Key="ThemeBase" Color="#18181b"/>
+		<SolidColorBrush x:Key="ThemeLighter" Color="#252527"/>
+		<SolidColorBrush x:Key="ThemeDarker" Color="#0e0e10"/>
+		<SolidColorBrush x:Key="ThemeBorder" Color="#2d2d30"/>
+		<SolidColorBrush x:Key="ThemeText" Color="White"/>
+		<SolidColorBrush x:Key="ThemeTextSecondary" Color="#B8B8B8"/>
+	</Application.Resources>
+
 	<Application.Styles>
 		<FluentTheme />
+
+		<Style Selector="ContextMenu">
+			<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+			<Setter Property="BorderThickness" Value="1"/>
+			<Setter Property="Padding" Value="4"/>
+			<Setter Property="CornerRadius" Value="8"/>
+		</Style>
+
+		<Style Selector="MenuItem">
+			<Setter Property="Background" Value="Transparent"/>
+			<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+			<Setter Property="Padding" Value="10,8"/>
+			<Setter Property="CornerRadius" Value="4"/>
+		</Style>
+
+		<Style Selector="MenuItem:selected">
+			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		</Style>
+
+		<Style Selector="MenuItem:focus">
+			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
+
+		<Style Selector="MenuItem:focus-visible">
+			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
 	</Application.Styles>
 </Application>

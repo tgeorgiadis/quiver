@@ -34,6 +34,7 @@
   <ItemGroup>
     <None Include="..\community-app-lists\index.json" Link="Fixtures\community-app-lists\index.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\community-app-lists\n64-recomp.json" Link="Fixtures\community-app-lists\n64-recomp.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\quiver-community-apps-catalog.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

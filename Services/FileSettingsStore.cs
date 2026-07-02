@@ -1,9 +1,13 @@
+using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 
 namespace Quiver.Services;
 
 public class FileSettingsStore : ISettingsStore
 {
+    private static readonly ConcurrentDictionary<string, object> PathLocks = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly string _settingsPath;
     private AppSettings _current;
 
@@ -25,8 +29,60 @@ public class FileSettingsStore : ISettingsStore
     {
         settings.EnsureInitialized();
         var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(_settingsPath, json);
-        _current = settings;
+
+        var pathLock = PathLocks.GetOrAdd(_settingsPath, _ => new object());
+        lock (pathLock)
+        {
+            WriteWithRetry(json);
+            _current = settings;
+        }
+    }
+
+    private void WriteWithRetry(string json)
+    {
+        var directory = Path.GetDirectoryName(_settingsPath);
+        if (!string.IsNullOrEmpty(directory))
+            Directory.CreateDirectory(directory);
+
+        var tempPath = _settingsPath + ".tmp";
+        Exception? lastError = null;
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                File.WriteAllText(tempPath, json, Encoding.UTF8);
+                if (File.Exists(_settingsPath))
+                    File.Replace(tempPath, _settingsPath, null);
+                else
+                    File.Move(tempPath, _settingsPath);
+
+                return;
+            }
+            catch (IOException ex)
+            {
+                lastError = ex;
+                TryDeleteTempFile(tempPath);
+                Thread.Sleep(40 * (attempt + 1));
+            }
+        }
+
+        throw new IOException(
+            $"Could not save settings to '{_settingsPath}'. Close any other running Quiver instances and try again.",
+            lastError);
+    }
+
+    private static void TryDeleteTempFile(string tempPath)
+    {
+        try
+        {
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
+        }
+        catch
+        {
+            // Best effort cleanup only.
+        }
     }
 
     private AppSettings ReadFromDisk()
@@ -36,7 +92,7 @@ public class FileSettingsStore : ISettingsStore
             if (!File.Exists(_settingsPath))
                 return CreateDefault();
 
-            var json = File.ReadAllText(_settingsPath);
+            var json = ReadAllTextShared(_settingsPath);
             if (string.IsNullOrWhiteSpace(json))
                 return CreateDefault();
 
@@ -51,10 +107,18 @@ public class FileSettingsStore : ISettingsStore
         }
     }
 
+    private static string ReadAllTextShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        return reader.ReadToEnd();
+    }
+
     private static AppSettings CreateDefault()
     {
         var settings = new AppSettings();
         settings.EnsureInitialized();
+        settings.AppCatalogSources.Add(CommunityCatalogDefaults.CreateDefaultSource());
         return settings;
     }
 }

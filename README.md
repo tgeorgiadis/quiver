@@ -86,24 +86,25 @@ Create a token with no special permissions needed and set it in the launcher set
 You can create a token at ```GitHub Settings -> Developer settings > Personal access tokens > Tokens (classic) > Generate new token```
 You don't need to give it any special permissions. Then paste that Token into your Settings field. Do not share your Token!
 
-### apps.json Structure
+### apps.json and App Catalog
 
-The launcher uses an `apps.json` file to manage the available apps. Every entry is user-managed and editable; there are no built-in stable, experimental, or custom categories. Add, edit, or remove entries from the **Library** using **+ Add New Entry** or each app's **Catalog** context menu.
+Fresh installs ship with an **empty** local [`apps.json`](apps.json). That file is your personal library — add apps from **App Catalog → Review** or with **+ Add New Entry**.
+
+On first launch, Quiver shows a short welcome dialog, then subscribes to the official **[Quiver Community App Catalog](https://github.com/tgeorgiadis/quiver-community-app-catalog)**, fetches the list, and opens **App Catalog → Review** with the **New** filter so you can add apps individually or in bulk.
+
+Raw catalog URL:
+
+`https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/quiver-community-apps-catalog.json`
+
+Use **App Catalog** anytime to review community entries and add the ones you want to your library. Installed app files on disk are never deleted automatically when you remove catalog entries or sources.
 
 #### External catalog sources
 
-You can add additional `apps.json` catalogs in **Settings → General → App Catalog Sources**. Each source can be a remote URL (for example a raw GitHub link) or a local file path. Multiple sources are merged into your library; entries in the local `apps.json` take priority when the same repository appears in more than one place. Removing a source prompts you to keep its exclusive apps (copied into your local list) or remove them from the library. Installed app files on disk are never deleted automatically.
+You can add more catalogs in **App Catalog → Add Source** (remote raw GitHub URL or local file path). Each source is reviewed separately; your local `apps.json` takes priority when the same repository appears in multiple places.
 
-#### Community catalog lists
+When a subscribed list changes remotely, Quiver detects the diff on startup or when you click **Refresh All Sources**, then shows **Review changes** with per-app actions (Add, Replace, Merge, Ignore, Hide). Use **Not in library** to browse catalog apps you haven't added yet (including ignored ones). When every review item is synced or resolved, the catalog version is marked reviewed automatically. Use **Skip & mark reviewed** only to dismiss remaining items without syncing them.
 
-The `community-app-lists/` folder contains a sample community index and starter list (`n64-recomp.json`). To browse community-maintained lists:
-
-1. Set **Community index URL** in **Settings → General** to a hosted `index.json` URL or a local file path (for example `community-app-lists/index.json` in this repo).
-2. Click **Browse Community Lists** and subscribe to any entry.
-
-When a subscribed list changes remotely, the launcher detects the diff on startup or when you click **Refresh All Sources**, then prompts you to **Apply All**, **Apply New Only**, or **Keep Current**. The launcher stores an accepted snapshot per source so your library does not change until you confirm.
-
-See [`community-app-lists/README.md`](community-app-lists/README.md) for how to publish and maintain community lists.
+See [`community-app-lists/README.md`](community-app-lists/README.md) for sample list format. The canonical community catalog lives in [`tgeorgiadis/quiver-community-app-catalog`](https://github.com/tgeorgiadis/quiver-community-app-catalog).
 
 #### App Entry Properties
 

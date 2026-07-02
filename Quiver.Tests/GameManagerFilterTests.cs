@@ -269,4 +269,33 @@ public class GameManagerFilterTests
 
         Directory.Delete(tempDir, true);
     }
+
+    [Fact]
+    public void Tag_filter_with_exclude_tags_hides_matching_apps()
+    {
+        var (manager, store, tempDir) = CreateManager();
+        var settings = store.Current;
+        var filter = new TagDisplayFilter
+        {
+            Name = "N64 no AI",
+            Tags = ["n64"],
+            MatchMode = TagFilterMatchMode.Any,
+            ExcludeTags = ["ai"],
+            ExcludeMatchMode = TagFilterMatchMode.Any,
+        };
+        settings.TagDisplayFilters.Add(filter);
+        settings.ActiveTagDisplayFilterId = filter.Id;
+
+        manager.SetCatalogAppsAndFilter(
+        [
+            CreateGame("N64", "n64-plain", GameStatus.Installed, "n64"),
+            CreateGame("N64 AI", "n64-ai", GameStatus.Installed, "n64", "ai"),
+            CreateGame("PC", "pc", GameStatus.Installed, "pc"),
+        ],
+        settings);
+
+        manager.Games.Select(g => g.FolderName).Should().ContainSingle().Which.Should().Be("n64-plain");
+
+        Directory.Delete(tempDir, true);
+    }
 }

@@ -1,0 +1,474 @@
+using Quiver.Models;
+
+namespace Quiver.Services
+{
+    public enum CatalogSyncStatus
+    {
+        InLocalOnly,
+        InExternalOnly,
+        Unchanged,
+        Changed,
+    }
+
+    public class CatalogSyncRowItem
+    {
+        public CatalogSyncStatus Status { get; init; }
+        public string Repository { get; init; } = "";
+        public string DisplayName { get; init; } = "";
+        public GameInfo? Local { get; init; }
+        public GameInfo? External { get; init; }
+        public IReadOnlyList<string> ChangedFields { get; init; } = [];
+        public IReadOnlyList<CatalogSyncFieldDiffItem> FieldDiffs { get; init; } = [];
+
+        public bool HasInlineDiff => FieldDiffs.Count > 0;
+
+        public string IconUrl =>
+            External?.DefaultIconUrl
+            ?? Local?.DefaultIconUrl
+            ?? "/Assets/DefaultGame.png";
+
+        public string StatusShortLabel => Status switch
+        {
+            CatalogSyncStatus.InLocalOnly => "Local only",
+            CatalogSyncStatus.InExternalOnly => "New",
+            CatalogSyncStatus.Unchanged => "Up to date",
+            CatalogSyncStatus.Changed => "Changed",
+            _ => "",
+        };
+
+        public string StatusLabel => Status switch
+        {
+            CatalogSyncStatus.InLocalOnly => "Local only",
+            CatalogSyncStatus.InExternalOnly => "Not in library",
+            CatalogSyncStatus.Unchanged => "Up to date",
+            CatalogSyncStatus.Changed => "Changed",
+            _ => "",
+        };
+
+        public bool CanAdd => Status == CatalogSyncStatus.InExternalOnly;
+        public bool CanReplace => Status == CatalogSyncStatus.Changed;
+        public bool CanMerge => Status == CatalogSyncStatus.Changed;
+        public bool CanIgnore => Status is CatalogSyncStatus.Changed or CatalogSyncStatus.InExternalOnly;
+
+        public bool ShowHideButton { get; set; }
+        public bool ShowUnhideButton { get; set; }
+    }
+
+    public static class CatalogCompareService
+    {
+        private static readonly string[] CompareFields =
+        [
+            "name",
+            "folderName",
+            "installPath",
+            "appIconUrl",
+            "preferredVersion",
+            "tags",
+        ];
+
+        public static IReadOnlyList<CatalogSyncRowItem> BuildCompareRows(
+            List<GameInfo> localApps,
+            List<GameInfo> externalApps)
+        {
+            var localByRepo = localApps
+                .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
+                .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
+
+            var externalByRepo = externalApps
+                .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
+                .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
+
+            var rows = new List<CatalogSyncRowItem>();
+            var allRepos = localByRepo.Keys
+                .Concat(externalByRepo.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(r => r, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var repo in allRepos)
+            {
+                localByRepo.TryGetValue(repo, out var local);
+                externalByRepo.TryGetValue(repo, out var external);
+
+                CatalogSyncStatus status;
+                IReadOnlyList<string> changedFields = [];
+
+                if (local != null && external == null)
+                    status = CatalogSyncStatus.InLocalOnly;
+                else if (local == null && external != null)
+                    status = CatalogSyncStatus.InExternalOnly;
+                else if (local != null && external != null &&
+                         AppCatalogService.AreCatalogFieldsEquivalent(local, external))
+                    status = CatalogSyncStatus.Unchanged;
+                else
+                {
+                    status = CatalogSyncStatus.Changed;
+                    changedFields = GetChangedFields(local!, external!);
+                }
+
+                rows.Add(new CatalogSyncRowItem
+                {
+                    Status = status,
+                    Repository = repo,
+                    DisplayName = external?.Name ?? local?.Name ?? repo,
+                    Local = local,
+                    External = external,
+                    ChangedFields = changedFields,
+                    FieldDiffs = CatalogSyncFieldDiffBuilder.BuildFieldDiffs(status, local, external, changedFields),
+                });
+            }
+
+            return rows;
+        }
+
+        public static IReadOnlyList<string> GetChangedFields(GameInfo local, GameInfo external)
+        {
+            var changed = new List<string>();
+
+            if (!string.Equals(local.Name, external.Name, StringComparison.OrdinalIgnoreCase))
+                changed.Add("name");
+            if (!string.Equals(local.FolderName, external.FolderName, StringComparison.OrdinalIgnoreCase))
+                changed.Add("folderName");
+            if (!string.Equals(local.InstallPath ?? "", external.InstallPath ?? "", StringComparison.OrdinalIgnoreCase))
+                changed.Add("installPath");
+            if (!string.Equals(local.GameIconUrl ?? "", external.GameIconUrl ?? "", StringComparison.OrdinalIgnoreCase))
+                changed.Add("appIconUrl");
+            if (!string.Equals(local.PreferredVersion ?? "", external.PreferredVersion ?? "", StringComparison.OrdinalIgnoreCase))
+                changed.Add("preferredVersion");
+            if (!string.Equals(
+                    TagHelper.FormatTagsForDisplay(local.Tags),
+                    TagHelper.FormatTagsForDisplay(external.Tags),
+                    StringComparison.OrdinalIgnoreCase))
+                changed.Add("tags");
+
+            return changed;
+        }
+
+        public static GameInfo CloneForLocal(GameInfo external) =>
+            new()
+            {
+                Name = external.Name,
+                Repository = external.Repository,
+                FolderName = external.FolderName,
+                InstallPath = external.InstallPath,
+                GameIconUrl = external.GameIconUrl,
+                PreferredVersion = external.PreferredVersion,
+                SkippedUpdateVersion = external.SkippedUpdateVersion,
+                Tags = TagHelper.NormalizeTags(external.Tags),
+                IsExperimental = false,
+                IsCustom = true,
+                GameManager = external.GameManager,
+                CatalogSourceId = null,
+            };
+
+        public static GameInfo ReplaceFromExternal(GameInfo local, GameInfo external) =>
+            new()
+            {
+                Name = external.Name,
+                Repository = external.Repository,
+                FolderName = external.FolderName,
+                InstallPath = external.InstallPath,
+                GameIconUrl = external.GameIconUrl,
+                PreferredVersion = external.PreferredVersion,
+                SkippedUpdateVersion = external.SkippedUpdateVersion,
+                Tags = TagHelper.NormalizeTags(external.Tags),
+                IsExperimental = local.IsExperimental,
+                IsCustom = local.IsCustom,
+                GameManager = local.GameManager,
+                CatalogSourceId = null,
+            };
+
+        public static GameInfo MergeExternalIntoLocal(GameInfo local, GameInfo external)
+        {
+            var mergedTags = TagHelper.NormalizeTags(
+                (local.Tags ?? []).Concat(external.Tags ?? []));
+
+            return new GameInfo
+            {
+                Name = external.Name,
+                Repository = external.Repository,
+                FolderName = external.FolderName,
+                InstallPath = external.InstallPath,
+                GameIconUrl = external.GameIconUrl,
+                PreferredVersion = external.PreferredVersion,
+                SkippedUpdateVersion = local.SkippedUpdateVersion,
+                Tags = mergedTags,
+                IsExperimental = local.IsExperimental,
+                IsCustom = local.IsCustom,
+                GameManager = local.GameManager,
+                CatalogSourceId = null,
+            };
+        }
+
+        public static List<GameInfo> ApplyAddAllExternalOnly(
+            List<GameInfo> localApps,
+            IReadOnlyList<CatalogSyncRowItem> rows)
+        {
+            var result = new List<GameInfo>(localApps);
+            var localRepos = new HashSet<string>(
+                result
+                    .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
+                    .Select(a => a.Repository!),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var row in rows.Where(r => r.Status == CatalogSyncStatus.InExternalOnly && r.External != null))
+            {
+                if (localRepos.Add(row.Repository))
+                    result.Add(CloneForLocal(row.External!));
+            }
+
+            return result;
+        }
+
+        public static List<GameInfo> ApplyReplaceAllChanged(
+            List<GameInfo> localApps,
+            IReadOnlyList<CatalogSyncRowItem> rows)
+        {
+            var replaceByRepo = rows
+                .Where(r => r.Status == CatalogSyncStatus.Changed && r.Local != null && r.External != null)
+                .ToDictionary(r => r.Repository, r => r, StringComparer.OrdinalIgnoreCase);
+
+            return localApps
+                .Select(app =>
+                {
+                    if (string.IsNullOrWhiteSpace(app.Repository) ||
+                        !replaceByRepo.TryGetValue(app.Repository, out var row))
+                        return app;
+
+                    return ReplaceFromExternal(app, row.External!);
+                })
+                .ToList();
+        }
+
+        public static List<GameInfo> ApplyRowAdd(List<GameInfo> localApps, CatalogSyncRowItem row)
+        {
+            if (row.External == null || row.Status != CatalogSyncStatus.InExternalOnly)
+                return localApps;
+
+            var exists = localApps.Any(a =>
+                a.Repository != null &&
+                a.Repository.Equals(row.Repository, StringComparison.OrdinalIgnoreCase));
+
+            if (exists)
+                return localApps;
+
+            var result = new List<GameInfo>(localApps) { CloneForLocal(row.External) };
+            return result;
+        }
+
+        public static List<GameInfo> ApplyRowReplace(List<GameInfo> localApps, CatalogSyncRowItem row)
+        {
+            if (row.Local == null || row.External == null || row.Status != CatalogSyncStatus.Changed)
+                return localApps;
+
+            return localApps
+                .Select(app =>
+                    app.Repository != null &&
+                    app.Repository.Equals(row.Repository, StringComparison.OrdinalIgnoreCase)
+                        ? ReplaceFromExternal(app, row.External)
+                        : app)
+                .ToList();
+        }
+
+        public static List<GameInfo> ApplyRowMerge(List<GameInfo> localApps, CatalogSyncRowItem row)
+        {
+            if (row.Local == null || row.External == null || row.Status != CatalogSyncStatus.Changed)
+                return localApps;
+
+            return localApps
+                .Select(app =>
+                    app.Repository != null &&
+                    app.Repository.Equals(row.Repository, StringComparison.OrdinalIgnoreCase)
+                        ? MergeExternalIntoLocal(app, row.External)
+                        : app)
+                .ToList();
+        }
+
+        public static IReadOnlyList<string> AllCompareFields => CompareFields;
+
+        public static bool IsIgnoredForCurrentVersion(AppCatalogSource source, string repository)
+        {
+            if (string.IsNullOrWhiteSpace(source.CachedListVersion))
+                return false;
+
+            source.IgnoredChangesAtVersion ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            return source.IgnoredChangesAtVersion.TryGetValue(repository, out var ignoredVersion) &&
+                   string.Equals(ignoredVersion, source.CachedListVersion, StringComparison.Ordinal);
+        }
+
+        public static void IgnoreChangesForCurrentVersion(AppCatalogSource source, string repository)
+        {
+            if (string.IsNullOrWhiteSpace(source.CachedListVersion))
+                return;
+
+            source.IgnoredChangesAtVersion ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            source.IgnoredChangesAtVersion[repository] = source.CachedListVersion;
+        }
+
+        public static void ClearIgnoredChange(AppCatalogSource source, string repository)
+        {
+            source.IgnoredChangesAtVersion?.Remove(repository);
+        }
+
+        public static void PruneIgnoredChanges(AppCatalogSource source)
+        {
+            if (source.IgnoredChangesAtVersion == null || source.IgnoredChangesAtVersion.Count == 0)
+                return;
+
+            var current = source.CachedListVersion;
+            foreach (var repo in source.IgnoredChangesAtVersion.Keys.ToList())
+            {
+                if (!string.Equals(source.IgnoredChangesAtVersion[repo], current, StringComparison.Ordinal))
+                    source.IgnoredChangesAtVersion.Remove(repo);
+            }
+        }
+
+        public static bool IsHiddenFromReview(AppCatalogSource source, string repository) =>
+            source.HiddenFromReviewRepositories?.Any(r =>
+                r.Equals(repository, StringComparison.OrdinalIgnoreCase)) ?? false;
+
+        public static void HideFromReview(AppCatalogSource source, string repository)
+        {
+            source.HiddenFromReviewRepositories ??= new List<string>();
+            if (source.HiddenFromReviewRepositories.Any(r =>
+                    r.Equals(repository, StringComparison.OrdinalIgnoreCase)))
+                return;
+
+            source.HiddenFromReviewRepositories.Add(repository);
+        }
+
+        public static void UnhideFromReview(AppCatalogSource source, string repository)
+        {
+            if (source.HiddenFromReviewRepositories == null || source.HiddenFromReviewRepositories.Count == 0)
+                return;
+
+            source.HiddenFromReviewRepositories.RemoveAll(r =>
+                r.Equals(repository, StringComparison.OrdinalIgnoreCase));
+        }
+
+        public static void PruneHiddenRepositories(AppCatalogSource source, IEnumerable<string> validRepositories)
+        {
+            if (source.HiddenFromReviewRepositories == null || source.HiddenFromReviewRepositories.Count == 0)
+                return;
+
+            var valid = new HashSet<string>(validRepositories, StringComparer.OrdinalIgnoreCase);
+            source.HiddenFromReviewRepositories.RemoveAll(r => !valid.Contains(r));
+        }
+
+        public static bool IsActionableRow(CatalogSyncRowItem row, AppCatalogSource source)
+        {
+            if (IsHiddenFromReview(source, row.Repository))
+                return false;
+
+            if (row.Status == CatalogSyncStatus.Unchanged)
+                return false;
+
+            if (IsIgnoredForCurrentVersion(source, row.Repository))
+                return false;
+
+            return row.Status is CatalogSyncStatus.InExternalOnly or CatalogSyncStatus.Changed;
+        }
+
+        public static bool HasActionableChanges(
+            AppCatalogSource source,
+            IReadOnlyList<CatalogSyncRowItem> rows) =>
+            rows.Any(r => IsActionableRow(r, source));
+
+        public static IEnumerable<CatalogSyncRowItem> FilterVisibleRows(
+            IReadOnlyList<CatalogSyncRowItem> rows,
+            AppCatalogSource source,
+            bool showUpToDateApps)
+        {
+            foreach (var row in rows)
+            {
+                if (IsHiddenFromReview(source, row.Repository))
+                    continue;
+
+                if (IsIgnoredForCurrentVersion(source, row.Repository))
+                    continue;
+
+                if (!showUpToDateApps && row.Status == CatalogSyncStatus.Unchanged)
+                    continue;
+
+                yield return row;
+            }
+        }
+
+        public static IEnumerable<CatalogSyncRowItem> FilterByReviewFilter(
+            IReadOnlyList<CatalogSyncRowItem> rows,
+            AppCatalogSource source,
+            CatalogReviewFilter filter)
+        {
+            foreach (var row in rows)
+            {
+                var isHidden = IsHiddenFromReview(source, row.Repository);
+
+                if (filter == CatalogReviewFilter.Hidden)
+                {
+                    if (isHidden)
+                        yield return row;
+                    continue;
+                }
+
+                if (isHidden)
+                    continue;
+
+                if (filter != CatalogReviewFilter.All &&
+                    filter != CatalogReviewFilter.NotInLibrary &&
+                    IsIgnoredForCurrentVersion(source, row.Repository))
+                    continue;
+
+                var include = filter switch
+                {
+                    CatalogReviewFilter.All => true,
+                    CatalogReviewFilter.NeedsReview => IsActionableRow(row, source),
+                    CatalogReviewFilter.New => row.Status == CatalogSyncStatus.InExternalOnly &&
+                                               !IsIgnoredForCurrentVersion(source, row.Repository),
+                    CatalogReviewFilter.NotInLibrary => row.Status == CatalogSyncStatus.InExternalOnly,
+                    CatalogReviewFilter.Changed => row.Status == CatalogSyncStatus.Changed &&
+                                                   !IsIgnoredForCurrentVersion(source, row.Repository),
+                    CatalogReviewFilter.UpToDate => row.Status == CatalogSyncStatus.Unchanged,
+                    CatalogReviewFilter.LocalOnly => row.Status == CatalogSyncStatus.InLocalOnly,
+                    _ => true,
+                };
+
+                if (include)
+                    yield return row;
+            }
+        }
+
+        public static string FormatVersionForDisplay(string? version)
+        {
+            if (string.IsNullOrWhiteSpace(version))
+                return "unknown";
+
+            if (version.Length <= 16)
+                return version;
+
+            return $"{version[..8]}…{version[^8..]}";
+        }
+
+        public static bool IsUnreviewedVersion(string? acknowledgedVersion) =>
+            string.IsNullOrWhiteSpace(acknowledgedVersion) || acknowledgedVersion == "0";
+
+        public static bool IsReviewedVersion(string? acknowledgedVersion) =>
+            !IsUnreviewedVersion(acknowledgedVersion);
+
+        public static string FormatCatalogVersionSummary(string? cachedVersion, string? acknowledgedVersion)
+        {
+            if (string.IsNullOrWhiteSpace(cachedVersion) && IsUnreviewedVersion(acknowledgedVersion))
+                return "";
+
+            if (string.IsNullOrWhiteSpace(cachedVersion))
+                return IsUnreviewedVersion(acknowledgedVersion)
+                    ? ""
+                    : $"Reviewed v{FormatVersionForDisplay(acknowledgedVersion)}";
+
+            var cached = FormatVersionForDisplay(cachedVersion);
+            if (IsUnreviewedVersion(acknowledgedVersion))
+                return $"Cached v{cached} · Not reviewed yet";
+
+            var reviewed = FormatVersionForDisplay(acknowledgedVersion);
+            return $"Cached v{cached} · Reviewed v{reviewed}";
+        }
+    }
+}

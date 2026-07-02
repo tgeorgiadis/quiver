@@ -28,8 +28,27 @@ public class FileSettingsStoreTests : IDisposable
         var store = new FileSettingsStore(_settingsPath);
 
         store.Current.FirstStartup.Should().BeTrue();
+        store.Current.GridCompactCards.Should().BeFalse();
+        store.Current.IconFill.Should().BeFalse();
+        store.Current.SlotSize.Should().Be(152);
+        store.Current.IconSize.Should().Be(124);
+        store.Current.IconMargin.Should().Be(0);
+        store.Current.SlotTextMargin.Should().Be(0);
         store.Current.AppCatalogSources.Should().NotBeNull();
         store.Current.HiddenApps.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Load_includes_default_community_catalog_source_when_file_missing()
+    {
+        var store = new FileSettingsStore(_settingsPath);
+
+        store.Current.AppCatalogSources.Should().ContainSingle();
+        var source = store.Current.AppCatalogSources[0];
+        source.Id.Should().Be(CommunityCatalogDefaults.DefaultSourceId);
+        source.Name.Should().Be(CommunityCatalogDefaults.DefaultSourceName);
+        source.Location.Should().Be(CommunityCatalogDefaults.DefaultCatalogUrl);
+        source.Enabled.Should().BeTrue();
     }
 
     [Fact]
@@ -53,15 +72,36 @@ public class FileSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_and_Load_round_trip_hidden_from_review_repositories()
+    {
+        var store = new FileSettingsStore(_settingsPath);
+        var settings = store.Load();
+        settings.AppCatalogSources.Add(new AppCatalogSource
+        {
+            Name = "Test List",
+            Location = "https://example.com/list.json",
+            HiddenFromReviewRepositories = ["owner/hidden", "other/app"],
+        });
+
+        store.Save(settings);
+
+        var reloaded = new FileSettingsStore(_settingsPath).Load();
+        var testSource = reloaded.AppCatalogSources.Single(s => s.Name == "Test List");
+        testSource.HiddenFromReviewRepositories
+            .Should()
+            .BeEquivalentTo(["owner/hidden", "other/app"]);
+    }
+
+    [Fact]
     public void Current_reflects_last_saved_settings()
     {
         var store = new FileSettingsStore(_settingsPath);
         var settings = store.Load();
-        settings.CommunityCatalogIndexUrl = "community-app-lists/index.json";
+        settings.LocalFirstCatalogMigrationComplete = true;
 
         store.Save(settings);
 
-        store.Current.CommunityCatalogIndexUrl.Should().Be("community-app-lists/index.json");
+        store.Current.LocalFirstCatalogMigrationComplete.Should().BeTrue();
     }
 
     [Fact]
@@ -81,5 +121,23 @@ public class FileSettingsStoreTests : IDisposable
         {
             SettingsStoreProvider.Default = original;
         }
+    }
+
+    [Fact]
+    public void Save_handles_concurrent_writes()
+    {
+        var store = new FileSettingsStore(_settingsPath);
+        var settings = store.Load();
+        settings.SortBy = "Name";
+
+        Parallel.For(0, 8, i =>
+        {
+            var copy = store.Load();
+            copy.SortBy = $"Thread-{i}";
+            store.Save(copy);
+        });
+
+        File.Exists(_settingsPath).Should().BeTrue();
+        store.Load().SortBy.Should().StartWith("Thread-");
     }
 }

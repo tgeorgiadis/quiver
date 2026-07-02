@@ -22,21 +22,6 @@ public class CatalogViewModel
             target.Add(item);
     }
 
-    public bool IsAlreadySubscribed(AppSettings settings, CommunityCatalogListEntry entry) =>
-        settings.AppCatalogSources.Any(s =>
-            (!string.IsNullOrWhiteSpace(entry.Id) &&
-             string.Equals(s.CommunityListId, entry.Id, StringComparison.OrdinalIgnoreCase)) ||
-            string.Equals(s.Location, entry.Location, StringComparison.OrdinalIgnoreCase));
-
-    public AppCatalogSource CreateSourceFromCommunityEntry(CommunityCatalogListEntry entry) =>
-        new()
-        {
-            Name = string.IsNullOrWhiteSpace(entry.Name) ? entry.Id : entry.Name,
-            Location = entry.Location,
-            CommunityListId = entry.Id,
-            Enabled = true,
-        };
-
     public AppCatalogSource CreateSource(string name, string location) =>
         new()
         {

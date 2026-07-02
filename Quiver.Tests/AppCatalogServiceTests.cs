@@ -125,7 +125,6 @@ public class AppCatalogServiceTests
             CreateApp("owner/app", "Name", "Folder", installPath: "D:\\Custom", gameIconUrl: "https://example.com/icon.png"),
         };
         remote[0].PreferredVersion = "v2.0.0";
-        remote[0].SkippedUpdateVersion = "v3.0.0";
 
         var diff = AppCatalogService.GetCatalogDiff(accepted, remote);
 

@@ -1,46 +1,60 @@
-# Community App Lists
+# Community App Lists (samples)
 
-This folder contains a publishable registry of third-party `apps.json` catalogs for Quiver.
+This folder contains **sample** third-party catalog JSON files for Quiver development and testing.
 
-## Publishing
+The official community catalog for end users is published separately:
 
-You can publish this folder as its own GitHub repository (for example `QuiverCommunityAppLists`). Users point **Settings → General → Community index URL** at your hosted `index.json`:
+**[tgeorgiadis/quiver-community-app-catalog](https://github.com/tgeorgiadis/quiver-community-app-catalog)**
 
-```
-https://raw.githubusercontent.com/YOUR_ORG/YOUR_REPO/main/index.json
-```
+Fresh Quiver installs subscribe to that repo automatically as **Quiver Community App Catalog**.
 
-For local development, use a file path instead:
+External lists are **reference catalogs only**. A user's local `apps.json` is their library. Subscribe to a list in **App Catalog → Add Source**, then use **Review changes** to add or update apps deliberately.
 
-```
-C:\Projects\Quiver\community-app-lists\index.json
-```
+## List file format
 
-## Adding a list
-
-1. Add a new `*.json` file in this folder using the same schema as `apps.json` (an `apps` array of entries).
-2. Add an entry to `index.json`:
+Each list is a JSON file with a required top-level **`version`** field and an **`apps`** array:
 
 ```json
 {
-  "id": "my-list",
-  "name": "My List",
-  "description": "Short description shown in the browse dialog",
-  "location": "https://raw.githubusercontent.com/YOUR_ORG/YOUR_REPO/main/my-list.json",
-  "listVersion": "1.0.0"
+  "version": "1.0.0",
+  "apps": [
+    {
+      "name": "Example App",
+      "repository": "org/repo",
+      "folderName": "ExampleApp",
+      "installPath": null,
+      "appIconUrl": "https://example.com/icon.png",
+      "preferredVersion": null,
+      "tags": ["example"]
+    }
+  ]
 }
 ```
 
-- **`id`** — stable identifier; used to detect duplicate subscriptions.
-- **`location`** — URL or path to the list file (same format as manual catalog sources).
-- **`listVersion`** — informational version for maintainers. The launcher detects updates via content hash, not `listVersion`.
+- **`version`** — opaque string bumped by maintainers when content changes (semver recommended). Compared with string equality to detect updates.
+- **`apps`** — same entry schema as local `apps.json`.
+
+Lists without a `version` field still work: the launcher falls back to a content hash for update detection until maintainers add `version`.
+
+## Publishing
+
+Publish this folder as its own GitHub repository. Users add individual list URLs/paths as catalog sources (for example `https://raw.githubusercontent.com/YOUR_ORG/YOUR_REPO/main/n64-recomp.json`).
+
+The bundled `index.json` is a convenience manifest for documentation and tooling; the launcher no longer browses it automatically.
+
+## Adding a list
+
+1. Add a new `*.json` file with `version` and `apps`.
+2. Bump `version` whenever entries change.
+3. Optionally add an entry to `index.json` for discoverability.
 
 ## Update detection
 
-When a user subscribes to a list, the launcher stores an **accepted snapshot** of that catalog. On each fetch, it compares a SHA-256 hash of the remote list to the accepted snapshot. If they differ, the user is prompted to:
+When a user adds a source, the launcher caches the fetched JSON and records `CachedListVersion` and `AcknowledgedListVersion`. On refresh, if the upstream `version` differs (or the content hash changes for legacy lists), **Review changes** shows a per-repository diff with actions:
 
-- **Apply All** — sync to the new list (removals drop apps exclusive to that source)
-- **Apply New Only** — add/update entries but keep previously listed apps even if removed remotely
-- **Keep Current** — dismiss until the next startup or manual refresh
+- **Add** — copy an external-only app into local `apps.json`
+- **Replace** — overwrite local catalog fields from external
+- **Merge** — external metadata + union of tags; keeps local `skippedUpdateVersion`
+- **Dismiss** — acknowledge the version without applying changes
 
 Installed files on disk are never deleted when apps are removed from the library.

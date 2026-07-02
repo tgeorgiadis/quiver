@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Quiver.Core.Models;
 using Quiver.Services;
 
@@ -24,6 +25,8 @@ namespace Quiver
         public string Name { get; set; } = "";
         public List<string> Tags { get; set; } = new List<string>();
         public TagFilterMatchMode MatchMode { get; set; } = TagFilterMatchMode.Any;
+        public List<string> ExcludeTags { get; set; } = new List<string>();
+        public TagFilterMatchMode ExcludeMatchMode { get; set; } = TagFilterMatchMode.Any;
     }
 
     public class AppCatalogSource
@@ -34,9 +37,22 @@ namespace Quiver
         public bool Enabled { get; set; } = true;
         public DateTime? LastFetchedUtc { get; set; }
         public string? LastError { get; set; }
-        public string? CommunityListId { get; set; }
-        public string? AcceptedContentHash { get; set; }
+        public string? CachedListVersion { get; set; }
+        public string? AcknowledgedListVersion { get; set; }
         public bool UpdateAvailable { get; set; }
+
+        [JsonIgnore]
+        public int PendingReviewCount { get; set; }
+
+        /// <summary>
+        /// Repository → cached list version when the user chose to ignore external changes for that app.
+        /// </summary>
+        public Dictionary<string, string> IgnoredChangesAtVersion { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Repositories the user chose to hide from review until unhidden.
+        /// </summary>
+        public List<string> HiddenFromReviewRepositories { get; set; } = new();
     }
 
     public class AppSettings
@@ -44,11 +60,11 @@ namespace Quiver
         public bool FirstStartup { get; set; } = true;
         public bool IconFill { get; set; } = false;
         public bool UseGridView { get; set; } = true;
-        public bool GridCompactCards { get; set; } = true;
+        public bool GridCompactCards { get; set; } = false;
         public float IconOpacity { get; set; } = 1.0f;
         public int IconSize { get; set; } = 124;
-        public int IconMargin { get; set; } = 8;
-        public int SlotTextMargin { get; set; } = 112;
+        public int IconMargin { get; set; } = 0;
+        public int SlotTextMargin { get; set; } = 0;
         public int SlotSize { get; set; } = 152;
         public int ActionButtonSize { get; set; } = 36;
         public bool WindowBorderRounding { get; set; } = true;
@@ -70,7 +86,7 @@ namespace Quiver
         public bool EnableGamepadInput { get; set; } = true;
         public string LinuxWindowsLaunchCommand { get; set; } = string.Empty;
         public List<AppCatalogSource> AppCatalogSources { get; set; } = new List<AppCatalogSource>();
-        public string CommunityCatalogIndexUrl { get; set; } = string.Empty;
+        public bool LocalFirstCatalogMigrationComplete { get; set; }
         public List<TagDisplayFilter> TagDisplayFilters { get; set; } = new List<TagDisplayFilter>();
         public string? ActiveTagDisplayFilterId { get; set; }
         public AppListScope ListScope { get; set; } = AppListScope.AllApps;
@@ -83,6 +99,12 @@ namespace Quiver
             ManuallyHiddenApps ??= new List<string>();
             TagDisplayFilters ??= new List<TagDisplayFilter>();
             UserAppTags ??= new Dictionary<string, List<string>>();
+
+            foreach (var source in AppCatalogSources)
+            {
+                source.IgnoredChangesAtVersion ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                source.HiddenFromReviewRepositories ??= new List<string>();
+            }
 
             if (HiddenApps.Count > 0)
             {
