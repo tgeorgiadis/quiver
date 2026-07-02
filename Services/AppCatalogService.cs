@@ -16,11 +16,14 @@ namespace Quiver.Services
         private readonly GameManager? _gameManager;
         private readonly ICatalogLocationReader _locationReader;
 
-        public AppCatalogService(GameManager? gameManager = null, ICatalogLocationReader? locationReader = null)
+        public AppCatalogService(
+            GameManager? gameManager = null,
+            ICatalogLocationReader? locationReader = null,
+            string? dataDirectory = null)
         {
             _gameManager = gameManager;
             _locationReader = locationReader ?? CatalogLocationReader.Default;
-            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            var baseDir = dataDirectory ?? AppDomain.CurrentDomain.BaseDirectory;
             _appsConfigPath = Path.Combine(baseDir, "apps.json");
             _legacyGamesConfigPath = Path.Combine(baseDir, "games.json");
             _catalogSourcesCacheFolder = Path.Combine(baseDir, "Cache", "CatalogSources");
@@ -28,6 +31,7 @@ namespace Quiver.Services
         }
 
         public string AppsConfigPath => _appsConfigPath;
+        public string CatalogSourcesCacheFolder => _catalogSourcesCacheFolder;
 
         public async Task<List<GameInfo>> LoadLocalAppsAsync()
         {

@@ -83,18 +83,14 @@ public class CommunityCatalogDefaultsTests
     public async Task EnsureDefaultCommunitySourceFetchedAsync_populates_cache_and_pending_review()
     {
         var fixtureJson = await File.ReadAllTextAsync(TestFixtures.CommunityCatalogPath);
-        var service = new AppCatalogService(null, new FakeCatalogLocationReader(fixtureJson));
+        var (service, tempDir) = TestFixtures.CreateIsolatedCatalogService(new FakeCatalogLocationReader(fixtureJson));
         var settings = new AppSettings();
         settings.EnsureInitialized();
         settings.AppCatalogSources.Clear();
         settings.AppCatalogSources.Add(CommunityCatalogDefaults.CreateDefaultSource());
         var source = settings.AppCatalogSources[0];
 
-        var cachePath = Path.Combine(
-            AppContext.BaseDirectory,
-            "Cache",
-            "CatalogSources",
-            $"{source.Id}.json");
+        var cachePath = Path.Combine(service.CatalogSourcesCacheFolder, $"{source.Id}.json");
 
         try
         {
@@ -113,8 +109,7 @@ public class CommunityCatalogDefaultsTests
         }
         finally
         {
-            if (File.Exists(cachePath))
-                File.Delete(cachePath);
+            TestFixtures.CleanupDirectory(tempDir);
         }
     }
 
