@@ -118,7 +118,6 @@ public class FileSettingsStore : ISettingsStore
     {
         var settings = new AppSettings();
         settings.EnsureInitialized();
-        settings.AppCatalogSources.Add(CommunityCatalogDefaults.CreateDefaultSource());
         return settings;
     }
 }

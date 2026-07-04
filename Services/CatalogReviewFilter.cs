@@ -8,6 +8,5 @@ public enum CatalogReviewFilter
     NotInLibrary,
     Changed,
     UpToDate,
-    LocalOnly,
     Hidden,
 }

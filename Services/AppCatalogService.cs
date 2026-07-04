@@ -76,6 +76,10 @@ namespace Quiver.Services
         public async Task RefreshAllSourcesAsync(HttpClient httpClient, AppSettings settings)
         {
             settings.EnsureInitialized();
+
+            var bootstrap = new CommunityCatalogBootstrap(_locationReader);
+            await bootstrap.SyncCommunitySourcesFromIndexAsync(httpClient, settings).ConfigureAwait(false);
+
             foreach (var source in settings.AppCatalogSources.Where(s => s.Enabled))
                 await FetchSourceAsync(httpClient, source).ConfigureAwait(false);
         }
@@ -83,15 +87,29 @@ namespace Quiver.Services
         public bool HasSourceCache(string sourceId) =>
             File.Exists(GetSourceCachePath(sourceId));
 
-        public async Task EnsureDefaultCommunitySourceFetchedAsync(HttpClient httpClient, AppSettings settings)
+        public async Task<CommunityCatalogSyncResult> EnsureCommunitySourcesCachedAsync(
+            HttpClient httpClient,
+            AppSettings settings)
         {
             settings.EnsureInitialized();
-            var source = settings.AppCatalogSources.FirstOrDefault(CommunityCatalogDefaults.IsDefaultSource);
-            if (source == null || !source.Enabled || HasSourceCache(source.Id))
-                return;
 
-            await FetchSourceAsync(httpClient, source).ConfigureAwait(false);
+            var bootstrap = new CommunityCatalogBootstrap(_locationReader);
+            var syncResult = await bootstrap.SyncCommunitySourcesFromIndexAsync(httpClient, settings).ConfigureAwait(false);
+
+            foreach (var source in settings.AppCatalogSources.Where(s => s.IsCommunityManaged && s.Enabled))
+            {
+                if (HasSourceCache(source.Id))
+                    continue;
+
+                await FetchSourceAsync(httpClient, source).ConfigureAwait(false);
+            }
+
+            return syncResult;
         }
+
+        [Obsolete("Use EnsureCommunitySourcesCachedAsync instead.")]
+        public Task EnsureDefaultCommunitySourceFetchedAsync(HttpClient httpClient, AppSettings settings) =>
+            EnsureCommunitySourcesCachedAsync(httpClient, settings);
 
         public async Task<(List<GameInfo> Apps, string? Version, string? Error)> TryLoadSourceAsync(
             HttpClient httpClient,
@@ -116,35 +134,53 @@ namespace Quiver.Services
         public async Task<bool> FetchSourceAsync(HttpClient httpClient, AppCatalogSource source)
         {
             var cachePath = GetSourceCachePath(source.Id);
+            var locations = GetFetchLocationCandidates(source);
 
-            try
+            Exception? lastError = null;
+            foreach (var location in locations)
             {
-                var json = await _locationReader.ReadAsync(httpClient, source.Location).ConfigureAwait(false);
-                await File.WriteAllTextAsync(cachePath, json).ConfigureAwait(false);
-
-                using var document = JsonDocument.Parse(json);
-                var version = ResolveListVersion(document.RootElement, out _);
-
-                source.LastFetchedUtc = DateTime.UtcNow;
-                source.LastError = null;
-                source.CachedListVersion = version;
-                CatalogCompareService.PruneIgnoredChanges(source);
-                await RefreshUpdateAvailableAsync(source).ConfigureAwait(false);
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                if (File.Exists(cachePath))
+                try
                 {
-                    source.LastError = $"{ex.Message} (using cached copy)";
-                    await ApplyCachedVersionMetadataAsync(source).ConfigureAwait(false);
+                    var json = await _locationReader.ReadAsync(httpClient, location).ConfigureAwait(false);
+                    await File.WriteAllTextAsync(cachePath, json).ConfigureAwait(false);
+
+                    using var document = JsonDocument.Parse(json);
+                    var version = ResolveListVersion(document.RootElement, out _);
+
+                    source.LastFetchedUtc = DateTime.UtcNow;
+                    source.LastError = null;
+                    source.CachedListVersion = version;
+                    CatalogCompareService.PruneIgnoredChanges(source);
+                    await RefreshUpdateAvailableAsync(source).ConfigureAwait(false);
+
                     return true;
                 }
-
-                source.LastError = ex.Message;
-                return false;
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
             }
+
+            if (File.Exists(cachePath))
+            {
+                source.LastError = $"{lastError?.Message} (using cached copy)";
+                await ApplyCachedVersionMetadataAsync(source).ConfigureAwait(false);
+                return true;
+            }
+
+            source.LastError = lastError?.Message ?? "Failed to fetch catalog source.";
+            return false;
+        }
+
+        public static IReadOnlyList<string> GetFetchLocationCandidates(AppCatalogSource source)
+        {
+            if (!string.IsNullOrWhiteSpace(source.RemoteLocation))
+                return [source.RemoteLocation.Trim()];
+
+            if (!string.IsNullOrWhiteSpace(source.Location))
+                return [source.Location.Trim()];
+
+            return [];
         }
 
         public async Task RegisterNewSourceAsync(
@@ -177,24 +213,65 @@ namespace Quiver.Services
             source.IgnoredChangesAtVersion?.Clear();
         }
 
-        public async Task RefreshUpdateAvailableAsync(AppCatalogSource source)
+        public async Task RefreshSourceUsageStatsAsync(AppCatalogSource source)
         {
-            if (CatalogCompareService.IsReviewedVersion(source.AcknowledgedListVersion) &&
-                string.Equals(source.CachedListVersion, source.AcknowledgedListVersion, StringComparison.Ordinal))
-            {
-                source.UpdateAvailable = false;
-                source.PendingReviewCount = 0;
-                return;
-            }
-
             var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
             var externalApps = await LoadCachedAppsAsync(source.Id).ConfigureAwait(false);
+            var (usingCount, totalCount) = CatalogCompareService.ComputeLibraryUsageStats(localApps, externalApps);
+            source.LibraryAppCount = usingCount;
+            source.ListAppCount = totalCount;
+        }
+
+        public async Task RefreshAllSourcesUsageStatsAsync(AppSettings settings)
+        {
+            settings.EnsureInitialized();
+            var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
+            foreach (var source in settings.AppCatalogSources)
+            {
+                var externalApps = await LoadCachedAppsAsync(source.Id).ConfigureAwait(false);
+                (source.LibraryAppCount, source.ListAppCount) =
+                    CatalogCompareService.ComputeLibraryUsageStats(localApps, externalApps);
+            }
+        }
+
+        public async Task RefreshUpdateAvailableAsync(AppCatalogSource source)
+        {
+            var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
+            var externalApps = await LoadCachedAppsAsync(source.Id).ConfigureAwait(false);
+            (source.LibraryAppCount, source.ListAppCount) =
+                CatalogCompareService.ComputeLibraryUsageStats(localApps, externalApps);
+
             var rows = CatalogCompareService.BuildCompareRows(localApps, externalApps);
             source.PendingReviewCount = rows.Count(r => CatalogCompareService.IsActionableRow(r, source));
             if (TryAutoAcknowledgeIfReviewComplete(source, source.PendingReviewCount))
                 return;
 
             source.UpdateAvailable = source.PendingReviewCount > 0;
+        }
+
+        public async Task IgnoreRepositoryInMatchingSourcesAsync(AppSettings settings, string repository)
+        {
+            if (string.IsNullOrWhiteSpace(repository))
+                return;
+
+            settings.EnsureInitialized();
+            foreach (var source in settings.AppCatalogSources)
+            {
+                if (!source.Enabled)
+                    continue;
+
+                var externalApps = await LoadCachedAppsAsync(source.Id).ConfigureAwait(false);
+                var matches = externalApps.Any(app =>
+                    !string.IsNullOrWhiteSpace(app.Repository) &&
+                    app.Repository.Equals(repository, StringComparison.OrdinalIgnoreCase));
+                if (!matches)
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(source.CachedListVersion))
+                    CatalogCompareService.IgnoreChangesForCurrentVersion(source, repository);
+
+                await RefreshUpdateAvailableAsync(source).ConfigureAwait(false);
+            }
         }
 
         public static bool TryAutoAcknowledgeIfReviewComplete(AppCatalogSource source, int pendingCount)
@@ -238,6 +315,8 @@ namespace Quiver.Services
         public static bool MigrateLegacyCatalogSources(AppSettings settings, string? cacheFolder = null)
         {
             settings.EnsureInitialized();
+            CommunityCatalogBootstrap.MigrateLegacyDefaultSource(settings);
+
             cacheFolder ??= Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache", "CatalogSources");
             Directory.CreateDirectory(cacheFolder);
 

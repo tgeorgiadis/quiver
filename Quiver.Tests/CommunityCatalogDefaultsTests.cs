@@ -6,36 +6,33 @@ namespace Quiver.Tests;
 
 public class CommunityCatalogDefaultsTests
 {
+    private const string N64RemoteUrl =
+        "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Recomps.json";
+
     [Fact]
     public void FirstRunWelcome_copy_is_present()
     {
         CommunityCatalogDefaults.FirstRunWelcomeTitle.Should().Be("Welcome to Quiver");
         CommunityCatalogDefaults.FirstRunWelcomeMessage.Should().NotBeNullOrWhiteSpace();
-        CommunityCatalogDefaults.FirstRunWelcomeMessage.Should().Contain("Quiver Community App Catalog");
-        CommunityCatalogDefaults.FirstRunWelcomeMessage.Should().Contain("GitHub");
+        CommunityCatalogDefaults.FirstRunWelcomeMessage.Should().Contain("community app catalog lists");
+        CommunityCatalogDefaults.FirstRunWelcomeMessage.Should().Contain("internet connection");
     }
 
     [Fact]
-    public void CreateDefaultSource_uses_stable_id_name_and_url()
+    public void IsLegacyDefaultSource_matches_default_source_id()
     {
-        var source = CommunityCatalogDefaults.CreateDefaultSource();
-
-        source.Id.Should().Be(CommunityCatalogDefaults.DefaultSourceId);
-        source.Name.Should().Be("Quiver Community App Catalog");
-        source.Location.Should().Be(CommunityCatalogDefaults.DefaultCatalogUrl);
-        source.Enabled.Should().BeTrue();
+        var source = new AppCatalogSource
+        {
+            Id = CommunityCatalogDefaults.DefaultSourceId,
+            Name = CommunityCatalogDefaults.DefaultSourceName,
+            Location = CommunityCatalogDefaults.DefaultCatalogUrl,
+        };
+        CommunityCatalogDefaults.IsLegacyDefaultSource(source).Should().BeTrue();
+        CommunityCatalogDefaults.IsLegacyDefaultSource(new AppCatalogSource { Id = Guid.NewGuid().ToString() }).Should().BeFalse();
     }
 
     [Fact]
-    public void IsDefaultSource_matches_default_source_id()
-    {
-        var source = CommunityCatalogDefaults.CreateDefaultSource();
-        CommunityCatalogDefaults.IsDefaultSource(source).Should().BeTrue();
-        CommunityCatalogDefaults.IsDefaultSource(new AppCatalogSource { Id = Guid.NewGuid().ToString() }).Should().BeFalse();
-    }
-
-    [Fact]
-    public void GetFirstRunReviewSource_prefers_default_community_catalog()
+    public void GetFirstRunReviewSource_prefers_community_source_with_pending_review()
     {
         var settings = new AppSettings();
         settings.EnsureInitialized();
@@ -47,12 +44,19 @@ public class CommunityCatalogDefaultsTests
             Enabled = true,
             PendingReviewCount = 5,
         });
-        settings.AppCatalogSources.Add(CommunityCatalogDefaults.CreateDefaultSource());
+        settings.AppCatalogSources.Add(new AppCatalogSource
+        {
+            Id = "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c",
+            Name = "N64 Recomp Games",
+            Enabled = true,
+            IsCommunityManaged = true,
+            PendingReviewCount = 2,
+        });
 
         var source = CommunityCatalogDefaults.GetFirstRunReviewSource(settings);
 
         source.Should().NotBeNull();
-        CommunityCatalogDefaults.IsDefaultSource(source!).Should().BeTrue();
+        source!.Name.Should().Be("N64 Recomp Games");
     }
 
     [Fact]
@@ -80,32 +84,42 @@ public class CommunityCatalogDefaultsTests
     }
 
     [Fact]
-    public async Task EnsureDefaultCommunitySourceFetchedAsync_populates_cache_and_pending_review()
+    public async Task EnsureCommunitySourcesCachedAsync_populates_cache_from_remote_lists()
     {
-        var fixtureJson = await File.ReadAllTextAsync(TestFixtures.CommunityCatalogPath);
-        var (service, tempDir) = TestFixtures.CreateIsolatedCatalogService(new FakeCatalogLocationReader(fixtureJson));
+        var listJson = await File.ReadAllTextAsync(TestFixtures.N64RecompListPath);
+        var reader = new FakeCatalogLocationReader(new Dictionary<string, string>
+        {
+            [CommunityCatalogDefaults.RemoteIndexUrl] =
+                """
+                {
+                  "version": 1,
+                  "lists": [
+                    {
+                      "id": "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c",
+                      "name": "N64 Recomp Games",
+                      "description": "N64 recompilation ports",
+                      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Recomps.json",
+                      "listVersion": "1.0.0"
+                    }
+                  ]
+                }
+                """,
+            [N64RemoteUrl] = listJson,
+        });
+        var (service, tempDir) = TestFixtures.CreateIsolatedCatalogService(locationReader: reader);
         var settings = new AppSettings();
         settings.EnsureInitialized();
-        settings.AppCatalogSources.Clear();
-        settings.AppCatalogSources.Add(CommunityCatalogDefaults.CreateDefaultSource());
-        var source = settings.AppCatalogSources[0];
-
-        var cachePath = Path.Combine(service.CatalogSourcesCacheFolder, $"{source.Id}.json");
 
         try
         {
-            if (File.Exists(cachePath))
-                File.Delete(cachePath);
-
             await service.SaveLocalAppsAsync([]);
-            service.HasSourceCache(source.Id).Should().BeFalse();
+            await service.EnsureCommunitySourcesCachedAsync(new HttpClient(), settings);
 
-            await service.EnsureDefaultCommunitySourceFetchedAsync(new HttpClient(), settings);
-
+            var source = settings.AppCatalogSources.Single();
             service.HasSourceCache(source.Id).Should().BeTrue();
-            source.CachedListVersion.Should().Be("1.0.0");
+            source.CachedListVersion.Should().Be("1.0.2");
             await service.RefreshUpdateAvailableAsync(source);
-            source.PendingReviewCount.Should().Be(2);
+            source.PendingReviewCount.Should().BeGreaterThan(0);
         }
         finally
         {
@@ -113,9 +127,14 @@ public class CommunityCatalogDefaultsTests
         }
     }
 
-    private sealed class FakeCatalogLocationReader(string json) : ICatalogLocationReader
+    private sealed class FakeCatalogLocationReader(Dictionary<string, string> responses) : ICatalogLocationReader
     {
-        public Task<string> ReadAsync(HttpClient httpClient, string location, CancellationToken cancellationToken = default) =>
-            Task.FromResult(json);
+        public Task<string> ReadAsync(HttpClient httpClient, string location, CancellationToken cancellationToken = default)
+        {
+            if (responses.TryGetValue(location, out var json))
+                return Task.FromResult(json);
+
+            throw new InvalidOperationException($"No fake response for {location}");
+        }
     }
 }

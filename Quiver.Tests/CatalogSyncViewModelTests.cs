@@ -64,4 +64,33 @@ public class CatalogSyncViewModelTests
 
         viewModel.ShowNeedsReviewCompleteState.Should().BeFalse();
     }
+
+    [Fact]
+    public void VersionBannerText_includes_usage_stats_below_version_summary()
+    {
+        var local = new List<GameInfo>
+        {
+            CreateApp("owner/a"),
+            CreateApp("owner/b"),
+            CreateApp("owner/c"),
+        };
+        var external = new List<GameInfo>
+        {
+            CreateApp("owner/a"),
+            CreateApp("owner/b"),
+            CreateApp("owner/c"),
+            CreateApp("owner/d"),
+        };
+        var source = new AppCatalogSource
+        {
+            CachedListVersion = "1.0.0",
+            AcknowledgedListVersion = null,
+        };
+
+        var viewModel = new CatalogSyncViewModel();
+        viewModel.Refresh(source, local, external);
+
+        viewModel.VersionBannerText.Should().Be(
+            "List version: 1.0.0\nLast reviewed: not yet\nUsing 3/4 apps from this list");
+    }
 }

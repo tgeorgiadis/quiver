@@ -762,6 +762,12 @@
 									FontSize="10" Padding="6,2" IsVisible="{Binding ShowHideButton}"/>
 							<Button Classes="options" Content="Unhide" Tag="{Binding Repository}" Click="CatalogSyncRowUnhide_Click"
 									FontSize="10" Padding="6,2" IsVisible="{Binding ShowUnhideButton}"/>
+							<Button Classes="options catalog-remove-from-library"
+									Content="Remove from Library"
+									Tag="{Binding Repository}"
+									Click="CatalogSyncRowRemoveFromLibrary_Click"
+									FontSize="10" Padding="6,2"
+									IsVisible="{Binding CanRemoveFromLibrary}"/>
 						</StackPanel>
 					</Grid>
 					<Border IsVisible="{Binding HasInlineDiff}"
@@ -785,28 +791,72 @@
 					BorderBrush="{DynamicResource ThemeBorder}"
 					BorderThickness="1"
 					CornerRadius="8"
-					Padding="14"
-					Margin="0,0,0,10">
-				<StackPanel Spacing="6">
-					<Grid ColumnDefinitions="*,Auto">
-						<TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource ThemeText}"/>
+					Padding="10"
+					Width="340"
+					Margin="0,0,16,16"
+					Classes.catalog-source-needs-review="{Binding NeedsReviewHighlight}">
+				<StackPanel Spacing="4">
+					<Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+						<TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"
+								   Foreground="{DynamicResource ThemeText}"
+								   TextTrimming="CharacterEllipsis" MaxLines="1" VerticalAlignment="Center"
+								   ToolTip.Tip="{Binding TitleToolTip}"/>
 						<Border Grid.Column="1" Background="{DynamicResource ThemeLighter}" CornerRadius="10"
-								MinWidth="22" Height="22" Padding="6,0" VerticalAlignment="Center"
+								MinWidth="26" Height="26" Padding="6,0" VerticalAlignment="Center"
 								IsVisible="{Binding PendingReviewBadgeVisible}">
-							<TextBlock Text="{Binding PendingReviewCount}" FontSize="11" FontWeight="Bold"
+							<TextBlock Text="{Binding PendingReviewCount}" FontSize="13" FontWeight="Bold"
 									   HorizontalAlignment="Center" VerticalAlignment="Center"/>
 						</Border>
+						<Border Grid.Column="1" Classes="catalog-all-reviewed-chip" VerticalAlignment="Center"
+								IsVisible="{Binding AllReviewedVisible}" ToolTip.Tip="All reviewed">
+							<TextBlock Text="✓ Reviewed" Classes="catalog-all-reviewed"/>
+						</Border>
 					</Grid>
-					<TextBlock Text="{Binding Location}" FontSize="11" Foreground="{DynamicResource ThemeTextSecondary}" TextWrapping="Wrap"/>
-					<TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="{DynamicResource ThemeTextSecondary}" TextWrapping="Wrap"/>
-					<Grid ColumnDefinitions="*,Auto">
+					<TextBlock Text="{Binding Description}" FontSize="12"
+							   Foreground="{DynamicResource ThemeTextSecondary}"
+							   TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxLines="2"
+							   ToolTip.Tip="{Binding Description}"
+							   IsVisible="{Binding DescriptionVisible}"/>
+					<Border Classes="catalog-source-meta" IsVisible="{Binding MetaStripVisible}">
+						<StackPanel Spacing="2">
+							<Grid ColumnDefinitions="*,Auto">
+								<TextBlock Grid.Column="0" Text="{Binding UsageStatsShort}"
+										   FontSize="12" FontWeight="SemiBold"
+										   Foreground="{DynamicResource ThemeText}"
+										   TextTrimming="CharacterEllipsis"
+										   Classes.catalog-usage-full="{Binding UsageStatsFullLibrary}"
+										   IsVisible="{Binding UsageStatsVisible}"/>
+								<TextBlock Grid.Column="1" Text="{Binding FetchStatusText}"
+										   FontSize="11"
+										   Foreground="{DynamicResource ThemeTextSecondary}"
+										   HorizontalAlignment="Right"
+										   TextTrimming="CharacterEllipsis"
+										   IsVisible="{Binding FetchStatusVisible}"/>
+								<TextBlock Grid.Column="1" Text="{Binding StatusWarningText}"
+										   FontSize="11" FontWeight="SemiBold"
+										   HorizontalAlignment="Right"
+										   TextTrimming="CharacterEllipsis"
+										   Classes.catalog-status-warning="{Binding StatusWarningIsWarning}"
+										   Classes.catalog-status-error="{Binding StatusWarningIsError}"
+										   IsVisible="{Binding StatusWarningVisible}"/>
+							</Grid>
+							<TextBlock Text="{Binding VersionLineText}"
+									   FontSize="11"
+									   Foreground="{DynamicResource ThemeTextSecondary}"
+									   TextTrimming="CharacterEllipsis"
+									   Classes.catalog-version-unreviewed="{Binding VersionLineUnreviewed}"
+									   IsVisible="{Binding VersionLineVisible}"/>
+						</StackPanel>
+					</Border>
+					<Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
 						<CheckBox Grid.Column="0" Content="Enabled" IsChecked="{Binding Enabled}" Foreground="{DynamicResource ThemeText}"
 								  Tag="{Binding SourceId}" Checked="CatalogSourceEnabled_Changed" Unchecked="CatalogSourceEnabled_Changed"/>
-						<Button Grid.Column="1" Classes="options" Content="Remove" Tag="{Binding SourceId}"
+						<Button Grid.Column="1" Classes="options" Classes.catalog-review-pending="{Binding ShowReviewPendingStyle}"
+								Content="{Binding ReviewButtonText}" HorizontalAlignment="Stretch"
+								Tag="{Binding SourceId}" Click="ReviewCatalogSource_Click" FontSize="12" Padding="10,4"/>
+						<Button Grid.Column="2" Classes="options" Content="Remove" Tag="{Binding SourceId}"
 								Click="RemoveCatalogSource_Click" FontSize="11" Padding="8,4"/>
 					</Grid>
-					<Button Classes="options" Content="{Binding ReviewButtonText}" HorizontalAlignment="Stretch"
-							Tag="{Binding SourceId}" Click="ReviewCatalogSource_Click" FontSize="12" Margin="0,4,0,0"/>
 				</StackPanel>
 			</Border>
 		</DataTemplate>
@@ -1126,6 +1176,95 @@
 	<Style Selector="Button.catalog-filter.selected">
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+	</Style>
+
+	<Style Selector="Border.catalog-source-needs-review">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeWarning}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="Button.catalog-review-pending">
+		<Setter Property="Background" Value="{DynamicResource ThemeWarning}"/>
+		<Setter Property="Foreground" Value="#18181b"/>
+		<Setter Property="FontWeight" Value="Bold"/>
+	</Style>
+
+	<Style Selector="Button.catalog-review-pending:pointerover">
+		<Setter Property="Background" Value="{DynamicResource ThemeWarning}"/>
+		<Setter Property="Opacity" Value="0.9"/>
+	</Style>
+
+	<Style Selector="Button.catalog-review-pending:pressed">
+		<Setter Property="Background" Value="{DynamicResource ThemeWarning}"/>
+		<Setter Property="Opacity" Value="0.8"/>
+	</Style>
+
+	<Style Selector="Button.options.catalog-remove-from-library">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeError}"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeError}"/>
+	</Style>
+
+	<Style Selector="Button.options.catalog-remove-from-library:pointerover">
+		<Setter Property="Background" Value="#2a1515"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeError}"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeError}"/>
+	</Style>
+
+	<Style Selector="Button.options.catalog-remove-from-library:pressed">
+		<Setter Property="Background" Value="#3a1818"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeError}"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeError}"/>
+	</Style>
+
+	<Style Selector="Border.catalog-all-reviewed-chip">
+		<Setter Property="Background" Value="Transparent"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeSuccess}"/>
+		<Setter Property="BorderThickness" Value="1"/>
+		<Setter Property="CornerRadius" Value="10"/>
+		<Setter Property="Padding" Value="6,2"/>
+	</Style>
+
+	<Style Selector="TextBlock.catalog-all-reviewed">
+		<Setter Property="Foreground" Value="{DynamicResource ThemeSuccess}"/>
+		<Setter Property="FontSize" Value="11"/>
+		<Setter Property="FontWeight" Value="SemiBold"/>
+	</Style>
+
+	<Style Selector="Border.catalog-source-meta">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderThickness" Value="1"/>
+		<Setter Property="CornerRadius" Value="6"/>
+		<Setter Property="Padding" Value="8,6"/>
+	</Style>
+
+	<Style Selector="TextBlock.catalog-usage-full">
+		<Setter Property="Foreground" Value="{DynamicResource ThemeSuccess}"/>
+	</Style>
+
+	<Style Selector="TextBlock.catalog-status-warning">
+		<Setter Property="Foreground" Value="{DynamicResource ThemeWarning}"/>
+	</Style>
+
+	<Style Selector="TextBlock.catalog-status-error">
+		<Setter Property="Foreground" Value="{DynamicResource ThemeError}"/>
+	</Style>
+
+	<Style Selector="TextBlock.catalog-version-unreviewed">
+		<Setter Property="Foreground" Value="{DynamicResource ThemeWarning}"/>
+	</Style>
+
+	<Style Selector="TextBlock.catalog-review-version-unreviewed">
+		<Setter Property="Foreground" Value="{DynamicResource ThemeAccent}"/>
+		<Setter Property="FontWeight" Value="SemiBold"/>
+	</Style>
+
+	<Style Selector="Border.catalog-review-version-banner">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+		<Setter Property="BorderThickness" Value="1"/>
+		<Setter Property="CornerRadius" Value="6"/>
+		<Setter Property="Padding" Value="10,8"/>
 	</Style>
 
 	<Style Selector="Button.settings">
@@ -1906,7 +2045,7 @@
 				<Grid x:Name="CatalogContentPanel" IsVisible="False" Margin="30,20,30,30">
 					<!-- Sources list -->
 					<ScrollViewer x:Name="CatalogSourcesPanel" VerticalScrollBarVisibility="Auto">
-						<StackPanel Spacing="12" MaxWidth="720" HorizontalAlignment="Left">
+						<StackPanel Spacing="12">
 							<TextBlock Text="External catalog sources reference remote app lists. Your local apps.json is your library."
 									   FontSize="12"
 									   Foreground="{DynamicResource ThemeTextSecondary}"
@@ -1915,7 +2054,20 @@
 								<Button Classes="options" Content="Add Source" Click="AddCatalogSource_Click" FontSize="12"/>
 								<Button Classes="options" Content="Refresh All Sources" Click="RefreshCatalogSources_Click" FontSize="12"/>
 							</StackPanel>
+							<WrapPanel Orientation="Horizontal">
+								<Button x:Name="CatalogSourceFilterAllButton" Classes="catalog-filter" Content="All"
+										Tag="All" Click="CatalogSourceListFilter_Click" Margin="0,0,6,6"/>
+								<Button x:Name="CatalogSourceFilterEnabledButton" Classes="catalog-filter selected" Content="Enabled"
+										Tag="Enabled" Click="CatalogSourceListFilter_Click" Margin="0,0,6,6"/>
+								<Button x:Name="CatalogSourceFilterDisabledButton" Classes="catalog-filter" Content="Disabled"
+										Tag="Disabled" Click="CatalogSourceListFilter_Click" Margin="0,0,6,6"/>
+							</WrapPanel>
 							<ItemsControl ItemsSource="{Binding CatalogSources}">
+								<ItemsControl.ItemsPanel>
+									<ItemsPanelTemplate>
+										<WrapPanel Orientation="Horizontal"/>
+									</ItemsPanelTemplate>
+								</ItemsControl.ItemsPanel>
 								<ItemsControl.ItemTemplate>
 									<StaticResource ResourceKey="CatalogSourceCardTemplate"/>
 								</ItemsControl.ItemTemplate>
@@ -1931,12 +2083,16 @@
 
 					<!-- Source review -->
 					<Grid x:Name="CatalogReviewPanel" IsVisible="False" RowDefinitions="Auto,Auto,Auto,*">
-						<TextBlock x:Name="CatalogReviewVersionText"
-								   Grid.Row="0"
-								   FontSize="11"
-								   Foreground="{DynamicResource ThemeTextSecondary}"
-								   TextWrapping="Wrap"
-								   Margin="0,0,0,8"/>
+						<Border x:Name="CatalogReviewVersionBanner"
+								Grid.Row="0"
+								Classes="catalog-review-version-banner"
+								IsVisible="False"
+								Margin="0,0,0,8">
+							<TextBlock x:Name="CatalogReviewVersionText"
+									   FontSize="15"
+									   Foreground="{DynamicResource ThemeText}"
+									   TextWrapping="Wrap"/>
+						</Border>
 						<StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
 							<Button x:Name="CatalogSyncAddAllButton" Classes="options" Content="Add all new"
 									Click="CatalogSyncAddAll_Click" FontSize="11"/>
@@ -1959,8 +2115,6 @@
 										Tag="Changed" Click="CatalogReviewFilter_Click" Margin="0,0,6,6"/>
 								<Button x:Name="CatalogFilterUpToDateButton" Classes="catalog-filter" Content="Up to date"
 										Tag="UpToDate" Click="CatalogReviewFilter_Click" Margin="0,0,6,6"/>
-								<Button x:Name="CatalogFilterLocalOnlyButton" Classes="catalog-filter" Content="Local only"
-										Tag="LocalOnly" Click="CatalogReviewFilter_Click" Margin="0,0,6,6"/>
 								<Button x:Name="CatalogFilterHiddenButton" Classes="catalog-filter" Content="Hidden"
 										Tag="Hidden" Click="CatalogReviewFilter_Click" Margin="0,0,6,6"/>
 							</WrapPanel>
@@ -1968,7 +2122,7 @@
 									   FontSize="10"
 									   Foreground="{DynamicResource ThemeTextSecondary}"
 									   Opacity="0.85"/>
-							<TextBlock Text="Tag colors: amber = local only · green = external only · gray = both"
+							<TextBlock Text="Tag colors on changed apps: green = catalog only · gray = both sides"
 									   FontSize="10"
 									   Foreground="{DynamicResource ThemeTextSecondary}"
 									   Opacity="0.85"/>

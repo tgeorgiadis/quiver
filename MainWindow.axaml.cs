@@ -534,6 +534,10 @@ namespace Quiver
             Resources["ThemeBorder"] = themeBorder;
             Resources["ThemeText"] = tintedText;
             Resources["ThemeTextSecondary"] = tintedTextSecondary;
+            Resources["ThemeSuccess"] = new SolidColorBrush(Color.Parse("#22c55e"));
+            Resources["ThemeWarning"] = new SolidColorBrush(Color.Parse("#f59e0b"));
+            Resources["ThemeError"] = new SolidColorBrush(Color.Parse("#ef4444"));
+            Resources["ThemeAccent"] = new SolidColorBrush(Color.Parse("#f59e0b"));
 
             OnPropertyChanged(nameof(WindowBackground));
         }
@@ -1100,7 +1104,7 @@ namespace Quiver
                 await _gameManager.LoadGamesAsync();
                 _settings = AppSettings.Load();
 
-                await _gameManager.CatalogService.EnsureDefaultCommunitySourceFetchedAsync(
+                await _gameManager.CatalogService.EnsureCommunitySourcesCachedAsync(
                     _gameManager.HttpClient,
                     _settings);
                 AppSettings.Save(_settings);
@@ -2207,7 +2211,7 @@ namespace Quiver
                 _settings.ListScope == AppListScope.InstalledOnly);
         }
 
-        private void RefreshCatalogSourcesList()
+        private async Task RefreshCatalogSourcesListAsync()
         {
             if (_isRefreshingCatalogSources)
                 return;
@@ -2216,6 +2220,7 @@ namespace Quiver
             _suppressCatalogSourceUiEvents = true;
             try
             {
+                await _gameManager.CatalogService.RefreshAllSourcesUsageStatsAsync(_settings);
                 _catalogViewModel.RefreshSourceList(CatalogSources, _settings);
             }
             finally
@@ -2228,6 +2233,8 @@ namespace Quiver
             UpdateCatalogSourcesEmptyState();
         }
 
+        private void RefreshCatalogSourcesList() => _ = RefreshCatalogSourcesListAsync();
+
         private void RefreshCatalogBadgeCounts()
         {
             OnPropertyChanged(nameof(CatalogReviewBadgeCount));
@@ -2236,8 +2243,56 @@ namespace Quiver
 
         private void UpdateCatalogSourcesEmptyState()
         {
-            if (this.FindControl<TextBlock>("CatalogSourcesEmptyText") is TextBlock emptyText)
-                emptyText.IsVisible = CatalogSources.Count == 0;
+            if (this.FindControl<TextBlock>("CatalogSourcesEmptyText") is not TextBlock emptyText)
+                return;
+
+            emptyText.IsVisible = CatalogSources.Count == 0;
+            if (CatalogSources.Count > 0)
+                return;
+
+            emptyText.Text = _catalogViewModel.SourceListFilter switch
+            {
+                CatalogSourceListFilter.Enabled => "No enabled catalog sources.",
+                CatalogSourceListFilter.Disabled => "No disabled catalog sources.",
+                _ when _settings.AppCatalogSources.Count == 0 =>
+                    "No catalog sources yet. Add a source to subscribe to an external app list.",
+                _ => "No catalog sources match this filter.",
+            };
+        }
+
+        private static readonly (string Tag, CatalogSourceListFilter Filter)[] CatalogSourceListFilters =
+        [
+            ("All", CatalogSourceListFilter.All),
+            ("Enabled", CatalogSourceListFilter.Enabled),
+            ("Disabled", CatalogSourceListFilter.Disabled),
+        ];
+
+        private void CatalogSourceListFilter_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string tag })
+                return;
+
+            var filter = CatalogSourceListFilters.FirstOrDefault(f => f.Tag == tag).Filter;
+            _catalogViewModel.SourceListFilter = filter;
+            RefreshCatalogSourceListFilterButtons(tag);
+            RefreshCatalogSourcesList();
+        }
+
+        private void RefreshCatalogSourceListFilterButtons(string selectedTag)
+        {
+            foreach (var (tag, _) in CatalogSourceListFilters)
+            {
+                var buttonName = tag switch
+                {
+                    "All" => "CatalogSourceFilterAllButton",
+                    "Enabled" => "CatalogSourceFilterEnabledButton",
+                    "Disabled" => "CatalogSourceFilterDisabledButton",
+                    _ => null,
+                };
+
+                if (buttonName != null && this.FindControl<Button>(buttonName) is Button button)
+                    button.Classes.Set("selected", tag == selectedTag);
+            }
         }
 
         private void LibraryNavButton_Click(object? sender, RoutedEventArgs e) => ShowLibraryView();
@@ -2335,21 +2390,13 @@ namespace Quiver
         private async void EmptyLibraryBrowseCatalog_Click(object? sender, RoutedEventArgs e) =>
             await OpenCommunityCatalogFromLibraryAsync();
 
-        private async Task OpenCommunityCatalogFromLibraryAsync()
+        private Task OpenCommunityCatalogFromLibraryAsync()
         {
             AppCatalogService.MigrateLegacyCatalogSources(_settings);
+            OnSettingChanged();
 
-            var defaultSource = _settings.AppCatalogSources
-                .FirstOrDefault(CommunityCatalogDefaults.IsDefaultSource);
-
-            if (defaultSource == null)
-            {
-                defaultSource = CommunityCatalogDefaults.CreateDefaultSource();
-                _settings.AppCatalogSources.Add(defaultSource);
-                OnSettingChanged();
-            }
-
-            await OpenCatalogReviewAsync(defaultSource.Id, CatalogReviewFilter.New);
+            ShowAppCatalogSourcesView();
+            return Task.CompletedTask;
         }
 
         private static readonly (string Tag, CatalogReviewFilter Filter)[] CatalogReviewFilters =
@@ -2360,7 +2407,6 @@ namespace Quiver
             ("NotInLibrary", CatalogReviewFilter.NotInLibrary),
             ("Changed", CatalogReviewFilter.Changed),
             ("UpToDate", CatalogReviewFilter.UpToDate),
-            ("LocalOnly", CatalogReviewFilter.LocalOnly),
             ("Hidden", CatalogReviewFilter.Hidden),
         ];
 
@@ -2387,7 +2433,6 @@ namespace Quiver
                     "NotInLibrary" => "CatalogFilterNotInLibraryButton",
                     "Changed" => "CatalogFilterChangedButton",
                     "UpToDate" => "CatalogFilterUpToDateButton",
-                    "LocalOnly" => "CatalogFilterLocalOnlyButton",
                     "Hidden" => "CatalogFilterHiddenButton",
                     _ => null,
                 };
@@ -2528,7 +2573,7 @@ namespace Quiver
                 if (_settings.AppCatalogSources.Any(s => s.Enabled && s.UpdateAvailable))
                 {
                     await ShowMessageBoxAsync(
-                        "Catalog updates are available. Open App Catalog to review and sync apps.",
+                        FormatPendingReviewSourcesMessage(_settings, includeOpenPrompt: false),
                         "Updates Available");
                 }
                 else
@@ -2553,13 +2598,36 @@ namespace Quiver
             if (_settings.AppCatalogSources.Any(s => s.Enabled && s.UpdateAvailable))
             {
                 var openCatalog = await ShowMessageBoxAsync(
-                    "Catalog updates are available. Open App Catalog now to review changes?",
+                    FormatPendingReviewSourcesMessage(_settings, includeOpenPrompt: true),
                     "Catalog Updates",
                     true);
 
                 if (openCatalog)
                     await OpenAppCatalogForReviewAsync();
             }
+        }
+
+        private static string FormatPendingReviewSourcesMessage(AppSettings settings, bool includeOpenPrompt)
+        {
+            var pendingSources = settings.AppCatalogSources
+                .Where(s => s.Enabled && s.PendingReviewCount > 0)
+                .OrderByDescending(s => s.PendingReviewCount)
+                .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (pendingSources.Count == 0)
+            {
+                return includeOpenPrompt
+                    ? "Catalog updates are available. Open App Catalog now to review changes?"
+                    : "Catalog updates are available. Open App Catalog to review and sync apps.";
+            }
+
+            var lines = pendingSources
+                .Select(s => $"• {s.Name} ({s.PendingReviewCount})");
+            var body = "Catalog updates are available:\n\n" + string.Join("\n", lines);
+            return includeOpenPrompt
+                ? body + "\n\nOpen App Catalog to review these sources?"
+                : body + "\n\nOpen App Catalog to review and sync apps.";
         }
 
         private async Task OpenAppCatalogForReviewAsync()
@@ -2572,22 +2640,17 @@ namespace Quiver
                 .FirstOrDefault();
 
             if (source != null)
-                await OpenCatalogReviewAsync(source.Id);
+                await OpenCatalogReviewAsync(source.Id, CatalogReviewFilter.NeedsReview);
         }
 
         private async Task RunLocalFirstCatalogMigrationAsync()
         {
             AppCatalogService.MigrateLegacyCatalogSources(_settings);
+            OnSettingChanged();
 
             await ShowFirstRunWelcomeAsync();
 
-            var defaultSource = _settings.AppCatalogSources
-                .FirstOrDefault(CommunityCatalogDefaults.IsDefaultSource);
-
-            if (defaultSource != null && defaultSource.Enabled)
-                await OpenCatalogReviewAsync(defaultSource.Id, CatalogReviewFilter.New);
-            else
-                await OpenAppCatalogForReviewAsync();
+            ShowAppCatalogSourcesView();
 
             _settings.LocalFirstCatalogMigrationComplete = true;
             OnSettingChanged();
@@ -2614,12 +2677,16 @@ namespace Quiver
             if (sender is not Button { Tag: string sourceId })
                 return;
 
-            await OpenCatalogReviewAsync(sourceId);
+            var source = _settings.AppCatalogSources.FirstOrDefault(s => s.Id == sourceId);
+            var filter = source is { PendingReviewCount: > 0 }
+                ? CatalogReviewFilter.NeedsReview
+                : CatalogReviewFilter.All;
+            await OpenCatalogReviewAsync(sourceId, filter);
         }
 
         private async Task OpenCatalogReviewAsync(
             string sourceId,
-            CatalogReviewFilter initialFilter = CatalogReviewFilter.All)
+            CatalogReviewFilter? initialFilter = null)
         {
             var source = _settings.AppCatalogSources.FirstOrDefault(s => s.Id == sourceId);
             if (source == null)
@@ -2631,11 +2698,16 @@ namespace Quiver
             var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
             var externalApps = await _gameManager.CatalogService.LoadCachedAppsAsync(source.Id);
 
+            var filter = initialFilter ?? (
+                source.PendingReviewCount > 0 || source.UpdateAvailable
+                    ? CatalogReviewFilter.NeedsReview
+                    : CatalogReviewFilter.All);
+
             _activeCatalogSyncSource = source;
-            _catalogSyncViewModel.ReviewFilter = initialFilter;
+            _catalogSyncViewModel.ReviewFilter = filter;
             _catalogSyncViewModel.Refresh(source, localApps, externalApps);
 
-            RefreshCatalogReviewFilterButtons(GetCatalogReviewFilterTag(initialFilter));
+            RefreshCatalogReviewFilterButtons(GetCatalogReviewFilterTag(filter));
             ApplyCatalogSyncFilter();
             UpdateCatalogSyncBulkButtons();
 
@@ -2656,7 +2728,17 @@ namespace Quiver
             }
 
             if (this.FindControl<TextBlock>("CatalogReviewVersionText") is TextBlock versionText)
-                versionText.Text = _catalogSyncViewModel.VersionSummary;
+            {
+                var summary = _catalogSyncViewModel.VersionBannerText;
+                versionText.Text = summary;
+                var unreviewed = summary.Contains("not yet", StringComparison.OrdinalIgnoreCase);
+                versionText.Classes.Set("catalog-review-version-unreviewed", unreviewed);
+            }
+
+            if (this.FindControl<Border>("CatalogReviewVersionBanner") is Border versionBanner)
+            {
+                versionBanner.IsVisible = !string.IsNullOrWhiteSpace(_catalogSyncViewModel.VersionBannerText);
+            }
 
             if (this.FindControl<TextBlock>("CatalogSyncEmptyText") is TextBlock emptyText)
             {
@@ -2847,6 +2929,29 @@ namespace Quiver
             var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
             var updated = CatalogCompareService.ApplyRowMerge(localApps, row);
             CatalogCompareService.ClearIgnoredChange(_activeCatalogSyncSource!, row.Repository);
+            await ApplyCatalogSyncLocalAppsAsync(updated);
+        }
+
+        private async void CatalogSyncRowRemoveFromLibrary_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string repository } || _activeCatalogSyncSource == null)
+                return;
+
+            var row = FindCatalogSyncRow(repository);
+            if (row == null || !row.CanRemoveFromLibrary)
+                return;
+
+            var confirm = await ShowMessageBoxAsync(
+                $"Are you sure you want to remove '{row.DisplayName}' from your apps list?\n\nThis will only remove it from the launcher, not delete your files.",
+                "Confirm Removal",
+                true);
+
+            if (!confirm)
+                return;
+
+            var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var updated = CatalogCompareService.ApplyRowRemove(localApps, row);
+            CatalogCompareService.IgnoreChangesForCurrentVersion(_activeCatalogSyncSource, row.Repository);
             await ApplyCatalogSyncLocalAppsAsync(updated);
         }
 
@@ -3631,6 +3736,90 @@ namespace Quiver
             });
         }
 
+        private static Window CreateScrollableMessageBoxWindow(
+            string message,
+            string title,
+            bool isQuestion,
+            Action<bool>? onQuestionResult = null)
+        {
+            var messageBox = new Window
+            {
+                Title = title,
+                MinWidth = 420,
+                MaxWidth = 520,
+                MaxHeight = 520,
+                CanResize = true,
+                SizeToContent = SizeToContent.Height,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            };
+
+            var scrollViewer = new ScrollViewer
+            {
+                MaxHeight = 360,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = new TextBlock
+                {
+                    Text = message,
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 13,
+                },
+            };
+
+            Control buttonRow;
+            if (isQuestion)
+            {
+                var yesButton = new Button
+                {
+                    Content = "Yes",
+                    Margin = new Thickness(0, 0, 10, 0),
+                    MinWidth = 80,
+                };
+                var noButton = new Button
+                {
+                    Content = "No",
+                    MinWidth = 80,
+                };
+
+                yesButton.Click += (_, _) =>
+                {
+                    onQuestionResult?.Invoke(true);
+                    messageBox.Close();
+                };
+                noButton.Click += (_, _) =>
+                {
+                    onQuestionResult?.Invoke(false);
+                    messageBox.Close();
+                };
+
+                buttonRow = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Children = { yesButton, noButton },
+                };
+            }
+            else
+            {
+                var okButton = new Button
+                {
+                    Content = "OK",
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    MinWidth = 80,
+                };
+                okButton.Click += (_, _) => messageBox.Close();
+                buttonRow = okButton;
+            }
+
+            messageBox.Content = new StackPanel
+            {
+                Margin = new Thickness(20),
+                Spacing = 16,
+                Children = { scrollViewer, buttonRow },
+            };
+
+            return messageBox;
+        }
+
         private async Task ShowMessageBoxAsync(string message, string title)
         {
             await Dispatcher.UIThread.InvokeAsync(async () =>
@@ -3638,26 +3827,7 @@ namespace Quiver
                 if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
                     desktop.MainWindow != null)
                 {
-                    var messageBox = new Window
-                    {
-                        Title = title,
-                        Width = 400,
-                        Height = 150,
-                        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                        Content = new StackPanel
-                        {
-                            Margin = new Thickness(20),
-                            Children =
-                    {
-                        new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 20) },
-                        new Button { Content = "OK", HorizontalAlignment = HorizontalAlignment.Center }
-                    }
-                        }
-                    };
-                    if (((StackPanel)messageBox.Content).Children[1] is Button okButton)
-                    {
-                        okButton.Click += (s, e) => messageBox.Close();
-                    }
+                    var messageBox = CreateScrollableMessageBoxWindow(message, title, isQuestion: false);
                     await messageBox.ShowDialog(desktop.MainWindow);
                 }
             });
@@ -4332,63 +4502,12 @@ namespace Quiver
                 if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
                     desktop.MainWindow != null)
                 {
-                    bool result = false;
-                    var messageBox = new Window
-                    {
-                        Title = title,
-                        Width = 450,
-                        Height = 170,
-                        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                        Content = new StackPanel
-                        {
-                            Margin = new Thickness(20),
-                            Children =
-                    {
-                        new TextBlock
-                        {
-                            Text = message,
-                            TextWrapping = TextWrapping.Wrap,
-                            Margin = new Thickness(0, 0, 0, 20)
-                        },
-                        new StackPanel
-                        {
-                            Orientation = Orientation.Horizontal,
-                            HorizontalAlignment = HorizontalAlignment.Center,
-                            Children =
-                            {
-                                new Button
-                                {
-                                    Content = "Yes",
-                                    Margin = new Thickness(0, 0, 10, 0),
-                                    MinWidth = 80
-                                },
-                                new Button
-                                {
-                                    Content = "No",
-                                    MinWidth = 80
-                                }
-                            }
-                        }
-                    }
-                        }
-                    };
-
-                    if (((StackPanel)messageBox.Content).Children[1] is StackPanel buttonPanel &&
-                        buttonPanel.Children[0] is Button yesButton &&
-                        buttonPanel.Children[1] is Button noButton)
-                    {
-                        yesButton.Click += (s, e) =>
-                        {
-                            result = true;
-                            messageBox.Close();
-                        };
-
-                        noButton.Click += (s, e) =>
-                        {
-                            result = false;
-                            messageBox.Close();
-                        };
-                    }
+                    var result = false;
+                    var messageBox = CreateScrollableMessageBoxWindow(
+                        message,
+                        title,
+                        isQuestion: true,
+                        onQuestionResult: value => result = value);
 
                     await messageBox.ShowDialog(desktop.MainWindow);
                     return result;
@@ -5108,6 +5227,15 @@ namespace Quiver
                 await SaveGamesToJsonAsync(games);
                 await _gameManager.LoadGamesAsync();
                 ApplySorting();
+
+                await _gameManager.CatalogService.IgnoreRepositoryInMatchingSourcesAsync(
+                    _settings,
+                    game.Repository);
+                OnSettingChanged();
+                RefreshCatalogSourcesList();
+
+                if (_activeCatalogSyncSource != null)
+                    await RefreshActiveCatalogSyncRowsAsync();
 
                 _ = ShowMessageBoxAsync($"'{game.Name}' was removed successfully.", "Removed");
             }

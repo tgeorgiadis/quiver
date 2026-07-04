@@ -57,6 +57,32 @@ public class CatalogSyncViewModel
                 Source.CachedListVersion,
                 Source.AcknowledgedListVersion);
 
+    public string UsageStatsText
+    {
+        get
+        {
+            if (Source == null || AllRows.Count == 0)
+                return "";
+
+            return CatalogSourceListItem.FormatUsageStats(
+                AllRows.Count(r => r.Local != null),
+                AllRows.Count);
+        }
+    }
+
+    public string VersionBannerText
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(VersionSummary))
+                parts.Add(VersionSummary);
+            if (!string.IsNullOrWhiteSpace(UsageStatsText))
+                parts.Add(UsageStatsText);
+            return string.Join("\n", parts);
+        }
+    }
+
     public string FilterSummary
     {
         get

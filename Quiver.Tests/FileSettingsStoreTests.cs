@@ -39,16 +39,11 @@ public class FileSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void Load_includes_default_community_catalog_source_when_file_missing()
+    public void Load_starts_with_empty_catalog_sources_when_file_missing()
     {
         var store = new FileSettingsStore(_settingsPath);
 
-        store.Current.AppCatalogSources.Should().ContainSingle();
-        var source = store.Current.AppCatalogSources[0];
-        source.Id.Should().Be(CommunityCatalogDefaults.DefaultSourceId);
-        source.Name.Should().Be(CommunityCatalogDefaults.DefaultSourceName);
-        source.Location.Should().Be(CommunityCatalogDefaults.DefaultCatalogUrl);
-        source.Enabled.Should().BeTrue();
+        store.Current.AppCatalogSources.Should().BeEmpty();
     }
 
     [Fact]

@@ -27,7 +27,7 @@ public class AppCatalogServiceTests
     [InlineData("https://example.com/apps.json", true)]
     [InlineData("http://example.com/apps.json", true)]
     [InlineData("HTTPS://EXAMPLE.COM/apps.json", true)]
-    [InlineData("community-app-lists/n64-recomp.json", false)]
+    [InlineData("community-app-catalog/N64-Recomps.json", false)]
     [InlineData(@"C:\Catalogs\apps.json", false)]
     public void IsRemoteLocation_classifies_locations(string location, bool expectedRemote)
     {
@@ -37,9 +37,9 @@ public class AppCatalogServiceTests
     [Fact]
     public void ResolveLocalPath_combines_relative_paths_with_base_directory()
     {
-        var resolved = AppCatalogService.ResolveLocalPath("community-app-lists/index.json");
+        var resolved = AppCatalogService.ResolveLocalPath("Fixtures/index.json");
 
-        resolved.Should().Be(Path.Combine(AppContext.BaseDirectory, "community-app-lists/index.json"));
+        resolved.Should().Be(Path.Combine(AppContext.BaseDirectory, "Fixtures/index.json"));
     }
 
     [Fact]

@@ -9,6 +9,13 @@ public static class CommunityCatalogDefaults
     public const string DefaultCatalogUrl =
         "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/quiver-community-apps-catalog.json";
 
+    /// <summary>
+    /// Remote registry of community catalog lists. Quiver fetches this on startup and refresh
+    /// to discover list sources and their remoteLocation URLs.
+    /// </summary>
+    public const string RemoteIndexUrl =
+        "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/index.json";
+
     public const string FirstRunWelcomeTitle = "Welcome to Quiver";
 
     public const string FirstRunWelcomeMessage =
@@ -17,11 +24,21 @@ public static class CommunityCatalogDefaults
 
         Quiver is an app manager for downloading releases from GitHub repositories.
 
-        To get started, browse the Quiver Community App Catalog and choose which apps to add to your library. Once added, you can download them from your library.
+        To get started, browse the community app catalog lists and choose which apps to add to your library. An internet connection is required the first time to load the catalog lists. Once added, you can download apps from your library.
 
         Let's open the catalog now.
         """;
 
+    public static bool IsLegacyDefaultSource(AppCatalogSource source) =>
+        string.Equals(source.Id, DefaultSourceId, StringComparison.Ordinal) ||
+        (string.Equals(source.Name, DefaultSourceName, StringComparison.Ordinal) &&
+         string.Equals(source.Location, DefaultCatalogUrl, StringComparison.OrdinalIgnoreCase));
+
+    [Obsolete("Use CommunityCatalogDefaults.IsLegacyDefaultSource instead.")]
+    public static bool IsDefaultSource(AppCatalogSource source) =>
+        IsLegacyDefaultSource(source);
+
+    [Obsolete("Community sources are discovered from RemoteIndexUrl at runtime.")]
     public static AppCatalogSource CreateDefaultSource() =>
         new()
         {
@@ -31,19 +48,20 @@ public static class CommunityCatalogDefaults
             Enabled = true,
         };
 
-    public static bool IsDefaultSource(AppCatalogSource source) =>
-        string.Equals(source.Id, DefaultSourceId, StringComparison.Ordinal);
-
     public static AppCatalogSource? GetFirstRunReviewSource(AppSettings settings)
     {
         settings.EnsureInitialized();
-        var defaultSource = settings.AppCatalogSources.FirstOrDefault(IsDefaultSource);
-        if (defaultSource != null)
-            return defaultSource;
 
         return settings.AppCatalogSources
-            .Where(s => s.Enabled && s.PendingReviewCount > 0)
+            .Where(s => s.Enabled && s.IsCommunityManaged && s.PendingReviewCount > 0)
             .OrderByDescending(s => s.PendingReviewCount)
-            .FirstOrDefault();
+            .FirstOrDefault()
+            ?? settings.AppCatalogSources
+                .Where(s => s.Enabled && s.IsCommunityManaged)
+                .FirstOrDefault()
+            ?? settings.AppCatalogSources
+                .Where(s => s.Enabled && s.PendingReviewCount > 0)
+                .OrderByDescending(s => s.PendingReviewCount)
+                .FirstOrDefault();
     }
 }

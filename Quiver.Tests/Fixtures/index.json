@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "lists": [
+    {
+      "id": "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c",
+      "name": "N64 Recomps",
+      "description": "N64 recompilation ports",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Recomps.json",
+      "listVersion": "1.0.2"
+    },
+    {
+      "id": "c5f9d3b2-4a6e-5f0c-9d8b-2e3f4a5b6c7d",
+      "name": "N64 Decomps (Harbour Masters)",
+      "description": "Ship of Harkinian, Ghostship, and other Harbour Masters decomp ports",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Decomps-HarbourMasters.json",
+      "listVersion": "1.0.0"
+    },
+    {
+      "id": "e7b1f5d4-6c8a-4e2b-9f0d-3a4b5c6d7e8f",
+      "name": "N64 Decomps",
+      "description": "N64 decompilation ports",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Decomps.json",
+      "listVersion": "1.0.0"
+    },
+    {
+      "id": "f8c2a6e5-7d9b-4f3c-a0e1-4b5c6d7e8f9a",
+      "name": "SNES Decomps",
+      "description": "Super Nintendo decompilation ports",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/SNES-Decomps.json",
+      "listVersion": "1.0.0"
+    },
+    {
+      "id": "a9d3b7f6-8e0c-4a4d-b1f2-5c6d7e8f9a0b",
+      "name": "GBA Decomps",
+      "description": "Game Boy Advance decompilation ports",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/GBA-Decomps.json",
+      "listVersion": "1.0.0"
+    },
+    {
+      "id": "b0e4c8a7-9f1d-4b5e-c2a3-6d7e8f9a0b1c",
+      "name": "GCN Decomps",
+      "description": "Nintendo GameCube decompilation ports",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/GCN-Decomps.json",
+      "listVersion": "1.0.0"
+    },
+    {
+      "id": "c1f5d9b8-a0e2-4c6f-d3b4-7e8f9a0b1c2d",
+      "name": "PSX Decomps",
+      "description": "PlayStation decompilation ports",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/PSX-Decomps.json",
+      "listVersion": "1.0.0"
+    },
+    {
+      "id": "d2a6e0c9-b1f3-4d7a-e4c5-8f9a0b1c2d3e",
+      "name": "X360 Recomps",
+      "description": "Xbox 360 recompilation ports",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/X360-Recomps.json",
+      "listVersion": "1.0.0"
+    },
+    {
+      "id": "e3b7f1da-c2a4-4e8b-f5d6-9a0b1c2d3e4f",
+      "name": "General Game Recreations",
+      "description": "Game recreations and remasters across platforms",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/General-Game-Recreations.json",
+      "listVersion": "1.0.0"
+    }
+  ]
+}

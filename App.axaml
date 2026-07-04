@@ -10,6 +10,10 @@
 		<SolidColorBrush x:Key="ThemeBorder" Color="#2d2d30"/>
 		<SolidColorBrush x:Key="ThemeText" Color="White"/>
 		<SolidColorBrush x:Key="ThemeTextSecondary" Color="#B8B8B8"/>
+		<SolidColorBrush x:Key="ThemeSuccess" Color="#22c55e"/>
+		<SolidColorBrush x:Key="ThemeWarning" Color="#f59e0b"/>
+		<SolidColorBrush x:Key="ThemeError" Color="#ef4444"/>
+		<SolidColorBrush x:Key="ThemeAccent" Color="#f59e0b"/>
 	</Application.Resources>
 
 	<Application.Styles>

@@ -38,9 +38,98 @@ public class CatalogCompareServiceTests
 
         var rows = CatalogCompareService.BuildCompareRows(local, external);
 
-        rows.Should().Contain(r => r.Repository == "owner/local-only" && r.Status == CatalogSyncStatus.InLocalOnly);
+        rows.Should().NotContain(r => r.Repository == "owner/local-only");
         rows.Should().Contain(r => r.Repository == "owner/external-only" && r.Status == CatalogSyncStatus.InExternalOnly);
         rows.Should().Contain(r => r.Repository == "owner/shared" && r.Status == CatalogSyncStatus.Changed);
+    }
+
+    [Fact]
+    public void BuildCompareRows_preserves_external_catalog_order()
+    {
+        var local = new List<GameInfo>();
+        var external = new List<GameInfo>
+        {
+            CreateApp("owner/zebra", "Zebra App"),
+            CreateApp("owner/alpha", "Alpha App"),
+            CreateApp("owner/middle", "Middle App"),
+        };
+
+        var rows = CatalogCompareService.BuildCompareRows(local, external);
+
+        rows.Select(r => r.Repository).Should().Equal("owner/zebra", "owner/alpha", "owner/middle");
+    }
+
+    [Fact]
+    public void BuildCompareRows_omits_local_library_apps_not_in_external_catalog()
+    {
+        var local = new List<GameInfo>
+        {
+            CreateApp("owner/zebra-local", "Zebra Local"),
+            CreateApp("owner/alpha-local", "Alpha Local"),
+        };
+        var external = new List<GameInfo>
+        {
+            CreateApp("owner/catalog-first", "Catalog First"),
+        };
+
+        var rows = CatalogCompareService.BuildCompareRows(local, external);
+
+        rows.Select(r => r.Repository).Should().Equal("owner/catalog-first");
+    }
+
+    [Fact]
+    public void ComputeLibraryUsageStats_counts_local_matches_against_external_total()
+    {
+        var local = new List<GameInfo>
+        {
+            CreateApp("owner/a"),
+            CreateApp("owner/b"),
+            CreateApp("owner/c"),
+            CreateApp("owner/not-in-catalog"),
+        };
+        var external = new List<GameInfo>
+        {
+            CreateApp("owner/a"),
+            CreateApp("owner/b"),
+            CreateApp("owner/c"),
+            CreateApp("owner/d"),
+            CreateApp("owner/e"),
+        };
+
+        var (usingCount, totalCount) = CatalogCompareService.ComputeLibraryUsageStats(local, external);
+
+        usingCount.Should().Be(3);
+        totalCount.Should().Be(5);
+    }
+
+    [Fact]
+    public void ComputeLibraryUsageStats_returns_zero_using_when_none_in_library()
+    {
+        var external = Enumerable.Range(1, 5)
+            .Select(i => CreateApp($"owner/app{i}"))
+            .ToList();
+
+        var (usingCount, totalCount) = CatalogCompareService.ComputeLibraryUsageStats([], external);
+
+        usingCount.Should().Be(0);
+        totalCount.Should().Be(5);
+    }
+
+    [Fact]
+    public void ComputeLibraryUsageStats_deduplicates_external_repositories()
+    {
+        var local = new List<GameInfo> { CreateApp("owner/shared") };
+        var external = new List<GameInfo>
+        {
+            CreateApp("owner/shared", "First"),
+            CreateApp("owner/shared", "Duplicate"),
+            CreateApp("owner/other"),
+        };
+
+        var (usingCount, totalCount) = CatalogCompareService.ComputeLibraryUsageStats(local, external);
+
+        usingCount.Should().Be(1);
+        totalCount.Should().Be(2);
     }
 
     [Fact]
@@ -192,16 +281,38 @@ public class CatalogCompareServiceTests
     public void FormatCatalogVersionSummary_shows_not_reviewed_for_unacknowledged()
     {
         CatalogCompareService.FormatCatalogVersionSummary("1.0.0", null)
-            .Should().Be("Cached v1.0.0 · Not reviewed yet");
+            .Should().Be("List version: 1.0.0\nLast reviewed: not yet");
         CatalogCompareService.FormatCatalogVersionSummary("1.0.0", "0")
-            .Should().Be("Cached v1.0.0 · Not reviewed yet");
+            .Should().Be("List version: 1.0.0\nLast reviewed: not yet");
     }
 
     [Fact]
     public void FormatCatalogVersionSummary_shows_reviewed_version_when_acknowledged()
     {
         CatalogCompareService.FormatCatalogVersionSummary("1.0.0", "1.0.0")
-            .Should().Be("Cached v1.0.0 · Reviewed v1.0.0");
+            .Should().Be("List version: 1.0.0\nLast reviewed: 1.0.0");
+    }
+
+    [Fact]
+    public void FormatCatalogVersionParts_returns_compact_labels()
+    {
+        var parts = CatalogCompareService.FormatCatalogVersionParts("1.0.2", "1.0.0");
+
+        parts.ListVersionText.Should().Be("1.0.2");
+        parts.LastReviewedText.Should().Be("1.0.0");
+        parts.LastReviewedUnreviewed.Should().BeFalse();
+        parts.VersionRowVisible.Should().BeTrue();
+    }
+
+    [Fact]
+    public void FormatCatalogVersionParts_marks_unreviewed_last_reviewed()
+    {
+        var parts = CatalogCompareService.FormatCatalogVersionParts("1.0.0", null);
+
+        parts.ListVersionText.Should().Be("1.0.0");
+        parts.LastReviewedText.Should().Be("not yet");
+        parts.LastReviewedUnreviewed.Should().BeTrue();
+        parts.VersionRowVisible.Should().BeTrue();
     }
 
     [Fact]
@@ -451,5 +562,70 @@ public class CatalogCompareServiceTests
             .Should()
             .ContainSingle(r => r.Repository == "owner/new");
         CatalogCompareService.FilterByReviewFilter(rows, source, CatalogReviewFilter.New).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CanRemoveFromLibrary_true_when_local_present_false_for_external_only()
+    {
+        var local = new List<GameInfo> { CreateApp("owner/in-library", "In Library") };
+        var external = new List<GameInfo>
+        {
+            CreateApp("owner/in-library", "In Library"),
+            CreateApp("owner/not-in-library", "Not In Library"),
+        };
+
+        var rows = CatalogCompareService.BuildCompareRows(local, external);
+
+        rows.Single(r => r.Repository == "owner/in-library").CanRemoveFromLibrary.Should().BeTrue();
+        rows.Single(r => r.Repository == "owner/not-in-library").CanRemoveFromLibrary.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ApplyRowRemove_removes_matching_repo_and_leaves_others()
+    {
+        var local = new List<GameInfo>
+        {
+            CreateApp("owner/keep", "Keep"),
+            CreateApp("owner/remove", "Remove Me"),
+        };
+        var external = new List<GameInfo> { CreateApp("owner/remove", "Remove Me") };
+        var row = CatalogCompareService.BuildCompareRows(local, external).Single();
+
+        var updated = CatalogCompareService.ApplyRowRemove(local, row);
+
+        updated.Should().ContainSingle(a => a.Repository == "owner/keep");
+        updated.Should().NotContain(a => a.Repository == "owner/remove");
+    }
+
+    [Fact]
+    public void ApplyRowRemove_no_op_when_local_is_null()
+    {
+        var local = new List<GameInfo> { CreateApp("owner/keep", "Keep") };
+        var external = new List<GameInfo> { CreateApp("owner/new", "New App") };
+        var row = CatalogCompareService.BuildCompareRows(local, external)
+            .Single(r => r.Repository == "owner/new");
+
+        var updated = CatalogCompareService.ApplyRowRemove(local, row);
+
+        updated.Should().BeEquivalentTo(local);
+    }
+
+    [Fact]
+    public void Ignored_external_only_row_excluded_from_needs_review_filter()
+    {
+        var local = new List<GameInfo>();
+        var external = new List<GameInfo> { CreateApp("owner/removed", "Removed App") };
+        var source = new AppCatalogSource { CachedListVersion = "1.0.0" };
+        var rows = CatalogCompareService.BuildCompareRows(local, external);
+        var row = rows.Single();
+
+        CatalogCompareService.IsActionableRow(row, source).Should().BeTrue();
+
+        CatalogCompareService.IgnoreChangesForCurrentVersion(source, "owner/removed");
+
+        CatalogCompareService.IsActionableRow(row, source).Should().BeFalse();
+        CatalogCompareService.FilterByReviewFilter(rows, source, CatalogReviewFilter.NeedsReview)
+            .Should()
+            .BeEmpty();
     }
 }

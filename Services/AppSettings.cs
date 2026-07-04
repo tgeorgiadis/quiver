@@ -33,7 +33,10 @@ namespace Quiver
     {
         public string Id { get; set; } = Guid.NewGuid().ToString();
         public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
         public string Location { get; set; } = "";
+        public string? RemoteLocation { get; set; }
+        public bool IsCommunityManaged { get; set; }
         public bool Enabled { get; set; } = true;
         public DateTime? LastFetchedUtc { get; set; }
         public string? LastError { get; set; }
@@ -43,6 +46,12 @@ namespace Quiver
 
         [JsonIgnore]
         public int PendingReviewCount { get; set; }
+
+        [JsonIgnore]
+        public int LibraryAppCount { get; set; }
+
+        [JsonIgnore]
+        public int ListAppCount { get; set; }
 
         /// <summary>
         /// Repository → cached list version when the user chose to ignore external changes for that app.

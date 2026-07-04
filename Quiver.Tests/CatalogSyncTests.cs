@@ -192,4 +192,157 @@ public class CatalogSyncTests
             TestFixtures.CleanupDirectory(tempDir);
         }
     }
+
+    [Fact]
+    public async Task RefreshUpdateAvailableAsync_counts_actionable_rows_when_version_already_acknowledged()
+    {
+        var sourceId = Guid.NewGuid().ToString();
+        var (service, tempDir) = TestFixtures.CreateIsolatedCatalogService();
+
+        try
+        {
+            var cachePath = Path.Combine(service.CatalogSourcesCacheFolder, $"{sourceId}.json");
+            await File.WriteAllTextAsync(cachePath, """
+                {
+                  "version": "1.0.0",
+                  "apps": [
+                    { "name": "App", "repository": "owner/app", "folderName": "AppFolder" }
+                  ]
+                }
+                """);
+
+            await service.SaveLocalAppsAsync([]);
+
+            var source = new AppCatalogSource
+            {
+                Id = sourceId,
+                Name = "Test",
+                CachedListVersion = "1.0.0",
+                AcknowledgedListVersion = "1.0.0",
+            };
+
+            await service.RefreshUpdateAvailableAsync(source);
+
+            source.PendingReviewCount.Should().Be(1);
+            source.UpdateAvailable.Should().BeTrue();
+        }
+        finally
+        {
+            TestFixtures.CleanupDirectory(tempDir);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshUpdateAvailableAsync_zero_pending_when_removed_app_is_ignored()
+    {
+        var sourceId = Guid.NewGuid().ToString();
+        var (service, tempDir) = TestFixtures.CreateIsolatedCatalogService();
+
+        try
+        {
+            var cachePath = Path.Combine(service.CatalogSourcesCacheFolder, $"{sourceId}.json");
+            await File.WriteAllTextAsync(cachePath, """
+                {
+                  "version": "1.0.0",
+                  "apps": [
+                    { "name": "App", "repository": "owner/app", "folderName": "AppFolder" }
+                  ]
+                }
+                """);
+
+            await service.SaveLocalAppsAsync([]);
+
+            var source = new AppCatalogSource
+            {
+                Id = sourceId,
+                Name = "Test",
+                Enabled = true,
+                CachedListVersion = "1.0.0",
+                AcknowledgedListVersion = "1.0.0",
+            };
+
+            CatalogCompareService.IgnoreChangesForCurrentVersion(source, "owner/app");
+            await service.RefreshUpdateAvailableAsync(source);
+
+            source.PendingReviewCount.Should().Be(0);
+            source.UpdateAvailable.Should().BeFalse();
+        }
+        finally
+        {
+            TestFixtures.CleanupDirectory(tempDir);
+        }
+    }
+
+    [Fact]
+    public async Task IgnoreRepositoryInMatchingSources_ignores_only_sources_containing_repository()
+    {
+        var matchingSourceId = Guid.NewGuid().ToString();
+        var otherSourceId = Guid.NewGuid().ToString();
+        var (service, tempDir) = TestFixtures.CreateIsolatedCatalogService();
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(service.CatalogSourcesCacheFolder, $"{matchingSourceId}.json"),
+                """
+                {
+                  "version": "1.0.0",
+                  "apps": [
+                    { "name": "App", "repository": "owner/app", "folderName": "AppFolder" }
+                  ]
+                }
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(service.CatalogSourcesCacheFolder, $"{otherSourceId}.json"),
+                """
+                {
+                  "version": "1.0.0",
+                  "apps": [
+                    { "name": "Other", "repository": "owner/other", "folderName": "OtherFolder" }
+                  ]
+                }
+                """);
+
+            var settings = new AppSettings
+            {
+                AppCatalogSources =
+                [
+                    new AppCatalogSource
+                    {
+                        Id = matchingSourceId,
+                        Name = "Matching",
+                        Enabled = true,
+                        CachedListVersion = "1.0.0",
+                        AcknowledgedListVersion = "1.0.0",
+                    },
+                    new AppCatalogSource
+                    {
+                        Id = otherSourceId,
+                        Name = "Other",
+                        Enabled = true,
+                        CachedListVersion = "1.0.0",
+                        AcknowledgedListVersion = "1.0.0",
+                    },
+                ],
+            };
+
+            await service.SaveLocalAppsAsync([]);
+
+            await service.IgnoreRepositoryInMatchingSourcesAsync(settings, "owner/app");
+
+            var matchingSource = settings.AppCatalogSources.Single(s => s.Id == matchingSourceId);
+            var otherSource = settings.AppCatalogSources.Single(s => s.Id == otherSourceId);
+
+            matchingSource.IgnoredChangesAtVersion.Should().ContainKey("owner/app");
+            otherSource.IgnoredChangesAtVersion.Should().NotContainKey("owner/app");
+            matchingSource.PendingReviewCount.Should().Be(0);
+
+            await service.RefreshUpdateAvailableAsync(otherSource);
+            otherSource.PendingReviewCount.Should().Be(1);
+        }
+        finally
+        {
+            TestFixtures.CleanupDirectory(tempDir);
+        }
+    }
 }

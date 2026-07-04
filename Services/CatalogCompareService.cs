@@ -49,6 +49,7 @@ namespace Quiver.Services
         public bool CanReplace => Status == CatalogSyncStatus.Changed;
         public bool CanMerge => Status == CatalogSyncStatus.Changed;
         public bool CanIgnore => Status is CatalogSyncStatus.Changed or CatalogSyncStatus.InExternalOnly;
+        public bool CanRemoveFromLibrary => Local != null;
 
         public bool ShowHideButton { get; set; }
         public bool ShowUnhideButton { get; set; }
@@ -74,50 +75,61 @@ namespace Quiver.Services
                 .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
                 .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
 
-            var externalByRepo = externalApps
-                .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
-
             var rows = new List<CatalogSyncRowItem>();
-            var allRepos = localByRepo.Keys
-                .Concat(externalByRepo.Keys)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(r => r, StringComparer.OrdinalIgnoreCase);
+            var seenRepos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var repo in allRepos)
+            foreach (var external in externalApps)
             {
+                if (string.IsNullOrWhiteSpace(external.Repository))
+                    continue;
+
+                var repo = external.Repository!;
+                if (!seenRepos.Add(repo))
+                    continue;
+
                 localByRepo.TryGetValue(repo, out var local);
-                externalByRepo.TryGetValue(repo, out var external);
-
-                CatalogSyncStatus status;
-                IReadOnlyList<string> changedFields = [];
-
-                if (local != null && external == null)
-                    status = CatalogSyncStatus.InLocalOnly;
-                else if (local == null && external != null)
-                    status = CatalogSyncStatus.InExternalOnly;
-                else if (local != null && external != null &&
-                         AppCatalogService.AreCatalogFieldsEquivalent(local, external))
-                    status = CatalogSyncStatus.Unchanged;
-                else
-                {
-                    status = CatalogSyncStatus.Changed;
-                    changedFields = GetChangedFields(local!, external!);
-                }
-
-                rows.Add(new CatalogSyncRowItem
-                {
-                    Status = status,
-                    Repository = repo,
-                    DisplayName = external?.Name ?? local?.Name ?? repo,
-                    Local = local,
-                    External = external,
-                    ChangedFields = changedFields,
-                    FieldDiffs = CatalogSyncFieldDiffBuilder.BuildFieldDiffs(status, local, external, changedFields),
-                });
+                rows.Add(CreateCompareRow(repo, local, external));
             }
 
             return rows;
+        }
+
+        public static (int UsingCount, int TotalCount) ComputeLibraryUsageStats(
+            List<GameInfo> localApps,
+            List<GameInfo> externalApps)
+        {
+            var rows = BuildCompareRows(localApps, externalApps);
+            return (rows.Count(r => r.Local != null), rows.Count);
+        }
+
+        private static CatalogSyncRowItem CreateCompareRow(string repo, GameInfo? local, GameInfo? external)
+        {
+            CatalogSyncStatus status;
+            IReadOnlyList<string> changedFields = [];
+
+            if (local != null && external == null)
+                status = CatalogSyncStatus.InLocalOnly;
+            else if (local == null && external != null)
+                status = CatalogSyncStatus.InExternalOnly;
+            else if (local != null && external != null &&
+                     AppCatalogService.AreCatalogFieldsEquivalent(local, external))
+                status = CatalogSyncStatus.Unchanged;
+            else
+            {
+                status = CatalogSyncStatus.Changed;
+                changedFields = GetChangedFields(local!, external!);
+            }
+
+            return new CatalogSyncRowItem
+            {
+                Status = status,
+                Repository = repo,
+                DisplayName = external?.Name ?? local?.Name ?? repo,
+                Local = local,
+                External = external,
+                ChangedFields = changedFields,
+                FieldDiffs = CatalogSyncFieldDiffBuilder.BuildFieldDiffs(status, local, external, changedFields),
+            };
         }
 
         public static IReadOnlyList<string> GetChangedFields(GameInfo local, GameInfo external)
@@ -283,6 +295,18 @@ namespace Quiver.Services
                 .ToList();
         }
 
+        public static List<GameInfo> ApplyRowRemove(List<GameInfo> localApps, CatalogSyncRowItem row)
+        {
+            if (row.Local == null)
+                return localApps;
+
+            return localApps
+                .Where(app =>
+                    app.Repository == null ||
+                    !app.Repository.Equals(row.Repository, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
         public static IReadOnlyList<string> AllCompareFields => CompareFields;
 
         public static bool IsIgnoredForCurrentVersion(AppCatalogSource source, string repository)
@@ -427,7 +451,6 @@ namespace Quiver.Services
                     CatalogReviewFilter.Changed => row.Status == CatalogSyncStatus.Changed &&
                                                    !IsIgnoredForCurrentVersion(source, row.Repository),
                     CatalogReviewFilter.UpToDate => row.Status == CatalogSyncStatus.Unchanged,
-                    CatalogReviewFilter.LocalOnly => row.Status == CatalogSyncStatus.InLocalOnly,
                     _ => true,
                 };
 
@@ -465,10 +488,41 @@ namespace Quiver.Services
 
             var cached = FormatVersionForDisplay(cachedVersion);
             if (IsUnreviewedVersion(acknowledgedVersion))
-                return $"Cached v{cached} · Not reviewed yet";
+                return $"List version: {cached}\nLast reviewed: not yet";
 
             var reviewed = FormatVersionForDisplay(acknowledgedVersion);
-            return $"Cached v{cached} · Reviewed v{reviewed}";
+            return $"List version: {cached}\nLast reviewed: {reviewed}";
+        }
+
+        public static CatalogVersionParts FormatCatalogVersionParts(string? cachedVersion, string? acknowledgedVersion)
+        {
+            var lastReviewedUnreviewed = IsUnreviewedVersion(acknowledgedVersion);
+            var versionRowVisible = !string.IsNullOrWhiteSpace(cachedVersion) || !lastReviewedUnreviewed;
+
+            if (string.IsNullOrWhiteSpace(cachedVersion))
+            {
+                return new CatalogVersionParts(
+                    ListVersionText: "",
+                    LastReviewedText: lastReviewedUnreviewed
+                        ? "not yet"
+                        : FormatVersionForDisplay(acknowledgedVersion),
+                    LastReviewedUnreviewed: lastReviewedUnreviewed,
+                    VersionRowVisible: versionRowVisible);
+            }
+
+            return new CatalogVersionParts(
+                ListVersionText: FormatVersionForDisplay(cachedVersion),
+                LastReviewedText: lastReviewedUnreviewed
+                    ? "not yet"
+                    : FormatVersionForDisplay(acknowledgedVersion),
+                LastReviewedUnreviewed: lastReviewedUnreviewed,
+                VersionRowVisible: true);
         }
     }
+
+    public readonly record struct CatalogVersionParts(
+        string ListVersionText,
+        string LastReviewedText,
+        bool LastReviewedUnreviewed,
+        bool VersionRowVisible);
 }

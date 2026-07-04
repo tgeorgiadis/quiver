@@ -91,11 +91,15 @@ You don't need to give it any special permissions. Then paste that Token into yo
 
 Fresh installs ship with an **empty** local [`apps.json`](apps.json). That file is your personal library — add apps from **App Catalog → Review** or with **+ Add New Entry**.
 
-On first launch, Quiver shows a short welcome dialog, then subscribes to the official **[Quiver Community App Catalog](https://github.com/tgeorgiadis/quiver-community-app-catalog)**, fetches the list, and opens **App Catalog → Review** with the **New** filter so you can add apps individually or in bulk.
+On first launch, Quiver shows a short welcome dialog, then opens **App Catalog**. An internet connection is required the first time to fetch the community catalog index and list contents from GitHub. Browse the available lists, then use **Review** or **View** on a source to add apps to your library.
 
-Raw catalog URL:
+Community catalog lists are loaded from the remote index on startup and **Refresh All Sources**. New lists added to the [community catalog repo](https://github.com/tgeorgiadis/quiver-community-app-catalog) appear automatically without a Quiver app update. After a successful fetch, list contents are cached locally for offline review.
 
-`https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/quiver-community-apps-catalog.json`
+Remote index URL (the only catalog URL built into Quiver):
+
+`https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/index.json`
+
+List files live under `community-app-catalog/` in the [community catalog repo](https://github.com/tgeorgiadis/quiver-community-app-catalog); Quiver discovers them from the index at runtime.
 
 Use **App Catalog** anytime to review community entries and add the ones you want to your library. Installed app files on disk are never deleted automatically when you remove catalog entries or sources.
 
