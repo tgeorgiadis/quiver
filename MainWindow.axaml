@@ -1866,6 +1866,27 @@
 							</ComboBox>
 							</StackPanel>
 
+							<StackPanel x:Name="CatalogReviewTopBarPanel"
+										Orientation="Horizontal"
+										IsVisible="False">
+								<TextBlock Text="Sort by:"
+										   Foreground="{DynamicResource ThemeTextSecondary}"
+										   FontSize="14"
+										   FontWeight="Medium"
+										   VerticalAlignment="Center"/>
+								<ComboBox x:Name="CatalogReviewSortByComboBox"
+										  Foreground="{DynamicResource ThemeTextSecondary}"
+										  Background="{DynamicResource ThemeDarker}"
+										  BorderBrush="{DynamicResource ThemeBorder}"
+										  Margin="4,1,16,0"
+										  SelectionChanged="CatalogReviewSortByComboBox_SelectionChanged">
+									<ComboBoxItem Content="Name (A-Z)" Tag="Name"/>
+									<ComboBoxItem Content="Name (Z-A)" Tag="NameDesc"/>
+									<ComboBoxItem Content="Repository (A-Z)" Tag="Repository"/>
+									<ComboBoxItem Content="Status" Tag="Status"/>
+								</ComboBox>
+							</StackPanel>
+
 							<Button x:Name="CatalogReviewBackButton"
 									Classes="options"
 									Content="← Back to sources"
@@ -1884,34 +1905,49 @@
 
 							<Button x:Name="CheckForUpdatesButton"
 									Classes="modern-icon"
-									Width="28"
-									Height="28"
+									Width="32"
+									Height="32"
+									ClipToBounds="False"
 									Margin="12,0,0,0"
 									ToolTip.Tip="{Binding CheckForUpdatesToolTip}"
 									IsEnabled="{Binding !IsCheckingUpdates}"
 									Click="CheckforUpdates_Click">
-								<Grid Width="28" Height="28">
+								<Grid Width="32" Height="32" ClipToBounds="False">
 									<Image Width="28"
 										   Height="28"
+										   HorizontalAlignment="Center"
+										   VerticalAlignment="Center"
 										   Source="avares://Quiver/Assets/CheckForUpdates.png"
 										   Opacity="{Binding CheckForUpdatesIconOpacity}"/>
-									<ProgressBar Height="2"
-												 VerticalAlignment="Bottom"
-												 IsIndeterminate="True"
-												 IsVisible="{Binding IsCheckingUpdates}"/>
+									<Border Width="28"
+											Height="2"
+											HorizontalAlignment="Center"
+											VerticalAlignment="Bottom"
+											ClipToBounds="True"
+											CornerRadius="1"
+											IsVisible="{Binding IsCheckingUpdates}">
+										<ProgressBar Height="2"
+													 HorizontalAlignment="Stretch"
+													 VerticalAlignment="Stretch"
+													 BorderThickness="0"
+													 Background="Transparent"
+													 IsIndeterminate="True"/>
+									</Border>
 									<Border Background="#FF9500"
 											CornerRadius="8"
 											MinWidth="16"
-											Height="16"
-											Padding="4,0"
+											MinHeight="18"
+											Padding="5,2"
 											HorizontalAlignment="Right"
 											VerticalAlignment="Top"
-											Margin="0,-4,-4,0"
+											Margin="0,-2,-2,0"
 											IsVisible="{Binding UpdatesBadgeVisible}">
 										<TextBlock Text="{Binding UpdatesBadgeText}"
 												   FontSize="9"
 												   FontWeight="Bold"
-												   Foreground="White"/>
+												   Foreground="White"
+												   HorizontalAlignment="Center"
+												   VerticalAlignment="Center"/>
 									</Border>
 								</Grid>
 							</Button>

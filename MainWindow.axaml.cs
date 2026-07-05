@@ -115,7 +115,7 @@ namespace Quiver
             get
             {
                 if (IsCheckingUpdates)
-                    return "Checking launcher and games…";
+                    return "Checking Quiver and apps…";
 
                 var lastChecked = GetLastCheckedText();
                 if (PendingUpdatesCount > 0)
@@ -124,14 +124,14 @@ namespace Quiver
                         ? "1 update available"
                         : $"{PendingUpdatesCount} updates available";
                     return string.IsNullOrEmpty(lastChecked)
-                        ? updateLabel
-                        : $"{updateLabel} · {lastChecked}";
+                        ? $"Check for Quiver and app updates · {updateLabel}"
+                        : $"Check for Quiver and app updates · {updateLabel} · {lastChecked}";
                 }
 
                 if (!string.IsNullOrEmpty(lastChecked))
-                    return $"Up to date · {lastChecked}";
+                    return $"Check for Quiver and app updates · Up to date · {lastChecked}";
 
-                return "Check for updates";
+                return "Check for Quiver and app updates";
             }
         }
 
@@ -314,6 +314,7 @@ namespace Quiver
             get => _settings.ShowOSTopBar ? ExtendClientAreaChromeHints.PreferSystemChrome : ExtendClientAreaChromeHints.NoChrome;
         }
         private string _currentSortBy = "Name";
+        private string _currentCatalogReviewSortBy = "Name";
         private string _currentVersionString = string.Empty;
         public string currentVersionString
         {
@@ -1013,7 +1014,8 @@ namespace Quiver
         {
             // Skip if Hovering ComboBox or if system decorations are enabled
             var source = e.Source as Control;
-            if (IsDescendantOf(source, SortByComboBox))
+            if (IsDescendantOf(source, SortByComboBox) ||
+                IsDescendantOf(source, CatalogReviewSortByComboBox))
             {
                 return;
             }
@@ -2139,6 +2141,8 @@ namespace Quiver
                     }
                 }
 
+                ApplyCatalogReviewSortSelection(_settings.CatalogReviewSortBy ?? "Name");
+
                 if (GitHubTokenTextBox != null)
                     GitHubTokenTextBox.Text = _settings.GitHubApiToken;
 
@@ -2350,6 +2354,9 @@ namespace Quiver
 
             if (this.FindControl<StackPanel>("LibraryTopBarPanel") is StackPanel libraryTopBar)
                 libraryTopBar.IsVisible = isLibrary;
+
+            if (this.FindControl<StackPanel>("CatalogReviewTopBarPanel") is StackPanel catalogReviewTopBar)
+                catalogReviewTopBar.IsVisible = isReview;
 
             if (this.FindControl<Button>("CatalogReviewBackButton") is Button backButton)
                 backButton.IsVisible = isReview;
@@ -2705,6 +2712,7 @@ namespace Quiver
 
             _activeCatalogSyncSource = source;
             _catalogSyncViewModel.ReviewFilter = filter;
+            _catalogSyncViewModel.SortBy = _currentCatalogReviewSortBy;
             _catalogSyncViewModel.Refresh(source, localApps, externalApps);
 
             RefreshCatalogReviewFilterButtons(GetCatalogReviewFilterTag(filter));
@@ -3299,12 +3307,27 @@ namespace Quiver
             IsCheckingUpdates = true;
             try
             {
-                if (_app != null)
-                    await _app.CheckForAppUpdatesManually();
+                ManualLauncherCheckResult launcherResult = _app != null
+                    ? await _app.CheckForAppUpdatesManually()
+                    : new ManualLauncherCheckResult
+                    {
+                        InstalledVersion = LauncherVersionService.ReadInstalledVersion(
+                            AppDomain.CurrentDomain.BaseDirectory),
+                        CheckSucceeded = false,
+                        ErrorMessage = "Launcher is not initialized.",
+                    };
 
                 await _gameManager.CheckAllUpdatesAsync();
                 ApplySorting();
                 RefreshUpdateCheckStatus(DateTime.Now);
+
+                var appUpdatesPending = Games.Count(g => g.Status == GameStatus.UpdateAvailable);
+                await ShowMessageBoxAsync(
+                    UpdateCheckSummaryMessages.BuildManualCheckSummary(launcherResult, appUpdatesPending),
+                    "Update Check Complete");
+
+                if (launcherResult.LauncherUpdatePending && _app != null)
+                    await _app.PromptForPendingLauncherUpdateAsync();
             }
             catch (Exception ex)
             {
@@ -3803,11 +3826,18 @@ namespace Quiver
                 var okButton = new Button
                 {
                     Content = "OK",
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    MinWidth = 80,
+                    Width = 80,
+                    Padding = new Thickness(12, 6),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center,
                 };
                 okButton.Click += (_, _) => messageBox.Close();
-                buttonRow = okButton;
+                buttonRow = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Children = { okButton },
+                };
             }
 
             messageBox.Content = new StackPanel
@@ -4447,6 +4477,40 @@ namespace Quiver
                 _settings.SortBy = sortMode;
                 OnSettingChanged();
                 ApplySorting();
+            }
+        }
+
+        private void CatalogReviewSortByComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.AddedItems.Count == 0)
+                return;
+
+            if (CatalogReviewSortByComboBox?.SelectedItem is not ComboBoxItem item ||
+                item.Tag is not string sortMode)
+                return;
+
+            _currentCatalogReviewSortBy = sortMode;
+            _catalogSyncViewModel.SortBy = sortMode;
+            _settings.CatalogReviewSortBy = sortMode;
+            OnSettingChanged();
+            ApplyCatalogSyncFilter();
+        }
+
+        private void ApplyCatalogReviewSortSelection(string sortMode)
+        {
+            _currentCatalogReviewSortBy = sortMode;
+            _catalogSyncViewModel.SortBy = sortMode;
+
+            if (CatalogReviewSortByComboBox == null)
+                return;
+
+            foreach (var entry in CatalogReviewSortByComboBox.Items)
+            {
+                if (entry is ComboBoxItem item && item.Tag as string == sortMode)
+                {
+                    CatalogReviewSortByComboBox.SelectedItem = item;
+                    break;
+                }
             }
         }
 

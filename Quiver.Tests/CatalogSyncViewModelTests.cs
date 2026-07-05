@@ -93,4 +93,32 @@ public class CatalogSyncViewModelTests
         viewModel.VersionBannerText.Should().Be(
             "List version: 1.0.0\nLast reviewed: not yet\nUsing 3/4 apps from this list");
     }
+
+    [Fact]
+    public void GetFilteredRows_applies_sort_mode()
+    {
+        var local = new List<GameInfo>
+        {
+            CreateApp("owner/zebra", "Zebra App"),
+            CreateApp("owner/alpha", "Alpha App"),
+        };
+        var external = new List<GameInfo>
+        {
+            CreateApp("owner/zebra", "Zebra App"),
+            CreateApp("owner/alpha", "Alpha App"),
+        };
+        var source = new AppCatalogSource { CachedListVersion = "1.0.0" };
+
+        var viewModel = new CatalogSyncViewModel
+        {
+            ReviewFilter = CatalogReviewFilter.All,
+            SortBy = "NameDesc",
+        };
+        viewModel.Refresh(source, local, external);
+
+        viewModel.GetFilteredRows()
+            .Select(r => r.DisplayName)
+            .Should()
+            .Equal("Zebra App", "Alpha App");
+    }
 }

@@ -200,10 +200,61 @@ public class App : Application, INotifyPropertyChanged
         }
     }
 
-    public async Task CheckForAppUpdatesManually()
+    public async Task<ManualLauncherCheckResult> CheckForAppUpdatesManually()
     {
-        await CheckForUpdatesAndApplyAsync(isManualCheck: true);
+        await _updateCheckSemaphore.WaitAsync();
+        try
+        {
+            return await CheckForUpdatesAndApplyCoreAsync(isManualCheck: true)
+                   ?? BuildManualLauncherResult(
+                       LauncherVersionService.ReadInstalledVersion(AppDomain.CurrentDomain.BaseDirectory),
+                       checkSucceeded: false,
+                       errorMessage: "Update check did not complete.");
+        }
+        finally
+        {
+            _updateCheckSemaphore.Release();
+        }
     }
+
+    public async Task PromptForPendingLauncherUpdateAsync()
+    {
+        var launcherUpdateService = new LauncherUpdateService();
+        if (!launcherUpdateService.IsLauncherUpdatePending())
+            return;
+
+        string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
+        string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
+        UpdateCheckInfo updateCheckInfo = await LoadUpdateCheckInfo(updateCheckFilePath);
+
+        if (string.IsNullOrWhiteSpace(updateCheckInfo.LastKnownVersion) ||
+            !IsNewerVersion(updateCheckInfo.LastKnownVersion, updateCheckInfo.CurrentVersion))
+        {
+            return;
+        }
+
+        using var httpClient = CreateUpdateHttpClient();
+        await PromptAndApplyUpdateAsync(
+            updateCheckInfo.LastKnownVersion,
+            currentAppDirectory,
+            updateCheckInfo,
+            httpClient);
+    }
+
+    private static ManualLauncherCheckResult BuildManualLauncherResult(
+        string installedVersion,
+        bool checkSucceeded = true,
+        string? errorMessage = null,
+        bool launcherUpdatePending = false,
+        string? availableLauncherVersion = null) =>
+        new()
+        {
+            CheckSucceeded = checkSucceeded,
+            ErrorMessage = errorMessage,
+            InstalledVersion = installedVersion,
+            LauncherUpdatePending = launcherUpdatePending,
+            AvailableLauncherVersion = availableLauncherVersion,
+        };
 
     private static bool ShouldSkipLauncherSelfUpdate(bool isManualCheck)
     {
@@ -230,7 +281,7 @@ public class App : Application, INotifyPropertyChanged
         await _updateCheckSemaphore.WaitAsync();
         try
         {
-            await CheckForUpdatesAndApplyCoreAsync(isManualCheck);
+            _ = await CheckForUpdatesAndApplyCoreAsync(isManualCheck: false);
         }
         finally
         {
@@ -238,7 +289,7 @@ public class App : Application, INotifyPropertyChanged
         }
     }
 
-    private async Task CheckForUpdatesAndApplyCoreAsync(bool isManualCheck)
+    private async Task<ManualLauncherCheckResult?> CheckForUpdatesAndApplyCoreAsync(bool isManualCheck)
     {
         string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
         string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
@@ -275,7 +326,7 @@ public class App : Application, INotifyPropertyChanged
                             await ShowMessageBoxAsync($"Failed to download bootstrap update: {ex.Message}", "Update Error");
                         }
 
-                        return;
+                        return null;
                     }
 
                     await PromptAndApplyUpdateAsync(
@@ -286,7 +337,7 @@ public class App : Application, INotifyPropertyChanged
                 }
             }
 
-            return;
+            return null;
         }
 
         using var httpClient = CreateUpdateHttpClient();
@@ -315,22 +366,32 @@ public class App : Application, INotifyPropertyChanged
                     updateCheckInfo.UpdateAvailable = IsNewerVersion(updateCheckInfo.LastKnownVersion, currentVersionString);
                     await SaveUpdateCheckInfo(updateCheckFilePath, updateCheckInfo);
 
-                    if (isManualCheck && !updateCheckInfo.UpdateAvailable)
+                    if (isManualCheck)
                     {
-                        await Dispatcher.UIThread.InvokeAsync(async () =>
-                        {
-                            await ShowMessageBoxAsync("Launcher is up to date!", "No Updates");
-                        });
+                        return BuildManualLauncherResult(
+                            currentVersionString,
+                            launcherUpdatePending: updateCheckInfo.UpdateAvailable,
+                            availableLauncherVersion: updateCheckInfo.UpdateAvailable
+                                ? updateCheckInfo.LastKnownVersion
+                                : null);
                     }
 
-                    return;
+                    return null;
                 }
             }
 
             if (fetchResult.IsNotModified)
             {
                 Trace.WriteLine("Still received 304 after retry without If-None-Match.");
-                return;
+                if (isManualCheck)
+                {
+                    return BuildManualLauncherResult(
+                        currentVersionString,
+                        checkSucceeded: false,
+                        errorMessage: "Could not verify launcher version.");
+                }
+
+                return null;
             }
 
             if (!fetchResult.IsSuccess || fetchResult.Release == null || string.IsNullOrWhiteSpace(fetchResult.TagName))
@@ -339,13 +400,13 @@ public class App : Application, INotifyPropertyChanged
 
                 if (isManualCheck)
                 {
-                    await Dispatcher.UIThread.InvokeAsync(async () =>
-                    {
-                        await ShowMessageBoxAsync("Could not find launcher update information.", "No Updates");
-                    });
+                    return BuildManualLauncherResult(
+                        currentVersionString,
+                        checkSucceeded: false,
+                        errorMessage: "Could not find launcher update information.");
                 }
 
-                return;
+                return null;
             }
 
             if (!string.IsNullOrEmpty(fetchResult.ETag))
@@ -365,15 +426,12 @@ public class App : Application, INotifyPropertyChanged
 
                 if (isManualCheck)
                 {
-                    await Dispatcher.UIThread.InvokeAsync(async () =>
-                    {
-                        await ShowMessageBoxAsync(
-                            $"Launcher is up to date! (v{currentVersionString.TrimStart('v', 'V')})",
-                            "No Updates");
-                    });
+                    return BuildManualLauncherResult(
+                        currentVersionString,
+                        launcherUpdatePending: false);
                 }
 
-                return;
+                return null;
             }
 
             Trace.WriteLine($"Newer launcher version {fetchResult.TagName} available. Current version is {currentVersionString}.");
@@ -383,7 +441,23 @@ public class App : Application, INotifyPropertyChanged
             if (IsBootstrapVersion(currentVersionString))
             {
                 await DownloadAndApplyUpdate(fetchResult.Release, currentAppDirectory, updateCheckInfo);
-                return;
+                if (isManualCheck)
+                {
+                    return BuildManualLauncherResult(
+                        currentVersionString,
+                        launcherUpdatePending: true,
+                        availableLauncherVersion: fetchResult.TagName);
+                }
+
+                return null;
+            }
+
+            if (isManualCheck)
+            {
+                return BuildManualLauncherResult(
+                    currentVersionString,
+                    launcherUpdatePending: true,
+                    availableLauncherVersion: fetchResult.TagName);
             }
 
             await PromptAndApplyUpdateAsync(
@@ -396,27 +470,27 @@ public class App : Application, INotifyPropertyChanged
         {
             if (isManualCheck)
             {
-                await Dispatcher.UIThread.InvokeAsync(async () =>
-                {
-                    if (GameDialogService.IsGitHubRateLimitError(httpEx))
-                        await GameDialogService.ShowRateLimitErrorAsync();
-                    else
-                        await ShowMessageBoxAsync($"Could not check for launcher updates (Network Error): {httpEx.Message}",
-                            "Update Check Failed");
-                });
+                var errorMessage = GameDialogService.IsGitHubRateLimitError(httpEx)
+                    ? "GitHub API rate limit exceeded"
+                    : httpEx.Message;
+                return BuildManualLauncherResult(
+                    currentVersionString,
+                    checkSucceeded: false,
+                    errorMessage: errorMessage);
             }
         }
         catch (Exception ex)
         {
             if (isManualCheck)
             {
-                await Dispatcher.UIThread.InvokeAsync(async () =>
-                {
-                    await ShowMessageBoxAsync($"An error occurred during launcher update check: {ex.Message}",
-                        "Update Check Failed");
-                });
+                return BuildManualLauncherResult(
+                    currentVersionString,
+                    checkSucceeded: false,
+                    errorMessage: ex.Message);
             }
         }
+
+        return null;
     }
 
     private static HttpClient CreateUpdateHttpClient()

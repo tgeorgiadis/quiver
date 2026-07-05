@@ -86,6 +86,7 @@ namespace Quiver
         public string AppsPath { get; set; } = string.Empty;
         public string GitHubApiToken { get; set; } = string.Empty;
         public string SortBy { get; set; } = "LastPlayed";
+        public string CatalogReviewSortBy { get; set; } = "Name";
         public bool StartFullscreen { get; set; } = false;
         public bool CloseAfterLaunch {  get; set; } = false;
         public string BackgroundImagePath { get; set; } = string.Empty;

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -29,22 +30,51 @@ public static class GameDialogService
                 var messageBox = new Window
                 {
                     Title = title,
-                    Width = 800,
-                    Height = 400,
+                    MinWidth = 420,
+                    MaxWidth = 520,
+                    MaxHeight = 520,
+                    CanResize = true,
+                    SizeToContent = SizeToContent.Height,
                     WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    Content = new StackPanel
-                    {
-                        Margin = new Thickness(20),
-                        Children =
-                        {
-                            new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 20) },
-                            new Button { Content = "OK", HorizontalAlignment = HorizontalAlignment.Center },
-                        },
-                    },
                 };
 
-                if (((StackPanel)messageBox.Content).Children[1] is Button okButton)
-                    okButton.Click += (_, _) => messageBox.Close();
+                var okButton = new Button
+                {
+                    Content = "OK",
+                    Width = 80,
+                    Padding = new Thickness(12, 6),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                };
+                okButton.Click += (_, _) => messageBox.Close();
+
+                var buttonRow = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Children = { okButton },
+                };
+
+                messageBox.Content = new StackPanel
+                {
+                    Margin = new Thickness(20),
+                    Spacing = 16,
+                    Children =
+                    {
+                        new ScrollViewer
+                        {
+                            MaxHeight = 360,
+                            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                            Content = new TextBlock
+                            {
+                                Text = message,
+                                TextWrapping = TextWrapping.Wrap,
+                                FontSize = 13,
+                            },
+                        },
+                        buttonRow,
+                    },
+                };
 
                 await messageBox.ShowDialog(desktop.MainWindow);
             }

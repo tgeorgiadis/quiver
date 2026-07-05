@@ -249,7 +249,9 @@ public static class GameDownloadInstallService
         }
         catch (Exception ex)
         {
-            await dialogs.ShowErrorAsync($"Error installing {game.Name}: {ex.Message}", "Installation Error");
+            await dialogs.ShowErrorAsync(
+                InstallationErrorMessages.FormatInstallationError(game.Name, ex.Message),
+                "Installation Error");
             game.Status = GameStatus.NotInstalled;
             game.DownloadProgress = 0;
         }

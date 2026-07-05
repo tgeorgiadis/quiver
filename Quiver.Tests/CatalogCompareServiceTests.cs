@@ -628,4 +628,77 @@ public class CatalogCompareServiceTests
             .Should()
             .BeEmpty();
     }
+
+    [Fact]
+    public void SortRows_orders_by_display_name_asc_by_default()
+    {
+        var rows = new List<CatalogSyncRowItem>
+        {
+            CreateRow("owner/zebra", "Zebra App", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/alpha", "Alpha App", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/middle", "Middle App", CatalogSyncStatus.Unchanged),
+        };
+
+        CatalogCompareService.SortRows(rows, "Name")
+            .Select(r => r.DisplayName)
+            .Should()
+            .Equal("Alpha App", "Middle App", "Zebra App");
+    }
+
+    [Fact]
+    public void SortRows_orders_by_name_desc()
+    {
+        var rows = new List<CatalogSyncRowItem>
+        {
+            CreateRow("owner/alpha", "Alpha App", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/zebra", "Zebra App", CatalogSyncStatus.Unchanged),
+        };
+
+        CatalogCompareService.SortRows(rows, "NameDesc")
+            .Select(r => r.DisplayName)
+            .Should()
+            .Equal("Zebra App", "Alpha App");
+    }
+
+    [Fact]
+    public void SortRows_orders_by_repository()
+    {
+        var rows = new List<CatalogSyncRowItem>
+        {
+            CreateRow("owner/zebra", "Zebra App", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/alpha", "Alpha App", CatalogSyncStatus.Unchanged),
+        };
+
+        CatalogCompareService.SortRows(rows, "Repository")
+            .Select(r => r.Repository)
+            .Should()
+            .Equal("owner/alpha", "owner/zebra");
+    }
+
+    [Fact]
+    public void SortRows_groups_by_status_then_name()
+    {
+        var rows = new List<CatalogSyncRowItem>
+        {
+            CreateRow("owner/up", "Up To Date", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/new", "New App", CatalogSyncStatus.InExternalOnly),
+            CreateRow("owner/changed", "Changed App", CatalogSyncStatus.Changed),
+        };
+
+        CatalogCompareService.SortRows(rows, "Status")
+            .Select(r => r.Repository)
+            .Should()
+            .Equal("owner/changed", "owner/new", "owner/up");
+    }
+
+    private static CatalogSyncRowItem CreateRow(
+        string repository,
+        string displayName,
+        CatalogSyncStatus status) =>
+        new()
+        {
+            Repository = repository,
+            DisplayName = displayName,
+            Status = status,
+        };
 }

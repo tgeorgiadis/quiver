@@ -459,6 +459,37 @@ namespace Quiver.Services
             }
         }
 
+        public static IEnumerable<CatalogSyncRowItem> SortRows(
+            IEnumerable<CatalogSyncRowItem> rows,
+            string sortMode)
+        {
+            var list = rows as IReadOnlyList<CatalogSyncRowItem> ?? rows.ToList();
+
+            return sortMode switch
+            {
+                "NameDesc" => list
+                    .OrderByDescending(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
+                "Repository" => list
+                    .OrderBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
+                "Status" => list
+                    .OrderBy(r => GetStatusSortRank(r.Status))
+                    .ThenBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
+                _ => list
+                    .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
+            };
+        }
+
+        private static int GetStatusSortRank(CatalogSyncStatus status) => status switch
+        {
+            CatalogSyncStatus.Changed => 0,
+            CatalogSyncStatus.InExternalOnly => 1,
+            CatalogSyncStatus.Unchanged => 2,
+            _ => 3,
+        };
+
         public static string FormatVersionForDisplay(string? version)
         {
             if (string.IsNullOrWhiteSpace(version))

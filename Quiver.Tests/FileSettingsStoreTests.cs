@@ -53,6 +53,7 @@ public class FileSettingsStoreTests : IDisposable
         var settings = store.Load();
         settings.GitHubApiToken = "test-token";
         settings.SortBy = "Name";
+        settings.CatalogReviewSortBy = "Repository";
         settings.ListScope = AppListScope.InstalledOnly;
         settings.ManuallyHiddenApps.Add("folder:TestGame");
 
@@ -61,6 +62,7 @@ public class FileSettingsStoreTests : IDisposable
         var reloaded = new FileSettingsStore(_settingsPath).Load();
         reloaded.GitHubApiToken.Should().Be("test-token");
         reloaded.SortBy.Should().Be("Name");
+        reloaded.CatalogReviewSortBy.Should().Be("Repository");
         reloaded.ListScope.Should().Be(AppListScope.InstalledOnly);
         reloaded.ManuallyHiddenApps.Should().Contain("folder:TestGame");
         reloaded.HiddenApps.Should().BeEmpty();
