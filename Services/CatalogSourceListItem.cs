@@ -1,7 +1,12 @@
 namespace Quiver.Services
 {
-    public class CatalogSourceListItem
+    using System.ComponentModel;
+
+    public class CatalogSourceListItem : INotifyPropertyChanged
     {
+        private bool _isGamepadFocused;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
         public string SourceId { get; init; } = "";
         public string Name { get; init; } = "";
         public string Location { get; init; } = "";
@@ -45,6 +50,19 @@ namespace Quiver.Services
         public bool AllReviewedVisible => IsAllReviewed;
         public bool ShowReviewPendingStyle => Enabled && PendingReviewCount > 0;
         public bool NeedsReviewHighlight => Enabled && (UpdateAvailable || PendingReviewCount > 0);
+
+        public bool IsGamepadFocused
+        {
+            get => _isGamepadFocused;
+            set
+            {
+                if (_isGamepadFocused == value)
+                    return;
+
+                _isGamepadFocused = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsGamepadFocused)));
+            }
+        }
 
         public static CatalogSourceListItem FromSource(AppCatalogSource source)
         {

@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Quiver.Models;
 using Quiver.Services;
+using System.Text.Json;
 
 namespace Quiver.Tests;
 
@@ -208,5 +209,81 @@ public class AppCatalogServiceTests
         apps.Should().NotBeEmpty();
         apps.Should().Contain(app => app.Repository == "Zelda64Recomp/Zelda64Recomp");
         apps.Should().OnlyContain(app => !string.IsNullOrWhiteSpace(app.Repository));
+    }
+
+    [Fact]
+    public async Task FetchSourceAsync_applies_name_and_description_from_list_json()
+    {
+        var sourceId = Guid.NewGuid().ToString();
+        const string listUrl = "https://example.com/n64-recomps.json";
+        var listJson = await File.ReadAllTextAsync(TestFixtures.N64RecompListPath);
+        var reader = new FakeCatalogLocationReader(new Dictionary<string, string>
+        {
+            [listUrl] = listJson,
+        });
+        var (service, tempDir) = TestFixtures.CreateIsolatedCatalogService(locationReader: reader);
+
+        try
+        {
+            var source = new AppCatalogSource
+            {
+                Id = sourceId,
+                Name = "N64 Recomps",
+                Location = listUrl,
+                Enabled = true,
+            };
+
+            var fetched = await service.FetchSourceAsync(new HttpClient(), source);
+
+            fetched.Should().BeTrue();
+            source.Name.Should().Be("N64 Recomps");
+            source.Description.Should().Be("N64 recompilation ports");
+            source.CachedListVersion.Should().Be("1.0.2");
+        }
+        finally
+        {
+            TestFixtures.CleanupDirectory(tempDir);
+        }
+    }
+
+    [Fact]
+    public void ApplyListMetadata_falls_back_to_location_when_json_has_no_name()
+    {
+        using var document = JsonDocument.Parse("""{"apps":[]}""");
+        var source = new AppCatalogSource
+        {
+            Name = "",
+            Location = "https://example.com/my-cool-list.json",
+        };
+
+        AppCatalogService.ApplyListMetadata(source, document.RootElement);
+
+        source.Name.Should().Be("my cool list");
+    }
+
+    [Fact]
+    public void ApplyListMetadata_uses_json_name_when_present()
+    {
+        using var document = JsonDocument.Parse("""{"name":"Official List","apps":[]}""");
+        var source = new AppCatalogSource
+        {
+            Name = "",
+            Location = "https://example.com/my-cool-list.json",
+        };
+
+        AppCatalogService.ApplyListMetadata(source, document.RootElement);
+
+        source.Name.Should().Be("Official List");
+    }
+
+    private sealed class FakeCatalogLocationReader(Dictionary<string, string> responses) : ICatalogLocationReader
+    {
+        public Task<string> ReadAsync(HttpClient httpClient, string location, CancellationToken cancellationToken = default)
+        {
+            if (responses.TryGetValue(location, out var json))
+                return Task.FromResult(json);
+
+            throw new InvalidOperationException($"No fake response for {location}");
+        }
     }
 }

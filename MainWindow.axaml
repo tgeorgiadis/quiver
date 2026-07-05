@@ -26,10 +26,12 @@
 		<SolidColorBrush x:Key="ThemeBorder" Color="#2d2d30"/>
 		<SolidColorBrush x:Key="ThemeText" Color="White"/>
 		<SolidColorBrush x:Key="ThemeTextSecondary" Color="#B8B8B8"/>
+		<SolidColorBrush x:Key="ThemeFocusRing" Color="#f59e0b"/>
 
 		<!-- list view -->
 		<DataTemplate x:Key="ListViewTemplate">
-			<Border Classes="gamecard" Height="{Binding ElementName=SlotSizeSlider, Path=Value}" Margin="0,0,0,12"
+			<Border Classes="gamecard" Classes.gamepad-focused="{Binding IsGamepadFocused}"
+					Height="{Binding ElementName=SlotSizeSlider, Path=Value}" Margin="0,0,0,12"
 					PointerPressed="GameCard_PointerPressed">
 				<Grid ClipToBounds="True">
 					<Panel ClipToBounds="True">
@@ -220,7 +222,7 @@
 		<!-- grid view -->
 		<DataTemplate x:Key="GridViewTemplate">
 			<StackPanel PointerPressed="GameCard_PointerPressed">
-				<Border Classes="gamecardgrid">
+				<Border Classes="gamecardgrid" Classes.gamepad-focused="{Binding IsGamepadFocused}">
 					<Border.Width>
 						<Binding ElementName="SlotSizeSlider" Path="Value"/>
 					</Border.Width>
@@ -434,7 +436,7 @@
 
 		<!-- compact grid view (in-card content) -->
 		<DataTemplate x:Key="CompactGridViewTemplate">
-			<Border Classes="gamecardcompact"
+			<Border Classes="gamecardcompact" Classes.gamepad-focused="{Binding IsGamepadFocused}"
 					PointerPressed="GameCard_PointerPressed">
 				<Border.Width>
 					<Binding ElementName="SlotSizeSlider" Path="Value"/>
@@ -732,7 +734,8 @@
 					BorderThickness="1"
 					CornerRadius="6"
 					Padding="8,6"
-					Margin="0,0,0,6">
+					Margin="0,0,0,6"
+					Classes.gamepad-focused="{Binding IsGamepadFocused}">
 				<StackPanel Spacing="4">
 					<Grid ColumnDefinitions="Auto,*,Auto">
 						<Border Grid.Column="0" CornerRadius="6" ClipToBounds="True" Width="44" Height="44" Margin="0,0,10,0">
@@ -794,7 +797,8 @@
 					Padding="10"
 					Width="340"
 					Margin="0,0,16,16"
-					Classes.catalog-source-needs-review="{Binding NeedsReviewHighlight}">
+					Classes.catalog-source-needs-review="{Binding NeedsReviewHighlight}"
+					Classes.gamepad-focused="{Binding IsGamepadFocused}">
 				<StackPanel Spacing="4">
 					<Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
 						<TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"
@@ -907,9 +911,11 @@
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
 	</Style>
 
-	<Style Selector="ComboBox:focus /template/ Border#Background">
+	<Style Selector="ComboBox:focus /template/ Border#Background,
+	                 ComboBox.gamepad-focused /template/ Border#Background">
 		<Setter Property="Background" Value="{DynamicResource ThemeDarker}"/>
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
 	<Style Selector="ComboBoxItem">
@@ -925,6 +931,12 @@
 	<Style Selector="ComboBoxItem:selected /template/ ContentPresenter">
 		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+	</Style>
+
+	<Style Selector="ComboBoxItem:focus /template/ ContentPresenter">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="1"/>
 	</Style>
 
 	<Style Selector="Button.modern:pointerover">
@@ -1178,6 +1190,13 @@
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 	</Style>
 
+	<Style Selector="Button.catalog-filter.gamepad-focused">
+		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
 	<Style Selector="Border.catalog-source-needs-review">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeWarning}"/>
 		<Setter Property="BorderThickness" Value="2"/>
@@ -1426,40 +1445,62 @@
 		<Setter Property="Margin" Value="6"/>
 	</Style>
 
+	<Style Selector="Border.gamecard.gamepad-focused,
+	                 Border.gamecardgrid.gamepad-focused,
+	                 Border.gamecardcompact.gamepad-focused,
+	                 Border.gamepad-focused">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+		<Setter Property="BorderThickness" Value="3"/>
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+	</Style>
+
 	<!-- Focus Visual Styles -->
 	<Style Selector="Button:focus">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
 	<Style Selector="Button:focus /template/ Border">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
 	<Style Selector="Button.modern:focus /template/ Border">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 		<Setter Property="Margin" Value="-1"/>
 	</Style>
 
 	<Style Selector="Button.modern-icon:focus /template/ Border">
-		<Setter Property="BorderThickness" Value="0"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="3"/>
+		<Setter Property="Margin" Value="-1"/>
 	</Style>
 
 	<Style Selector="Button.modern-icon:focus-visible /template/ Border">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="3"/>
+		<Setter Property="Margin" Value="-1"/>
+	</Style>
+
+	<Style Selector="Button.modern-icon.gamepad-focused /template/ Border">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 		<Setter Property="Margin" Value="-1"/>
 	</Style>
 
 	<Style Selector="Button.options:focus /template/ Border">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="Button.options.gamepad-focused /template/ Border">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
 	<Style Selector="Button.options-grid:focus-visible /template/ Border">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 	</Style>
 
@@ -1470,28 +1511,35 @@
 
 	<Style Selector="Button.settings:focus">
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+	</Style>
+
+	<Style Selector="Button.settings.gamepad-focused">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 	</Style>
 
 	<Style Selector="Button.iconbutton:focus">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
 	<Style Selector="CheckBox:focus /template/ Border#NormalRectangle">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
 	<Style Selector="Slider:focus /template/ Thumb">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 	</Style>
 
 	<Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
@@ -1964,7 +2012,8 @@
 							</Button>
 
 							<!-- Minimize Button -->
-							<Button Classes="modern-icon"
+							<Button x:Name="MinimizeButton"
+									Classes="modern-icon"
 									Width="28"
 									Margin="12,0,0,0"
 									Click="MinimizeButton_Click">
@@ -1974,7 +2023,8 @@
 							</Button>
 
 							<!-- Fullscreen Button -->
-							<Button Classes="modern-icon"
+							<Button x:Name="ToggleFullscreenButton"
+									Classes="modern-icon"
 									Width="28"
 									Margin="8,0,0,0"
 									Click="ToggleFullscreen_Click">
@@ -1984,7 +2034,8 @@
 							</Button>
 
 							<!-- Close Button -->
-							<Button Classes="modern-icon"
+							<Button x:Name="CloseLauncherButton"
+									Classes="modern-icon"
 									Width="28"
 									Margin="8,0,10,0"
 									Click="CloseLauncher_Click">
@@ -2087,8 +2138,8 @@
 									   Foreground="{DynamicResource ThemeTextSecondary}"
 									   TextWrapping="Wrap"/>
 							<StackPanel Orientation="Horizontal" Spacing="8">
-								<Button Classes="options" Content="Add Source" Click="AddCatalogSource_Click" FontSize="12"/>
-								<Button Classes="options" Content="Refresh All Sources" Click="RefreshCatalogSources_Click" FontSize="12"/>
+								<Button x:Name="AddCatalogSourceButton" Classes="options" Content="Add Source" Click="AddCatalogSource_Click" FontSize="12"/>
+								<Button x:Name="RefreshCatalogSourcesButton" Classes="options" Content="Refresh All Sources" Click="RefreshCatalogSources_Click" FontSize="12"/>
 							</StackPanel>
 							<WrapPanel Orientation="Horizontal">
 								<Button x:Name="CatalogSourceFilterAllButton" Classes="catalog-filter" Content="All"
@@ -2204,6 +2255,15 @@
 					</Grid>
 				</Grid>
 
+				<TextBlock x:Name="GamepadHintsBar"
+						   Text="A Select · Y Options · X Back · D-pad Navigate"
+						   FontSize="11"
+						   Foreground="{DynamicResource ThemeTextSecondary}"
+						   HorizontalAlignment="Center"
+						   VerticalAlignment="Bottom"
+						   Margin="0,0,0,8"
+						   IsVisible="{Binding GamepadHintsVisible}"/>
+
 				<!-- Settings Panel Overlay -->
 				<Border x:Name="SettingsPanel"
 						HorizontalAlignment="Right"
@@ -2272,7 +2332,7 @@
 													  FontSize="13" FontWeight="SemiBold"
 													  Checked="EnableGamepadCheckBox_Checked"
 													  Unchecked="EnableGamepadCheckBox_Unchecked"/>
-											<TextBlock Text="Allow controller navigation inside the launcher"
+											<TextBlock Text="Navigate apps with the D-pad or stick. The selected app is highlighted. A selects, Y opens options, X/B goes back."
 													   FontSize="11"
 													   Foreground="{DynamicResource ThemeTextSecondary}"
 													   Margin="20,0,0,0"/>

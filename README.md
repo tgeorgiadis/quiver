@@ -99,7 +99,45 @@ Remote index URL (the only catalog URL built into Quiver):
 
 `https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/index.json`
 
-List files live under `community-app-catalog/` in the [community catalog repo](https://github.com/tgeorgiadis/quiver-community-app-catalog); Quiver discovers them from the index at runtime.
+List files live under `community-app-catalog/` in the [community catalog repo](https://github.com/tgeorgiadis/quiver-community-app-catalog). Quiver discovers them from the index at runtime. Each list file carries its own metadata (`name`, `description`, `version`) plus an `apps` array.
+
+#### Community catalog index (v2)
+
+The remote index is a registry of list IDs and fetch URLs only:
+
+```json
+{
+  "version": 2,
+  "lists": [
+    {
+      "id": "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c",
+      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Recomps.json"
+    }
+  ]
+}
+```
+
+#### Community catalog list file
+
+Each list file defines the list metadata and its apps:
+
+```json
+{
+  "name": "N64 Recomps",
+  "description": "N64 recompilation ports",
+  "version": "1.0.3",
+  "apps": [
+    {
+      "name": "Example App",
+      "repository": "username/example-app-repo",
+      "folderName": "ExampleApp",
+      "appIconUrl": null
+    }
+  ]
+}
+```
+
+Quiver reads `name`, `description`, and `version` from the list file when a source is fetched or refreshed.
 
 Use **App Catalog** anytime to review community entries and add the ones you want to your library. Installed app files on disk are never deleted automatically when you remove catalog entries or sources.
 

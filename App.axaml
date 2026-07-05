@@ -49,5 +49,15 @@
 			<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
 			<Setter Property="BorderThickness" Value="2"/>
 		</Style>
+
+		<Style Selector="Window Button:focus">
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
+
+		<Style Selector="Window Button:focus-visible">
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
 	</Application.Styles>
 </Application>

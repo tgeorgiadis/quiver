@@ -61,8 +61,9 @@ public sealed class CommunityCatalogBootstrap
 
             if (existing == null)
             {
-                settings.AppCatalogSources.Add(CreateSourceFromEntry(entry, remoteLocation));
-                addedNames.Add(entry.Name);
+                var created = CreateSourceFromEntry(entry, remoteLocation);
+                settings.AppCatalogSources.Add(created);
+                addedNames.Add(created.Name);
                 continue;
             }
 
@@ -105,11 +106,16 @@ public sealed class CommunityCatalogBootstrap
         string? remoteLocation = null)
     {
         remoteLocation ??= ResolveRemoteLocation(entry);
+        var name = !string.IsNullOrWhiteSpace(entry.Name)
+            ? entry.Name.Trim()
+            : DeriveListDisplayNameFromRemoteLocation(remoteLocation);
+        var description = entry.Description?.Trim() ?? "";
+
         return new AppCatalogSource
         {
             Id = entry.Id.Trim(),
-            Name = entry.Name.Trim(),
-            Description = entry.Description?.Trim() ?? "",
+            Name = name,
+            Description = description,
             Location = remoteLocation,
             RemoteLocation = null,
             IsCommunityManaged = true,
@@ -117,26 +123,15 @@ public sealed class CommunityCatalogBootstrap
         };
     }
 
+    public static string DeriveListDisplayNameFromRemoteLocation(string remoteLocation) =>
+        CatalogListMetadata.DeriveDisplayNameFromLocation(remoteLocation);
+
     private static bool UpdateSourceFromEntry(
         AppCatalogSource source,
         CommunityCatalogListEntry entry,
         string remoteLocation)
     {
         var changed = false;
-
-        var name = entry.Name.Trim();
-        if (!string.Equals(source.Name, name, StringComparison.Ordinal))
-        {
-            source.Name = name;
-            changed = true;
-        }
-
-        var description = entry.Description?.Trim() ?? "";
-        if (!string.Equals(source.Description, description, StringComparison.Ordinal))
-        {
-            source.Description = description;
-            changed = true;
-        }
 
         if (!string.Equals(source.Location, remoteLocation, StringComparison.OrdinalIgnoreCase))
         {

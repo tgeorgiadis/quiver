@@ -56,6 +56,17 @@ namespace Quiver
             CatalogSources.Where(s => s.Enabled).Sum(s => s.PendingReviewCount);
 
         public bool CatalogReviewBadgeVisible => CatalogReviewBadgeCount > 0;
+
+        public bool GamepadHintsVisible =>
+            _settings.EnableGamepadInput &&
+            !isSettingsPanelOpen &&
+            !_isEntryFormOpen &&
+            !_isChangelogOpen &&
+            (_mainViewMode == MainViewMode.Library ||
+             (_mainViewMode == MainViewMode.AppCatalog &&
+              (_appCatalogSubView == AppCatalogSubView.Sources ||
+               _appCatalogSubView == AppCatalogSubView.Review)));
+
         private readonly LauncherUpdateService _launcherUpdateService = new();
         private bool _isCheckingUpdates;
         private int _pendingUpdatesCount;
@@ -359,7 +370,9 @@ namespace Quiver
         }
 
         private InputService? _inputService;
+        private readonly GamepadNavigationService _gamepadNavigation = new();
         private bool _isProcessingInput = false;
+        private bool _handlingGamepadConfirm = false;
         private bool _hasInitializedFocus = false;
 
         private bool _isChangelogOpen = false;
@@ -463,8 +476,13 @@ namespace Quiver
             }
 
             _inputService = new InputService(this, _settings);
+            _inputService.NavigationInterceptor = HandleGamepadNavigation;
             _inputService.OnConfirm += HandleConfirmAction;
             _inputService.OnCancel += HandleCancelAction;
+            _inputService.OnOptions += HandleOptionsAction;
+
+            GamepadComboBoxNavigation.Attach(SortByComboBox);
+            GamepadComboBoxNavigation.Attach(CatalogReviewSortByComboBox);
 
             this.KeyDown += MainWindow_KeyDown;
             this.KeyUp += MainWindow_KeyUp;
@@ -488,9 +506,15 @@ namespace Quiver
             UpdateContinueButtonState();
             RefreshUpdateCheckStatus();
             UpdateLibraryEmptyState();
+            SyncGamepadLibrarySelection();
 
             foreach (var game in _gameManager.Games)
                 SubscribeToGameEvents(game);
+        }
+
+        private void NotifyGamepadUiChanged()
+        {
+            OnPropertyChanged(nameof(GamepadHintsVisible));
         }
 
         // Is Theme Color Light
@@ -539,6 +563,7 @@ namespace Quiver
             Resources["ThemeWarning"] = new SolidColorBrush(Color.Parse("#f59e0b"));
             Resources["ThemeError"] = new SolidColorBrush(Color.Parse("#ef4444"));
             Resources["ThemeAccent"] = new SolidColorBrush(Color.Parse("#f59e0b"));
+            Resources["ThemeFocusRing"] = new SolidColorBrush(Color.Parse("#f59e0b"));
 
             OnPropertyChanged(nameof(WindowBackground));
         }
@@ -727,6 +752,8 @@ namespace Quiver
                         Content = new ScrollViewer { Content = stackPanel }
                     };
 
+                    GamepadModalDialogNavigation.Attach(messageBox);
+
                     await messageBox.ShowDialog(desktop.MainWindow);
                 }
             });
@@ -880,6 +907,8 @@ namespace Quiver
                     };
 
                     cancelButton.Click += (s, e) => pickerWindow.Close();
+
+                    GamepadModalDialogNavigation.Attach(pickerWindow);
 
                     await pickerWindow.ShowDialog(desktop.MainWindow);
                 }
@@ -1148,6 +1177,23 @@ namespace Quiver
             // Small delay to ensure UI is fully rendered
             Dispatcher.UIThread.Post(() =>
             {
+                if (_settings.EnableGamepadInput &&
+                    _mainViewMode == MainViewMode.Library &&
+                    Games.Count > 0)
+                {
+                    SelectInitialLibraryGamepadItem();
+                    return;
+                }
+
+                if (_settings.EnableGamepadInput &&
+                    _mainViewMode == MainViewMode.AppCatalog &&
+                    _appCatalogSubView == AppCatalogSubView.Sources &&
+                    CatalogSources.Count > 0)
+                {
+                    SelectInitialCatalogGamepadItem();
+                    return;
+                }
+
                 // Try to focus the Continue button if visible
                 if (IsContinueVisible && this.FindControl<Button>("ContinueButton") is Button continueBtn)
                 {
@@ -1494,6 +1540,9 @@ namespace Quiver
                 }, DispatcherPriority.Loaded);
             };
 
+            GamepadContextMenuNavigation.Attach(contextMenu);
+            if (_settings.EnableGamepadInput)
+                ClearGamepadFocus();
             contextMenu.Open(sourceButton);
         }
 
@@ -1538,6 +1587,10 @@ namespace Quiver
                 var availableHeight = Bounds.Height > 0 ? Bounds.Height - 120 : 560;
                 contextMenu.MaxHeight = Math.Max(240, availableHeight);
             }
+
+            GamepadContextMenuNavigation.Attach(contextMenu);
+            if (_settings.EnableGamepadInput)
+                ClearGamepadFocus();
 
             contextMenu.PlacementTarget = anchor;
             contextMenu.Placement = PlacementMode.Bottom;
@@ -1602,6 +1655,9 @@ namespace Quiver
             }
 
             AttachOptionsMenuClosedHandler(contextMenu, placementTarget);
+            GamepadContextMenuNavigation.Attach(contextMenu);
+            if (_settings.EnableGamepadInput)
+                ClearGamepadFocus();
             contextMenu.Open(placementTarget);
             e.Handled = true;
         }
@@ -1989,6 +2045,9 @@ namespace Quiver
                 button.ContextMenu.PlacementTarget = button;
                 button.ContextMenu.Placement = PlacementMode.Bottom;
                 AttachOptionsMenuClosedHandler(button.ContextMenu, button);
+                GamepadContextMenuNavigation.Attach(button.ContextMenu);
+                if (_settings.EnableGamepadInput)
+                    ClearGamepadFocus();
                 button.ContextMenu.Open();
             }
         }
@@ -2026,6 +2085,8 @@ namespace Quiver
 
             if (isSettingsPanelOpen)
             {
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.Settings;
+                NotifyGamepadUiChanged();
                 RefreshCatalogSourcesList();
                 Dispatcher.UIThread.Post(() =>
                 {
@@ -2063,6 +2124,16 @@ namespace Quiver
 
             isSettingsPanelOpen = false;
             SettingsPanel.IsVisible = false;
+            _gamepadNavigation.ActiveZone = _mainViewMode == MainViewMode.Library
+                ? GamepadNavigationZone.Library
+                : GamepadNavigationZone.CatalogSources;
+            NotifyGamepadUiChanged();
+
+            if (_settings.EnableGamepadInput)
+            {
+                SelectInitialGamepadItemForCurrentView();
+                return true;
+            }
 
             var settingsButton = this.FindControl<Button>("SettingsButton");
             if (settingsButton != null)
@@ -2235,6 +2306,7 @@ namespace Quiver
 
             RefreshCatalogBadgeCounts();
             UpdateCatalogSourcesEmptyState();
+            SyncCatalogGamepadSelection();
         }
 
         private void RefreshCatalogSourcesList() => _ = RefreshCatalogSourcesListAsync();
@@ -2311,7 +2383,10 @@ namespace Quiver
         {
             _mainViewMode = MainViewMode.Library;
             _appCatalogSubView = AppCatalogSubView.Sources;
+            ResetGamepadNavigationIndices();
             UpdateMainViewUi();
+            if (_settings.EnableGamepadInput)
+                SelectInitialLibraryGamepadItem();
         }
 
         private void ShowAppCatalogSourcesView()
@@ -2320,7 +2395,10 @@ namespace Quiver
             _appCatalogSubView = AppCatalogSubView.Sources;
             _activeCatalogSyncSource = null;
             CatalogSyncRows.Clear();
+            ResetGamepadNavigationIndices();
             UpdateMainViewUi();
+            if (_settings.EnableGamepadInput)
+                SelectInitialCatalogGamepadItem();
         }
 
         private void ShowAppCatalogReviewView(AppCatalogSource source)
@@ -2328,10 +2406,14 @@ namespace Quiver
             _mainViewMode = MainViewMode.AppCatalog;
             _appCatalogSubView = AppCatalogSubView.Review;
             _activeCatalogSyncSource = source;
+            ResetGamepadNavigationIndices();
             UpdateMainViewUi();
 
             if (this.FindControl<TextBlock>("HeaderTitleText") is TextBlock headerTitle)
                 headerTitle.Text = $"Review: {source.Name}";
+
+            if (_settings.EnableGamepadInput)
+                SelectInitialCatalogReviewGamepadItem();
         }
 
         private void UpdateMainViewUi()
@@ -2377,6 +2459,7 @@ namespace Quiver
             }
 
             UpdateLibraryEmptyState();
+            NotifyGamepadUiChanged();
         }
 
         private void UpdateLibraryEmptyState()
@@ -2482,11 +2565,10 @@ namespace Quiver
 
         private async void AddCatalogSource_Click(object? sender, RoutedEventArgs e)
         {
-            var result = await ShowAddCatalogSourceDialogAsync();
-            if (result == null)
+            var location = await ShowAddCatalogSourceDialogAsync();
+            if (location == null)
                 return;
 
-            var (name, location) = result.Value;
             var (apps, version, error) = await _gameManager.CatalogService.TryLoadSourceAsync(_gameManager.HttpClient, location);
             if (error != null)
             {
@@ -2500,7 +2582,7 @@ namespace Quiver
                 return;
             }
 
-            var source = _catalogViewModel.CreateSource(name, location);
+            var source = _catalogViewModel.CreateSource(location);
             string? rawJson = null;
             try
             {
@@ -2518,7 +2600,7 @@ namespace Quiver
             RefreshCatalogSourcesList();
 
             var versionLabel = string.IsNullOrWhiteSpace(version) ? "unknown" : version;
-            await ShowMessageBoxAsync($"Added \"{name}\" ({apps.Count} app(s), v{versionLabel}). Use App Catalog → Review to add apps to your library.", "Source Added");
+            await ShowMessageBoxAsync($"Added \"{source.Name}\" ({apps.Count} app(s), v{versionLabel}). Use App Catalog → Review to add apps to your library.", "Source Added");
         }
 
         private async void RemoveCatalogSource_Click(object? sender, RoutedEventArgs e)
@@ -2761,6 +2843,14 @@ namespace Quiver
                 needsReviewEmptyPanel.IsVisible = _catalogSyncViewModel.ShowNeedsReviewCompleteState;
 
             UpdateCatalogReviewFilterChipLabels();
+
+            if (_settings.EnableGamepadInput &&
+                _mainViewMode == MainViewMode.AppCatalog &&
+                _appCatalogSubView == AppCatalogSubView.Review &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewList)
+            {
+                SyncCatalogReviewGamepadSelection();
+            }
         }
 
         private void CatalogSyncBackToLibrary_Click(object? sender, RoutedEventArgs e) =>
@@ -2963,17 +3053,12 @@ namespace Quiver
             await ApplyCatalogSyncLocalAppsAsync(updated);
         }
 
-        private async Task<(string Name, string Location)?> ShowAddCatalogSourceDialogAsync()
+        private async Task<string?> ShowAddCatalogSourceDialogAsync()
         {
             if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
                 desktop.MainWindow == null)
                 return null;
 
-            var nameBox = new TextBox
-            {
-                Watermark = "Display name",
-                Margin = new Thickness(0, 0, 0, 8),
-            };
             var locationBox = new TextBox
             {
                 Watermark = "URL or file path to apps.json",
@@ -3000,7 +3085,7 @@ namespace Quiver
                     locationBox.Text = files[0].Path.LocalPath;
             };
 
-            (string Name, string Location)? result = null;
+            string? result = null;
             var addButton = new Button { Content = "Add", MinWidth = 80 };
             var cancelButton = new Button { Content = "Cancel", MinWidth = 80 };
 
@@ -3008,20 +3093,13 @@ namespace Quiver
             {
                 Title = "Add Catalog Source",
                 Width = 420,
-                Height = 280,
+                Height = 220,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Content = new StackPanel
                 {
                     Margin = new Thickness(20),
                     Children =
                     {
-                        new TextBlock
-                        {
-                            Text = "Name",
-                            FontWeight = FontWeight.SemiBold,
-                            Margin = new Thickness(0, 0, 0, 4),
-                        },
-                        nameBox,
                         new TextBlock
                         {
                             Text = "Location",
@@ -3043,16 +3121,17 @@ namespace Quiver
 
             addButton.Click += (_, _) =>
             {
-                var name = nameBox.Text?.Trim() ?? "";
                 var location = locationBox.Text?.Trim() ?? "";
-                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(location))
+                if (string.IsNullOrWhiteSpace(location))
                     return;
 
-                result = (name, location);
+                result = location;
                 dialog.Close();
             };
 
             cancelButton.Click += (_, _) => dialog.Close();
+
+            GamepadModalDialogNavigation.Attach(dialog);
 
             await dialog.ShowDialog(desktop.MainWindow);
             return result;
@@ -3150,6 +3229,9 @@ namespace Quiver
 
             if (CompactGridViewControl != null)
                 CompactGridViewControl.IsVisible = useGrid && compact;
+
+            if (_settings.EnableGamepadInput && _mainViewMode == MainViewMode.Library)
+                SyncGamepadLibrarySelection();
         }
 
         private void UseGridViewCheckBox_Checked(object sender, RoutedEventArgs e)
@@ -3754,6 +3836,8 @@ namespace Quiver
                     if (((StackPanel)messageBox.Content).Children[1] is Button okButton)
                         okButton.Click += (_, _) => messageBox.Close();
 
+                    GamepadModalDialogNavigation.Attach(messageBox);
+
                     await messageBox.ShowDialog(desktop.MainWindow);
                 }
             });
@@ -3846,6 +3930,8 @@ namespace Quiver
                 Spacing = 16,
                 Children = { scrollViewer, buttonRow },
             };
+
+            GamepadModalDialogNavigation.Attach(messageBox);
 
             return messageBox;
         }
@@ -4464,6 +4550,8 @@ namespace Quiver
                 }
             }
 
+            GamepadModalDialogNavigation.Attach(dialog);
+
             await dialog.ShowDialog(this);
             return result;
         }
@@ -4585,6 +4673,8 @@ namespace Quiver
             {
                 _settings.EnableGamepadInput = true;
                 _inputService?.SetGamepadEnabled(true);
+                SelectInitialGamepadItemForCurrentView();
+                NotifyGamepadUiChanged();
                 OnSettingChanged();
             }
         }
@@ -4595,6 +4685,8 @@ namespace Quiver
             {
                 _settings.EnableGamepadInput = false;
                 _inputService?.SetGamepadEnabled(false);
+                ClearGamepadFocus();
+                NotifyGamepadUiChanged();
                 OnSettingChanged();
             }
         }
@@ -5664,25 +5756,1432 @@ namespace Quiver
             }
         }
 
+        private bool HandleGamepadNavigation(Services.NavigationDirection direction)
+        {
+            if (!_settings.EnableGamepadInput || _launchedGameOwnsInput)
+                return false;
+
+            if (isSettingsPanelOpen)
+            {
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.Settings;
+                return false;
+            }
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.Sidebar)
+                return HandleSidebarGamepadNavigation(direction);
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.TopBar)
+                return HandleTopBarGamepadNavigation(direction);
+
+            if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Review)
+                return HandleCatalogReviewGamepadNavigation(direction);
+
+            if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Sources)
+            {
+                return _gamepadNavigation.ActiveZone switch
+                {
+                    GamepadNavigationZone.CatalogSourcesToolbar => HandleCatalogSourcesToolbarNavigation(direction),
+                    GamepadNavigationZone.CatalogSourcesFilters => HandleCatalogSourcesFiltersNavigation(direction),
+                    GamepadNavigationZone.CatalogSourceCardActions => HandleCatalogSourceCardActionsNavigation(direction),
+                    _ => HandleCatalogSourcesCardNavigation(direction),
+                };
+            }
+
+            if (_mainViewMode == MainViewMode.Library)
+                return HandleLibraryGamepadNavigation(direction);
+
+            return false;
+        }
+
+        private GamepadNavigationZone GetMainContentGamepadZone()
+        {
+            if (_mainViewMode == MainViewMode.Library)
+                return GamepadNavigationZone.Library;
+
+            if (_appCatalogSubView == AppCatalogSubView.Review)
+                return GamepadNavigationZone.CatalogReviewList;
+
+            return GamepadNavigationZone.CatalogSources;
+        }
+
+        private void ResetGamepadNavigationIndices()
+        {
+            _gamepadNavigation.SidebarSelectedIndex = -1;
+            _gamepadNavigation.TopBarSelectedIndex = -1;
+            _gamepadNavigation.CatalogReviewFilterIndex = -1;
+            _gamepadNavigation.CatalogReviewSelectedIndex = -1;
+            _gamepadNavigation.CatalogSourcesToolbarSelectedIndex = -1;
+            _gamepadNavigation.CatalogSourcesFilterIndex = -1;
+            _gamepadNavigation.CatalogSourceCardActionIndex = -1;
+        }
+
+        private bool TryApplyGamepadZoneTransition(GamepadZoneTransition transition)
+        {
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.Sidebar &&
+                transition.Zone != GamepadNavigationZone.Sidebar)
+            {
+                ClearSidebarGamepadFocus();
+            }
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.TopBar &&
+                transition.Zone != GamepadNavigationZone.TopBar)
+            {
+                ClearTopBarGamepadFocus();
+            }
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesToolbar &&
+                transition.Zone != GamepadNavigationZone.CatalogSourcesToolbar)
+            {
+                ClearCatalogSourcesToolbarGamepadFocus();
+            }
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesFilters &&
+                transition.Zone != GamepadNavigationZone.CatalogSourcesFilters)
+            {
+                ClearCatalogSourcesFiltersGamepadFocus();
+            }
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourceCardActions &&
+                transition.Zone != GamepadNavigationZone.CatalogSourceCardActions)
+            {
+                ClearCatalogSourceCardActionsGamepadFocus();
+            }
+
+            switch (transition.Zone)
+            {
+                case GamepadNavigationZone.Sidebar:
+                    ClearGamepadFocus();
+                    _gamepadNavigation.ActiveZone = GamepadNavigationZone.Sidebar;
+                    _gamepadNavigation.LibrarySelectedIndex = -1;
+                    _gamepadNavigation.CatalogSelectedIndex = -1;
+                    _gamepadNavigation.CatalogReviewSelectedIndex = -1;
+                    ApplySidebarGamepadSelection(_gamepadNavigation.SidebarSelectedIndex < 0 ? 0 : _gamepadNavigation.SidebarSelectedIndex);
+                    return true;
+                case GamepadNavigationZone.TopBar:
+                    ClearGamepadFocus();
+                    _gamepadNavigation.ActiveZone = GamepadNavigationZone.TopBar;
+                    _gamepadNavigation.LibrarySelectedIndex = -1;
+                    _gamepadNavigation.CatalogReviewSelectedIndex = -1;
+                    ApplyTopBarGamepadSelection(_gamepadNavigation.TopBarSelectedIndex < 0 ? 0 : _gamepadNavigation.TopBarSelectedIndex);
+                    return true;
+                case GamepadNavigationZone.Library:
+                    ApplyLibraryGamepadSelection(transition.SelectedIndex ?? 0);
+                    return true;
+                case GamepadNavigationZone.CatalogSources:
+                    if (CatalogSources.Count == 0)
+                        ApplyCatalogSourcesToolbarSelection(transition.SelectedIndex ?? 0);
+                    else
+                        ApplyCatalogGamepadSelection(transition.SelectedIndex ?? 0);
+                    return true;
+                case GamepadNavigationZone.CatalogSourcesToolbar:
+                    ClearGamepadFocus();
+                    _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogSourcesToolbar;
+                    ApplyCatalogSourcesToolbarSelection(
+                        _gamepadNavigation.CatalogSourcesToolbarSelectedIndex < 0
+                            ? 0
+                            : _gamepadNavigation.CatalogSourcesToolbarSelectedIndex);
+                    return true;
+                case GamepadNavigationZone.CatalogSourcesFilters:
+                    ClearGamepadFocus();
+                    _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogSourcesFilters;
+                    ApplyCatalogSourcesFilterSelection(
+                        _gamepadNavigation.CatalogSourcesFilterIndex < 0
+                            ? 0
+                            : _gamepadNavigation.CatalogSourcesFilterIndex);
+                    return true;
+                case GamepadNavigationZone.CatalogSourceCardActions:
+                    ApplyCatalogSourceCardActionSelection(
+                        transition.SelectedIndex ??
+                        (_gamepadNavigation.CatalogSourceCardActionIndex < 0
+                            ? 0
+                            : _gamepadNavigation.CatalogSourceCardActionIndex));
+                    return true;
+                case GamepadNavigationZone.CatalogReviewFilters:
+                    ApplyCatalogReviewFilterSelection(transition.SelectedIndex ?? 0);
+                    return true;
+                case GamepadNavigationZone.CatalogReviewList:
+                    ApplyCatalogReviewRowSelection(transition.SelectedIndex ?? 0);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool HandleLibraryGamepadNavigation(Services.NavigationDirection direction)
+        {
+            var games = Games.ToList();
+            var isListLayout = IsListGamepadLayout();
+            var positions = games.Count > 0 && !isListLayout ? CollectGameCardPositions(games) : null;
+            var currentIndex = _gamepadNavigation.LibrarySelectedIndex;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                _gamepadNavigation.ActiveZone,
+                GetMainContentGamepadZone(),
+                isListLayout,
+                positions,
+                currentIndex,
+                games.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (_gamepadNavigation.ActiveZone != GamepadNavigationZone.Library)
+                return false;
+
+            if (games.Count == 0)
+                return false;
+
+            var nextIndex = _gamepadNavigation.MoveLibraryIndex(
+                currentIndex,
+                direction,
+                games.Count,
+                isListLayout,
+                positions);
+
+            if (nextIndex == currentIndex &&
+                direction is Services.NavigationDirection.Left or Services.NavigationDirection.Up)
+            {
+                var blockedTransition = _gamepadNavigation.TryGetBlockedMoveZoneTransition(
+                    direction,
+                    _gamepadNavigation.ActiveZone,
+                    GetMainContentGamepadZone(),
+                    isListLayout,
+                    currentIndex,
+                    games.Count);
+
+                if (blockedTransition.HasValue)
+                    return TryApplyGamepadZoneTransition(blockedTransition.Value);
+            }
+
+            ApplyLibraryGamepadSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleCatalogSourcesCardNavigation(Services.NavigationDirection direction)
+        {
+            var currentIndex = _gamepadNavigation.CatalogSelectedIndex;
+
+            if (CatalogSources.Count > 0)
+            {
+                var positions = CollectCatalogCardPositions();
+
+                var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                    direction,
+                    _gamepadNavigation.ActiveZone,
+                    GetMainContentGamepadZone(),
+                    isListLayout: false,
+                    positions,
+                    currentIndex,
+                    CatalogSources.Count);
+
+                if (zoneTransition.HasValue)
+                    return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+                if (_gamepadNavigation.ActiveZone != GamepadNavigationZone.CatalogSources)
+                    return false;
+
+                var nextIndex = _gamepadNavigation.MoveCatalogIndex(
+                    currentIndex,
+                    direction,
+                    CatalogSources.Count,
+                    positions);
+
+                if (nextIndex == currentIndex &&
+                    direction is Services.NavigationDirection.Left or Services.NavigationDirection.Up)
+                {
+                    var blockedTransition = _gamepadNavigation.TryGetBlockedMoveZoneTransition(
+                        direction,
+                        _gamepadNavigation.ActiveZone,
+                        GetMainContentGamepadZone(),
+                        isListLayout: false,
+                        currentIndex,
+                        CatalogSources.Count);
+
+                    if (blockedTransition.HasValue)
+                        return TryApplyGamepadZoneTransition(blockedTransition.Value);
+                }
+
+                ApplyCatalogGamepadSelection(nextIndex);
+                return true;
+            }
+
+            var emptyTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                _gamepadNavigation.ActiveZone,
+                GetMainContentGamepadZone(),
+                isListLayout: false,
+                positions: null,
+                currentIndex,
+                itemCount: 0);
+
+            if (emptyTransition.HasValue)
+                return TryApplyGamepadZoneTransition(emptyTransition.Value);
+
+            return false;
+        }
+
+        private bool HandleCatalogSourcesToolbarNavigation(Services.NavigationDirection direction)
+        {
+            var controls = CollectCatalogSourcesToolbarControls();
+            if (controls.Count == 0)
+                return false;
+
+            var currentIndex = _gamepadNavigation.CatalogSourcesToolbarSelectedIndex;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.CatalogSourcesToolbar,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                currentIndex,
+                controls.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
+                return false;
+
+            var nextIndex = _gamepadNavigation.MoveHorizontalIndex(currentIndex, direction, controls.Count);
+            ApplyCatalogSourcesToolbarSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleCatalogSourcesFiltersNavigation(Services.NavigationDirection direction)
+        {
+            var controls = CollectCatalogSourcesFilterControls();
+            if (controls.Count == 0)
+                return false;
+
+            var currentIndex = _gamepadNavigation.CatalogSourcesFilterIndex;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.CatalogSourcesFilters,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                currentIndex,
+                CatalogSources.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
+                return false;
+
+            var nextIndex = _gamepadNavigation.MoveHorizontalIndex(currentIndex, direction, controls.Count);
+            ApplyCatalogSourcesFilterSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleCatalogSourceCardActionsNavigation(Services.NavigationDirection direction)
+        {
+            if (CatalogSources.Count == 0)
+                return false;
+
+            var cardIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSelectedIndex, CatalogSources.Count);
+            if (cardIndex < 0 || cardIndex >= CatalogSources.Count)
+                return false;
+
+            var controls = CollectCatalogSourceCardActionControls(CatalogSources[cardIndex]);
+            if (controls.Count == 0)
+                return false;
+
+            var currentIndex = _gamepadNavigation.CatalogSourceCardActionIndex;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.CatalogSourceCardActions,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                currentIndex,
+                controls.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
+                return false;
+
+            var nextIndex = _gamepadNavigation.MoveHorizontalIndex(currentIndex, direction, controls.Count);
+            ApplyCatalogSourceCardActionSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleCatalogReviewGamepadNavigation(Services.NavigationDirection direction)
+        {
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewFilters)
+                return HandleCatalogReviewFiltersGamepadNavigation(direction);
+
+            var rows = CatalogSyncRows.ToList();
+            var currentIndex = _gamepadNavigation.CatalogReviewSelectedIndex;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                _gamepadNavigation.ActiveZone,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                currentIndex,
+                rows.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (_gamepadNavigation.ActiveZone != GamepadNavigationZone.CatalogReviewList)
+                return false;
+
+            if (rows.Count == 0)
+                return false;
+
+            var nextIndex = _gamepadNavigation.MoveListIndex(currentIndex, direction, rows.Count);
+            ApplyCatalogReviewRowSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleCatalogReviewFiltersGamepadNavigation(Services.NavigationDirection direction)
+        {
+            var controls = CollectCatalogReviewFilterControls();
+            if (controls.Count == 0)
+                return false;
+
+            var currentIndex = _gamepadNavigation.CatalogReviewFilterIndex;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.CatalogReviewFilters,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                currentIndex,
+                controls.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
+                return false;
+
+            var nextIndex = _gamepadNavigation.MoveHorizontalIndex(currentIndex, direction, controls.Count);
+            ApplyCatalogReviewFilterSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleSidebarGamepadNavigation(Services.NavigationDirection direction)
+        {
+            var controls = CollectSidebarFocusableControls();
+            if (controls.Count == 0)
+                return false;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.Sidebar,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                _gamepadNavigation.SidebarSelectedIndex,
+                controls.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (direction is not (Services.NavigationDirection.Up or Services.NavigationDirection.Down))
+                return true;
+
+            var nextIndex = _gamepadNavigation.MoveListIndex(
+                _gamepadNavigation.SidebarSelectedIndex,
+                direction,
+                controls.Count);
+
+            ApplySidebarGamepadSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleTopBarGamepadNavigation(Services.NavigationDirection direction)
+        {
+            var controls = CollectTopBarControls();
+            if (controls.Count == 0)
+                return false;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.TopBar,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                _gamepadNavigation.TopBarSelectedIndex,
+                controls.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
+                return false;
+
+            var nextIndex = _gamepadNavigation.MoveHorizontalIndex(
+                _gamepadNavigation.TopBarSelectedIndex,
+                direction,
+                controls.Count);
+
+            ApplyTopBarGamepadSelection(nextIndex);
+            return true;
+        }
+
+        private List<Control> CollectSidebarFocusableControls()
+        {
+            var controls = new List<Control>();
+
+            void Add(Control? control)
+            {
+                if (control != null && control.IsVisible && control.IsEnabled)
+                    controls.Add(control);
+            }
+
+            Add(ContinueButton);
+            Add(LibraryNavButton);
+            Add(AppCatalogNavButton);
+
+            if (_mainViewMode == MainViewMode.Library && LibraryFiltersPanel is { IsVisible: true })
+            {
+                Add(UnhideAllGamesButton);
+                Add(HideNonInstalledButton);
+
+                if (TagDisplayFiltersItemsControl != null)
+                {
+                    foreach (var button in TagDisplayFiltersItemsControl.GetVisualDescendants().OfType<Button>()
+                                 .Where(b => b.Classes.Contains("display-filter-row") && b.IsVisible && b.IsEnabled))
+                    {
+                        controls.Add(button);
+                    }
+                }
+
+                var addDisplayFilterButton = LibraryFiltersPanel.GetVisualDescendants().OfType<Button>()
+                    .FirstOrDefault(b =>
+                        b.IsVisible &&
+                        b.IsEnabled &&
+                        b.Content is string content &&
+                        content == "Add Display Filter");
+
+                Add(addDisplayFilterButton);
+            }
+
+            Add(FindGitHubFooterButton());
+            return controls;
+        }
+
+        private Button? FindGitHubFooterButton()
+        {
+            return this.GetVisualDescendants().OfType<Button>()
+                .FirstOrDefault(b =>
+                    b.IsVisible &&
+                    b.IsEnabled &&
+                    b.GetVisualDescendants().OfType<TextBlock>()
+                        .Any(textBlock => textBlock.Text == "GitHub"));
+        }
+
+        private List<Control> CollectTopBarControls()
+        {
+            var controls = new List<Control>();
+
+            void Add(Control? control)
+            {
+                if (control != null && control.IsVisible && control.IsEnabled)
+                    controls.Add(control);
+            }
+
+            if (_mainViewMode == MainViewMode.Library)
+            {
+                Add(AddNewEntryButton);
+                Add(SortByComboBox);
+            }
+            else if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Review)
+            {
+                Add(CatalogReviewBackButton);
+                Add(CatalogReviewSortByComboBox);
+            }
+
+            Add(CheckForUpdatesButton);
+            Add(SettingsButton);
+            Add(MinimizeButton);
+            Add(ToggleFullscreenButton);
+            Add(CloseLauncherButton);
+            return controls;
+        }
+
+        private List<Control> CollectCatalogReviewFilterControls()
+        {
+            var controls = new List<Control>();
+
+            void Add(Control? control)
+            {
+                if (control != null && control.IsVisible && control.IsEnabled)
+                    controls.Add(control);
+            }
+
+            Add(CatalogSyncAddAllButton);
+            Add(CatalogSyncReplaceAllButton);
+            Add(CatalogSyncAcknowledgeButton);
+            Add(CatalogFilterAllButton);
+            Add(CatalogFilterNeedsReviewButton);
+            Add(CatalogFilterNewButton);
+            Add(CatalogFilterNotInLibraryButton);
+            Add(CatalogFilterChangedButton);
+            Add(CatalogFilterUpToDateButton);
+            Add(CatalogFilterHiddenButton);
+            return controls;
+        }
+
+        private List<Control> CollectCatalogSourcesToolbarControls()
+        {
+            var controls = new List<Control>();
+
+            void Add(Control? control)
+            {
+                if (control != null && control.IsVisible && control.IsEnabled)
+                    controls.Add(control);
+            }
+
+            Add(AddCatalogSourceButton);
+            Add(RefreshCatalogSourcesButton);
+            return controls;
+        }
+
+        private List<Control> CollectCatalogSourcesFilterControls()
+        {
+            var controls = new List<Control>();
+
+            void Add(Control? control)
+            {
+                if (control != null && control.IsVisible && control.IsEnabled)
+                    controls.Add(control);
+            }
+
+            Add(CatalogSourceFilterAllButton);
+            Add(CatalogSourceFilterEnabledButton);
+            Add(CatalogSourceFilterDisabledButton);
+            return controls;
+        }
+
+        private List<Control> CollectCatalogSourceCardActionControls(CatalogSourceListItem source)
+        {
+            var controls = new List<Control>();
+            var border = FindCatalogCardBorder(source);
+            if (border == null)
+                return controls;
+
+            var checkBox = border.GetVisualDescendants().OfType<CheckBox>()
+                .FirstOrDefault(c => c.IsVisible && c.IsEnabled);
+            if (checkBox != null)
+                controls.Add(checkBox);
+
+            foreach (var button in border.GetVisualDescendants().OfType<Button>()
+                         .Where(b => b.IsVisible && b.IsEnabled && b.Classes.Contains("options")))
+            {
+                controls.Add(button);
+            }
+
+            return controls;
+        }
+
+        private void ApplyCatalogSourcesToolbarSelection(int index)
+        {
+            var controls = CollectCatalogSourcesToolbarControls();
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _gamepadNavigation.CatalogSourcesToolbarSelectedIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogSourcesToolbar;
+
+            ClearGamepadFocus();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            controls[index].Focus();
+            Dispatcher.UIThread.Post(() => controls[index].BringIntoView(), DispatcherPriority.Loaded);
+        }
+
+        private void ApplyCatalogSourcesFilterSelection(int index)
+        {
+            var controls = CollectCatalogSourcesFilterControls();
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _gamepadNavigation.CatalogSourcesFilterIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogSourcesFilters;
+
+            ClearGamepadFocus();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            controls[index].Focus();
+            Dispatcher.UIThread.Post(() => controls[index].BringIntoView(), DispatcherPriority.Loaded);
+        }
+
+        private void ApplyCatalogSourceCardActionSelection(int index)
+        {
+            if (CatalogSources.Count == 0)
+                return;
+
+            var cardIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSelectedIndex, CatalogSources.Count);
+            var controls = CollectCatalogSourceCardActionControls(CatalogSources[cardIndex]);
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _gamepadNavigation.CatalogSourceCardActionIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogSourceCardActions;
+
+            ClearGamepadFocus();
+            ClearCatalogSourceCardActionsGamepadFocusClasses(controls);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            CatalogSources[cardIndex].IsGamepadFocused = true;
+
+            if (controls[index] is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            controls[index].Focus();
+            Dispatcher.UIThread.Post(() => controls[index].BringIntoView(), DispatcherPriority.Loaded);
+        }
+
+        private void ClearCatalogSourcesToolbarGamepadFocus()
+        {
+            var controls = CollectCatalogSourcesToolbarControls();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            ClearFocusIfOnControls(controls);
+        }
+
+        private void ClearCatalogSourcesFiltersGamepadFocus()
+        {
+            var controls = CollectCatalogSourcesFilterControls();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            ClearFocusIfOnControls(controls);
+        }
+
+        private void ClearCatalogSourceCardActionsGamepadFocus()
+        {
+            if (CatalogSources.Count == 0)
+                return;
+
+            var cardIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSelectedIndex, CatalogSources.Count);
+            if (cardIndex < 0 || cardIndex >= CatalogSources.Count)
+                return;
+
+            var controls = CollectCatalogSourceCardActionControls(CatalogSources[cardIndex]);
+            ClearCatalogSourceCardActionsGamepadFocusClasses(controls);
+            ClearFocusIfOnControls(controls);
+        }
+
+        private static void ClearStyledControlsGamepadFocusClasses(IReadOnlyList<Control> controls)
+        {
+            foreach (var control in controls)
+            {
+                if (control is StyledElement styled)
+                    styled.Classes.Set("gamepad-focused", false);
+            }
+        }
+
+        private static void ClearCatalogSourceCardActionsGamepadFocusClasses(IReadOnlyList<Control> controls)
+        {
+            ClearStyledControlsGamepadFocusClasses(controls);
+        }
+
+        private void ApplySidebarGamepadSelection(int index)
+        {
+            var controls = CollectSidebarFocusableControls();
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _gamepadNavigation.SidebarSelectedIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.Sidebar;
+
+            ClearGamepadFocus();
+            ClearSidebarGamepadFocusClasses(controls);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            controls[index].Focus();
+            Dispatcher.UIThread.Post(() => controls[index].BringIntoView(), DispatcherPriority.Loaded);
+        }
+
+        private void ApplyTopBarGamepadSelection(int index)
+        {
+            var controls = CollectTopBarControls();
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _gamepadNavigation.TopBarSelectedIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.TopBar;
+
+            ClearGamepadFocus();
+            ClearTopBarGamepadFocusClasses(controls);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            controls[index].Focus();
+        }
+
+        private void ClearSidebarGamepadFocus()
+        {
+            var controls = CollectSidebarFocusableControls();
+            ClearSidebarGamepadFocusClasses(controls);
+            ClearFocusIfOnControls(controls);
+        }
+
+        private void ClearTopBarGamepadFocus()
+        {
+            var controls = CollectTopBarControls();
+            ClearTopBarGamepadFocusClasses(controls);
+            ClearFocusIfOnControls(controls);
+        }
+
+        private static void ClearSidebarGamepadFocusClasses(IReadOnlyList<Control> controls)
+        {
+            foreach (var control in controls)
+            {
+                if (control is StyledElement styled)
+                    styled.Classes.Set("gamepad-focused", false);
+            }
+        }
+
+        private static void ClearTopBarGamepadFocusClasses(IReadOnlyList<Control> controls)
+        {
+            foreach (var control in controls)
+            {
+                if (control is StyledElement styled)
+                    styled.Classes.Set("gamepad-focused", false);
+            }
+        }
+
+        private void ClearFocusIfOnControls(IReadOnlyList<Control> controls)
+        {
+            var focusManager = TopLevel.GetTopLevel(this)?.FocusManager;
+            if (focusManager?.GetFocusedElement() is Control focusedControl &&
+                controls.Contains(focusedControl))
+            {
+                focusManager.ClearFocus();
+            }
+        }
+
+        private void ApplyCatalogReviewFilterSelection(int index)
+        {
+            var controls = CollectCatalogReviewFilterControls();
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _gamepadNavigation.CatalogReviewFilterIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogReviewFilters;
+
+            ClearGamepadFocus();
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            controls[index].Focus();
+            Dispatcher.UIThread.Post(() => controls[index].BringIntoView(), DispatcherPriority.Loaded);
+        }
+
+        private void ApplyCatalogReviewRowSelection(int index)
+        {
+            var rows = CatalogSyncRows.ToList();
+            index = _gamepadNavigation.ClampIndex(index, rows.Count);
+            _gamepadNavigation.CatalogReviewSelectedIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogReviewList;
+
+            ClearGamepadFocus();
+            if (index < 0 || index >= rows.Count)
+                return;
+
+            rows[index].IsGamepadFocused = true;
+            Dispatcher.UIThread.Post(() => FindCatalogSyncRowBorder(rows[index])?.BringIntoView(), DispatcherPriority.Loaded);
+        }
+
+        private void SelectInitialGamepadItemForCurrentView()
+        {
+            if (_mainViewMode == MainViewMode.Library)
+                SelectInitialLibraryGamepadItem();
+            else if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Sources)
+                SelectInitialCatalogGamepadItem();
+            else if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Review)
+                SelectInitialCatalogReviewGamepadItem();
+        }
+
+        private void SelectInitialLibraryGamepadItem()
+        {
+            if (Games.Count == 0)
+            {
+                ClearGamepadFocus();
+                _gamepadNavigation.LibrarySelectedIndex = -1;
+                return;
+            }
+
+            ApplyLibraryGamepadSelection(_gamepadNavigation.LibrarySelectedIndex < 0 ? 0 : _gamepadNavigation.LibrarySelectedIndex);
+        }
+
+        private void SelectInitialCatalogGamepadItem()
+        {
+            if (CatalogSources.Count == 0)
+            {
+                ApplyCatalogSourcesToolbarSelection(0);
+                return;
+            }
+
+            ApplyCatalogGamepadSelection(_gamepadNavigation.CatalogSelectedIndex < 0 ? 0 : _gamepadNavigation.CatalogSelectedIndex);
+        }
+
+        private void SelectInitialCatalogReviewGamepadItem()
+        {
+            if (CatalogSyncRows.Count == 0)
+            {
+                ClearGamepadFocus();
+                _gamepadNavigation.CatalogReviewSelectedIndex = -1;
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogReviewList;
+                return;
+            }
+
+            ApplyCatalogReviewRowSelection(
+                _gamepadNavigation.CatalogReviewSelectedIndex < 0 ? 0 : _gamepadNavigation.CatalogReviewSelectedIndex);
+        }
+
+        private void SyncGamepadLibrarySelection()
+        {
+            if (!_settings.EnableGamepadInput || _mainViewMode != MainViewMode.Library)
+                return;
+
+            if (Games.Count == 0)
+            {
+                ClearGamepadFocus();
+                _gamepadNavigation.LibrarySelectedIndex = -1;
+                return;
+            }
+
+            var clamped = _gamepadNavigation.ClampIndex(_gamepadNavigation.LibrarySelectedIndex, Games.Count);
+            ApplyLibraryGamepadSelection(clamped);
+        }
+
+        private void SyncCatalogGamepadSelection()
+        {
+            if (!_settings.EnableGamepadInput ||
+                _mainViewMode != MainViewMode.AppCatalog ||
+                _appCatalogSubView != AppCatalogSubView.Sources)
+            {
+                return;
+            }
+
+            if (CatalogSources.Count == 0)
+            {
+                if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesToolbar)
+                {
+                    ApplyCatalogSourcesToolbarSelection(
+                        _gamepadNavigation.CatalogSourcesToolbarSelectedIndex < 0
+                            ? 0
+                            : _gamepadNavigation.CatalogSourcesToolbarSelectedIndex);
+                }
+                else
+                {
+                    ClearGamepadFocus();
+                    _gamepadNavigation.CatalogSelectedIndex = -1;
+                }
+
+                return;
+            }
+
+            var clamped = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSelectedIndex, CatalogSources.Count);
+            ApplyCatalogGamepadSelection(clamped);
+        }
+
+        private void SyncCatalogReviewGamepadSelection()
+        {
+            if (!_settings.EnableGamepadInput ||
+                _mainViewMode != MainViewMode.AppCatalog ||
+                _appCatalogSubView != AppCatalogSubView.Review)
+            {
+                return;
+            }
+
+            if (CatalogSyncRows.Count == 0)
+            {
+                ClearGamepadFocus();
+                _gamepadNavigation.CatalogReviewSelectedIndex = -1;
+                return;
+            }
+
+            var clamped = _gamepadNavigation.ClampIndex(
+                _gamepadNavigation.CatalogReviewSelectedIndex,
+                CatalogSyncRows.Count);
+            ApplyCatalogReviewRowSelection(clamped);
+        }
+
+        private void ApplyLibraryGamepadSelection(int index)
+        {
+            var games = Games.ToList();
+            index = _gamepadNavigation.ClampIndex(index, games.Count);
+            _gamepadNavigation.LibrarySelectedIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.Library;
+
+            ClearGamepadFocus();
+            if (index < 0 || index >= games.Count)
+                return;
+
+            games[index].IsGamepadFocused = true;
+            Dispatcher.UIThread.Post(() => FindGameCardRoot(games[index])?.BringIntoView(), DispatcherPriority.Loaded);
+        }
+
+        private void ApplyCatalogGamepadSelection(int index)
+        {
+            if (CatalogSources.Count == 0)
+            {
+                ApplyCatalogSourcesToolbarSelection(
+                    _gamepadNavigation.CatalogSourcesToolbarSelectedIndex < 0
+                        ? 0
+                        : _gamepadNavigation.CatalogSourcesToolbarSelectedIndex);
+                return;
+            }
+
+            index = _gamepadNavigation.ClampIndex(index, CatalogSources.Count);
+            _gamepadNavigation.CatalogSelectedIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogSources;
+
+            ClearGamepadFocus();
+            ClearCatalogSourceCardActionsGamepadFocus();
+            if (index < 0 || index >= CatalogSources.Count)
+                return;
+
+            CatalogSources[index].IsGamepadFocused = true;
+            Dispatcher.UIThread.Post(() => FindCatalogCardBorder(CatalogSources[index])?.BringIntoView(), DispatcherPriority.Loaded);
+        }
+
+        private void ClearGamepadFocus()
+        {
+            foreach (var game in _gameManager.Games)
+                game.IsGamepadFocused = false;
+
+            foreach (var source in CatalogSources)
+                source.IsGamepadFocused = false;
+
+            foreach (var row in CatalogSyncRows)
+                row.IsGamepadFocused = false;
+
+            ClearTopBarGamepadFocusClasses(CollectTopBarControls());
+        }
+
+        private void FocusSidebarNav()
+        {
+            ApplySidebarGamepadSelection(0);
+        }
+
+        private bool IsListGamepadLayout() => !_settings.UseGridView;
+
+        private ItemsControl? GetActiveGamesItemsControl()
+        {
+            if (_settings.UseGridView)
+                return _settings.GridCompactCards ? CompactGridViewControl : ClassicGridViewControl;
+
+            return ListViewControl;
+        }
+
+        private List<(double X, double Y)> CollectGameCardPositions(IReadOnlyList<GameInfo> games)
+        {
+            var positions = new List<(double X, double Y)>();
+            foreach (var game in games)
+            {
+                var card = FindGameCardRoot(game);
+                positions.Add(GetControlCenter(card) ?? (0, positions.Count * 120));
+            }
+
+            return positions;
+        }
+
+        private List<(double X, double Y)> CollectCatalogCardPositions()
+        {
+            var positions = new List<(double X, double Y)>();
+            foreach (var source in CatalogSources)
+            {
+                var card = FindCatalogCardBorder(source);
+                positions.Add(GetControlCenter(card) ?? (0, positions.Count * 160));
+            }
+
+            return positions;
+        }
+
+        private (double X, double Y)? GetControlCenter(Control? control)
+        {
+            if (control == null)
+                return null;
+
+            var topLeft = control.TranslatePoint(new Point(0, 0), this);
+            if (!topLeft.HasValue)
+                return null;
+
+            var bounds = control.Bounds;
+            return (topLeft.Value.X + bounds.Width / 2, topLeft.Value.Y + bounds.Height / 2);
+        }
+
+        private Border? FindGameCardBorder(GameInfo game, ItemsControl? itemsControl = null)
+        {
+            itemsControl ??= GetActiveGamesItemsControl();
+            if (itemsControl == null)
+                return null;
+
+            return itemsControl.GetVisualDescendants().OfType<Border>()
+                .FirstOrDefault(b =>
+                    ReferenceEquals(b.DataContext, game) &&
+                    (b.Classes.Contains("gamecard") ||
+                     b.Classes.Contains("gamecardgrid") ||
+                     b.Classes.Contains("gamecardcompact")));
+        }
+
+        private Control? FindGameCardRoot(GameInfo game, ItemsControl? itemsControl = null)
+        {
+            var border = FindGameCardBorder(game, itemsControl);
+            if (border == null)
+                return null;
+
+            if (border.Classes.Contains("gamecardgrid") &&
+                border.Parent is StackPanel stack &&
+                ReferenceEquals(stack.DataContext, game))
+            {
+                return stack;
+            }
+
+            return border;
+        }
+
+        private Border? FindCatalogCardBorder(CatalogSourceListItem source)
+        {
+            var panel = this.FindControl<ScrollViewer>("CatalogSourcesPanel");
+            if (panel == null)
+                return null;
+
+            return panel.GetVisualDescendants().OfType<Border>()
+                .FirstOrDefault(b => ReferenceEquals(b.DataContext, source));
+        }
+
+        private Border? FindCatalogSyncRowBorder(CatalogSyncRowItem row)
+        {
+            if (CatalogSyncRowsItemsControl == null)
+                return null;
+
+            return CatalogSyncRowsItemsControl.GetVisualDescendants().OfType<Border>()
+                .FirstOrDefault(b => ReferenceEquals(b.DataContext, row));
+        }
+
+        private Button? FindCatalogSyncRowActionButton(CatalogSyncRowItem row)
+        {
+            var border = FindCatalogSyncRowBorder(row);
+            if (border == null)
+                return null;
+
+            return border.GetVisualDescendants().OfType<Button>()
+                .FirstOrDefault(b => b.IsVisible && b.IsEnabled && b.Classes.Contains("options"));
+        }
+
+        private Button? FindGameActionButton(GameInfo game) =>
+            GetActiveGamesItemsControl()?.GetVisualDescendants().OfType<Button>()
+                .FirstOrDefault(b => ReferenceEquals(b.DataContext, game) && b.Classes.Contains("modern"));
+
+        private Button? FindGameOptionsButton(GameInfo game) =>
+            GetActiveGamesItemsControl()?.GetVisualDescendants().OfType<Button>()
+                .FirstOrDefault(b => ReferenceEquals(b.DataContext, game) && b.ContextMenu != null);
+
+        private async Task PerformSelectedGameActionAsync(GameInfo game)
+        {
+            var actionButton = FindGameActionButton(game);
+            var anchor = actionButton as Control ?? FindGameCardBorder(game);
+            if (anchor == null)
+                return;
+
+            try
+            {
+                if (game.Status == GameStatus.UpdateAvailable)
+                {
+                    ShowUpdateActionMenu(anchor, game);
+                    return;
+                }
+
+                await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
+
+                if ((game.Status == GameStatus.NotInstalled || game.Status == GameStatus.UpdateAvailable) &&
+                    game.HasMultipleDownloads && game.SelectedDownload == null)
+                {
+                    if (actionButton != null)
+                        ShowDownloadSelectionMenu(actionButton, game);
+                    return;
+                }
+
+                if (game.Status == GameStatus.Installed && game.HasMultipleExecutables &&
+                    string.IsNullOrEmpty(game.SelectedExecutable))
+                {
+                    ShowExecutableSelectionMenu(anchor, game);
+                    return;
+                }
+
+                UpdateContinueButtonState();
+            }
+            catch (Exception ex)
+            {
+                await ShowMessageBoxAsync($"Failed to perform action for {game.Name}: {ex.Message}", "Action Error");
+            }
+
+            if (_settings.CloseAfterLaunch)
+                Close();
+        }
+
+        private async Task ReviewCatalogSourceByIdAsync(string sourceId)
+        {
+            var source = _settings.AppCatalogSources.FirstOrDefault(s => s.Id == sourceId);
+            var filter = source is { PendingReviewCount: > 0 }
+                ? CatalogReviewFilter.NeedsReview
+                : CatalogReviewFilter.All;
+            await OpenCatalogReviewAsync(sourceId, filter);
+        }
+
+        private void ActivateSidebarSelection()
+        {
+            var controls = CollectSidebarFocusableControls();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.SidebarSelectedIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            var control = controls[index];
+            if (control is Button button)
+            {
+                GamepadControlActivation.ActivateButton(button);
+                return;
+            }
+
+            control.Focus();
+        }
+
+        private void ActivateTopBarSelection()
+        {
+            var controls = CollectTopBarControls();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.TopBarSelectedIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            var control = controls[index];
+            if (control is ComboBox comboBox)
+            {
+                comboBox.Focus();
+                if (!comboBox.IsDropDownOpen)
+                {
+                    comboBox.IsDropDownOpen = true;
+                    GamepadComboBoxNavigation.Open(comboBox);
+                }
+
+                return;
+            }
+
+            if (control is Button button)
+                GamepadControlActivation.ActivateButton(button);
+        }
+
+        private void ActivateReviewFilterSelection()
+        {
+            var controls = CollectCatalogReviewFilterControls();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogReviewFilterIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is Button button)
+                GamepadControlActivation.ActivateButton(button);
+        }
+
+        private void ActivateReviewRowSelection()
+        {
+            var rows = CatalogSyncRows.ToList();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogReviewSelectedIndex, rows.Count);
+            if (index < 0 || index >= rows.Count)
+                return;
+
+            var actionButton = FindCatalogSyncRowActionButton(rows[index]);
+            if (actionButton != null)
+                GamepadControlActivation.ActivateButton(actionButton);
+        }
+
+        private void ActivateCatalogSourcesToolbarSelection()
+        {
+            var controls = CollectCatalogSourcesToolbarControls();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSourcesToolbarSelectedIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is Button button)
+                GamepadControlActivation.ActivateButton(button);
+        }
+
+        private void ActivateCatalogSourcesFilterSelection()
+        {
+            var controls = CollectCatalogSourcesFilterControls();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSourcesFilterIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is Button button)
+                GamepadControlActivation.ActivateButton(button);
+        }
+
+        private void ActivateCatalogSourceCardActionSelection()
+        {
+            if (CatalogSources.Count == 0)
+                return;
+
+            var cardIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSelectedIndex, CatalogSources.Count);
+            var controls = CollectCatalogSourceCardActionControls(CatalogSources[cardIndex]);
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSourceCardActionIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is CheckBox checkBox)
+            {
+                checkBox.IsChecked = !checkBox.IsChecked;
+                return;
+            }
+
+            if (controls[index] is Button button)
+                GamepadControlActivation.ActivateButton(button);
+        }
+
+        private void HandleOptionsAction()
+        {
+            if (!_settings.EnableGamepadInput ||
+                _gamepadNavigation.ActiveZone != GamepadNavigationZone.Library ||
+                _gamepadNavigation.LibrarySelectedIndex < 0)
+            {
+                return;
+            }
+
+            var games = Games.ToList();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.LibrarySelectedIndex, games.Count);
+            if (index < 0 || index >= games.Count)
+                return;
+
+            var optionsButton = FindGameOptionsButton(games[index]);
+            if (optionsButton != null)
+                OptionsButton_Click(optionsButton, new RoutedEventArgs());
+        }
+
         private void HandleConfirmAction()
         {
+            if (_handlingGamepadConfirm)
+                return;
+
+            _handlingGamepadConfirm = true;
+            try
+            {
+                HandleConfirmActionCore();
+            }
+            finally
+            {
+                _handlingGamepadConfirm = false;
+            }
+        }
+
+        private void HandleConfirmActionCore()
+        {
+            if (_settings.EnableGamepadInput && _inputService?.TryHandleContextMenuConfirm() == true)
+                return;
+
+            if (_settings.EnableGamepadInput && _inputService?.TryHandleModalConfirm() == true)
+                return;
+
+            if (_settings.EnableGamepadInput && _inputService?.TryHandleComboBoxConfirm() == true)
+                return;
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.Sidebar)
+            {
+                ActivateSidebarSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.TopBar)
+            {
+                ActivateTopBarSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewFilters)
+            {
+                ActivateReviewFilterSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewList)
+            {
+                ActivateReviewRowSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesToolbar)
+            {
+                ActivateCatalogSourcesToolbarSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesFilters)
+            {
+                ActivateCatalogSourcesFilterSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourceCardActions)
+            {
+                ActivateCatalogSourceCardActionSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.Library &&
+                _gamepadNavigation.LibrarySelectedIndex >= 0)
+            {
+                var games = Games.ToList();
+                var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.LibrarySelectedIndex, games.Count);
+                if (index >= 0 && index < games.Count)
+                {
+                    _ = PerformSelectedGameActionAsync(games[index]);
+                    return;
+                }
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSources &&
+                _gamepadNavigation.CatalogSelectedIndex >= 0)
+            {
+                var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSelectedIndex, CatalogSources.Count);
+                if (index >= 0 && index < CatalogSources.Count)
+                {
+                    ApplyCatalogSourceCardActionSelection(0);
+                    return;
+                }
+            }
+
             var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
 
             if (focused is MenuItem menuItem)
             {
-                // Trigger the menu item click
                 menuItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             }
             else if (focused is Button button)
             {
-                // If button has a context menu, open it
                 if (button.ContextMenu != null)
                 {
                     button.ContextMenu.PlacementTarget = button;
                     button.ContextMenu.Placement = PlacementMode.Bottom;
                     button.ContextMenu.Open();
 
-                    // Focus first menu item after opening
                     Dispatcher.UIThread.Post(() =>
                     {
                         var firstMenuItem = button.ContextMenu.Items.OfType<MenuItem>().FirstOrDefault();
@@ -5691,7 +7190,6 @@ namespace Quiver
                 }
                 else
                 {
-                    // Normal button click
                     button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 }
             }
@@ -5707,16 +7205,21 @@ namespace Quiver
 
         private void HandleCancelAction()
         {
-            // First check if any context menu is open and close it
-            var allButtons = this.GetVisualDescendants().OfType<Button>();
-            foreach (var button in allButtons)
+            if (_settings.EnableGamepadInput && _inputService?.TryHandleContextMenuCancel() == true)
+                return;
+
+            if (_settings.EnableGamepadInput && _inputService?.TryHandleModalCancel() == true)
+                return;
+
+            if (_settings.EnableGamepadInput && _inputService?.TryHandleComboBoxCancel() == true)
+                return;
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourceCardActions &&
+                CatalogSources.Count > 0)
             {
-                if (button.ContextMenu?.IsOpen == true)
-                {
-                    button.ContextMenu.Close();
-                    button.Focus(); // Return focus to the button
-                    return;
-                }
+                ApplyCatalogGamepadSelection(_gamepadNavigation.CatalogSelectedIndex);
+                return;
             }
 
             // Close settings panel if open
@@ -5760,6 +7263,7 @@ namespace Quiver
             {
                 _inputService.OnConfirm -= HandleConfirmAction;
                 _inputService.OnCancel -= HandleCancelAction;
+                _inputService.OnOptions -= HandleOptionsAction;
                 _inputService.Dispose();
             }
         }
@@ -5798,7 +7302,8 @@ namespace Quiver
         private void MainWindow_Deactivated(object? sender, EventArgs e)
         {
             _inputService?.SetWindowActive(false);
-            _inputService?.SetGamepadEnabled(false);
+            if (_inputService?.ShouldKeepPollingWhenDeactivated() != true)
+                _inputService?.SetGamepadEnabled(false);
 
             #if WINDOWS
                         _ = FadeMusicAsync(0f, FADE_DURATION_MS);

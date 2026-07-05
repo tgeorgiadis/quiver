@@ -92,14 +92,11 @@ public class CommunityCatalogDefaultsTests
             [CommunityCatalogDefaults.RemoteIndexUrl] =
                 """
                 {
-                  "version": 1,
+                  "version": 2,
                   "lists": [
                     {
                       "id": "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c",
-                      "name": "N64 Recomp Games",
-                      "description": "N64 recompilation ports",
-                      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Recomps.json",
-                      "listVersion": "1.0.0"
+                      "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Recomps.json"
                     }
                   ]
                 }
@@ -118,6 +115,8 @@ public class CommunityCatalogDefaultsTests
             var source = settings.AppCatalogSources.Single();
             service.HasSourceCache(source.Id).Should().BeTrue();
             source.CachedListVersion.Should().Be("1.0.2");
+            source.Name.Should().Be("N64 Recomps");
+            source.Description.Should().Be("N64 recompilation ports");
             await service.RefreshUpdateAvailableAsync(source);
             source.PendingReviewCount.Should().BeGreaterThan(0);
         }

@@ -145,7 +145,9 @@ namespace Quiver.Services
                     await File.WriteAllTextAsync(cachePath, json).ConfigureAwait(false);
 
                     using var document = JsonDocument.Parse(json);
-                    var version = ResolveListVersion(document.RootElement, out _);
+                    var root = document.RootElement;
+                    var version = ResolveListVersion(root, out _);
+                    ApplyListMetadata(source, root);
 
                     source.LastFetchedUtc = DateTime.UtcNow;
                     source.LastError = null;
@@ -197,7 +199,9 @@ namespace Quiver.Services
             await File.WriteAllTextAsync(cachePath, rawJson).ConfigureAwait(false);
 
             using var document = JsonDocument.Parse(rawJson);
-            var version = ResolveListVersion(document.RootElement, out _);
+            var root = document.RootElement;
+            var version = ResolveListVersion(root, out _);
+            ApplyListMetadata(source, root);
 
             source.LastFetchedUtc = DateTime.UtcNow;
             source.LastError = null;
@@ -500,13 +504,35 @@ namespace Quiver.Services
             {
                 var json = await File.ReadAllTextAsync(cachePath).ConfigureAwait(false);
                 using var document = JsonDocument.Parse(json);
-                source.CachedListVersion = ResolveListVersion(document.RootElement, out _);
+                var root = document.RootElement;
+                source.CachedListVersion = ResolveListVersion(root, out _);
+                ApplyListMetadata(source, root);
                 CatalogCompareService.PruneIgnoredChanges(source);
                 await RefreshUpdateAvailableAsync(source).ConfigureAwait(false);
             }
             catch
             {
                 // Keep existing metadata when cache is unreadable.
+            }
+        }
+
+        public static void ApplyListMetadata(AppCatalogSource source, JsonElement root)
+        {
+            if (root.TryGetProperty("name", out var nameElement) &&
+                nameElement.ValueKind == JsonValueKind.String)
+            {
+                var name = nameElement.GetString()?.Trim();
+                if (!string.IsNullOrEmpty(name))
+                    source.Name = name;
+            }
+
+            if (string.IsNullOrWhiteSpace(source.Name))
+                source.Name = CatalogListMetadata.DeriveDisplayNameFromLocation(source.Location);
+
+            if (root.TryGetProperty("description", out var descriptionElement) &&
+                descriptionElement.ValueKind == JsonValueKind.String)
+            {
+                source.Description = descriptionElement.GetString()?.Trim() ?? "";
             }
         }
 

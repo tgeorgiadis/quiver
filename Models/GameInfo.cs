@@ -30,6 +30,7 @@ namespace Quiver.Models
         private string? _skippedUpdateVersion;
         private GameStatus _status = GameStatus.NotInstalled;
         private bool _isLoading;
+        private bool _isGamepadFocused;
         private GitHubRelease? _cachedRelease;
         public GameManager? GameManager { get; set; }
 
@@ -353,6 +354,19 @@ namespace Quiver.Models
                 if (_isLoading != value)
                 {
                     _isLoading = value;
+                    DispatchPropertyChanged();
+                }
+            }
+        }
+
+        public bool IsGamepadFocused
+        {
+            get => _isGamepadFocused;
+            set
+            {
+                if (_isGamepadFocused != value)
+                {
+                    _isGamepadFocused = value;
                     DispatchPropertyChanged();
                 }
             }

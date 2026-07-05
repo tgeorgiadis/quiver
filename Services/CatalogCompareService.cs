@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Quiver.Models;
 
 namespace Quiver.Services
@@ -10,8 +11,12 @@ namespace Quiver.Services
         Changed,
     }
 
-    public class CatalogSyncRowItem
+    public class CatalogSyncRowItem : INotifyPropertyChanged
     {
+        private bool _isGamepadFocused;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
         public CatalogSyncStatus Status { get; init; }
         public string Repository { get; init; } = "";
         public string DisplayName { get; init; } = "";
@@ -53,6 +58,19 @@ namespace Quiver.Services
 
         public bool ShowHideButton { get; set; }
         public bool ShowUnhideButton { get; set; }
+
+        public bool IsGamepadFocused
+        {
+            get => _isGamepadFocused;
+            set
+            {
+                if (_isGamepadFocused == value)
+                    return;
+
+                _isGamepadFocused = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsGamepadFocused)));
+            }
+        }
     }
 
     public static class CatalogCompareService

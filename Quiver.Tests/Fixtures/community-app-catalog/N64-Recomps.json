@@ -1,4 +1,6 @@
 {
+  "name": "N64 Recomps",
+  "description": "N64 recompilation ports",
   "version": "1.0.2",
   "apps": [
     {

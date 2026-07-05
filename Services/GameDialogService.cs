@@ -76,6 +76,8 @@ public static class GameDialogService
                     },
                 };
 
+                GamepadModalDialogNavigation.Attach(messageBox);
+
                 await messageBox.ShowDialog(desktop.MainWindow);
             }
             else
@@ -145,6 +147,8 @@ public static class GameDialogService
                 noButton.Click += (_, _) => { userChoice = false; messageBox.Close(); };
             }
 
+            GamepadModalDialogNavigation.Attach(messageBox);
+
             await messageBox.ShowDialog(desktop.MainWindow);
         });
 
@@ -203,6 +207,8 @@ public static class GameDialogService
                 yesButton.Click += (_, _) => { userChoice = true; messageBox.Close(); };
                 noButton.Click += (_, _) => { userChoice = false; messageBox.Close(); };
             }
+
+            GamepadModalDialogNavigation.Attach(messageBox);
 
             await messageBox.ShowDialog(desktop.MainWindow);
         });
@@ -328,6 +334,9 @@ public static class GameDialogService
                     mainWindow.OpenGitHubApiTokenSettings();
             };
             closeButton.Click += (_, _) => messageBox.Close();
+
+            GamepadModalDialogNavigation.Attach(messageBox);
+
             await messageBox.ShowDialog(desktop.MainWindow);
         });
     }

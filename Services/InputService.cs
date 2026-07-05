@@ -25,23 +25,40 @@ namespace Quiver.Services
         private const short AxisMax = 32767;
 
         // Input repeat delays
-        private const int InitialRepeatDelay = 500;
-        private const int RepeatDelay = 150;
+        private const int MinNavigationInterval = 250;
+        private const int InitialRepeatDelay = 650;
+        private const int RepeatDelay = 350;
 
         private DateTime _lastNavigationTime = DateTime.MinValue;
-        private bool _isInitialNavigation = true;
+        private int _movesInHold;
 
         private DateTime _lastConfirmTime = DateTime.MinValue;
         private DateTime _lastCancelTime = DateTime.MinValue;
+        private DateTime _lastOptionsTime = DateTime.MinValue;
         private const int ButtonRepeatDelay = 300;
 
         public event Action<NavigationDirection>? OnNavigate;
         public event Action? OnConfirm;
         public event Action? OnCancel;
+        public event Action? OnOptions;
+
+        public Func<NavigationDirection, bool>? NavigationInterceptor { get; set; }
+
+        private readonly GamepadModalDialogNavigation _modalDialogNavigation = GamepadModalDialogNavigation.Instance;
+        private readonly GamepadContextMenuNavigation _contextMenuNavigation = GamepadContextMenuNavigation.Instance;
+        private readonly GamepadComboBoxNavigation _comboBoxNavigation = GamepadComboBoxNavigation.Instance;
+
+        public bool IsGamepadOverlayActive =>
+            _modalDialogNavigation.HasActiveDialog ||
+            _contextMenuNavigation.HasActiveContextMenu ||
+            _comboBoxNavigation.HasActiveComboBox;
+
+        public bool ShouldKeepPollingWhenDeactivated() => IsGamepadOverlayActive;
 
         public InputService(Window mainWindow, AppSettings appSettings)
         {
             _mainWindow = mainWindow;
+            _modalDialogNavigation.Configure(this);
             InitializeSDL();
 
             if (appSettings.EnableGamepadInput)
@@ -102,15 +119,19 @@ namespace Quiver.Services
         {
             CheckSDLWindowFocus();
 
-            if (!_isWindowActive)
+            var overlayActive = IsGamepadOverlayActive;
+
+            if (!_isWindowActive && !overlayActive)
             {
-                ResetNavigationTimer();
+                ResetNavigationState();
                 _lastConfirmTime = DateTime.MinValue;
                 _lastCancelTime = DateTime.MinValue;
                 return;
             }
 
             SDL.SDL_GameControllerUpdate();
+
+            NavigationDirection? heldDirection = null;
 
             foreach (var kvp in _gameControllers)
             {
@@ -138,33 +159,20 @@ namespace Quiver.Services
 
                 // Read buttons
                 currentState.AButton = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_A) == 1;
+                currentState.BButton = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_B) == 1;
                 currentState.XButton = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_X) == 1;
+                currentState.YButton = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_Y) == 1;
                 currentState.DPadUp = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_DPAD_UP) == 1;
                 currentState.DPadDown = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_DPAD_DOWN) == 1;
                 currentState.DPadLeft = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_DPAD_LEFT) == 1;
                 currentState.DPadRight = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_DPAD_RIGHT) == 1;
 
-                // Handle navigation from D-Pad
-                if (currentState.DPadUp && !previousState.DPadUp)
-                    HandleNavigation(NavigationDirection.Up);
-                else if (currentState.DPadDown && !previousState.DPadDown)
-                    HandleNavigation(NavigationDirection.Down);
-                else if (currentState.DPadLeft && !previousState.DPadLeft)
-                    HandleNavigation(NavigationDirection.Left);
-                else if (currentState.DPadRight && !previousState.DPadRight)
-                    HandleNavigation(NavigationDirection.Right);
-
-                // Handle navigation from analog stick (with repeat)
-                if (currentState.LeftStickY < -DeadZone)
-                    HandleNavigation(NavigationDirection.Up);
-                else if (currentState.LeftStickY > DeadZone)
-                    HandleNavigation(NavigationDirection.Down);
-                else if (currentState.LeftStickX < -DeadZone)
-                    HandleNavigation(NavigationDirection.Left);
-                else if (currentState.LeftStickX > DeadZone)
-                    HandleNavigation(NavigationDirection.Right);
-                else
-                    ResetNavigationTimer();
+                if (!heldDirection.HasValue)
+                {
+                    var direction = GetHeldNavigationDirection(currentState);
+                    if (direction.HasValue)
+                        heldDirection = direction;
+                }
 
                 // Handle A button (Confirm)
                 if (currentState.AButton && !previousState.AButton)
@@ -173,21 +181,40 @@ namespace Quiver.Services
                     if ((now - _lastConfirmTime).TotalMilliseconds > ButtonRepeatDelay)
                     {
                         _lastConfirmTime = now;
-                        OnConfirm?.Invoke();
+                        if (!TryHandleOverlayConfirm())
+                            OnConfirm?.Invoke();
                     }
                 }
 
-                // Handle X button (Cancel)
-                if (currentState.XButton && !previousState.XButton)
+                // Handle X/B button (Cancel)
+                if ((currentState.XButton && !previousState.XButton) ||
+                    (currentState.BButton && !previousState.BButton))
                 {
                     var now = DateTime.Now;
                     if ((now - _lastCancelTime).TotalMilliseconds > ButtonRepeatDelay)
                     {
                         _lastCancelTime = now;
-                        OnCancel?.Invoke();
+                        if (!TryHandleOverlayCancel())
+                            OnCancel?.Invoke();
+                    }
+                }
+
+                // Handle Y button (Options)
+                if (currentState.YButton && !previousState.YButton)
+                {
+                    var now = DateTime.Now;
+                    if ((now - _lastOptionsTime).TotalMilliseconds > ButtonRepeatDelay)
+                    {
+                        _lastOptionsTime = now;
+                        OnOptions?.Invoke();
                     }
                 }
             }
+
+            if (heldDirection.HasValue)
+                HandleNavigation(heldDirection.Value);
+            else
+                ResetNavigationHold();
         }
         private void CheckSDLWindowFocus()
         {
@@ -217,21 +244,49 @@ namespace Quiver.Services
         public void HandleNavigation(NavigationDirection direction)
         {
             var now = DateTime.Now;
-            var timeSinceLastNav = (now - _lastNavigationTime).TotalMilliseconds;
+            var timeSinceLastNav = _lastNavigationTime == DateTime.MinValue
+                ? 0
+                : (now - _lastNavigationTime).TotalMilliseconds;
 
-            if (!_isInitialNavigation)
+            var hasPriorMove = _lastNavigationTime != DateTime.MinValue;
+
+            if (!GamepadNavigationRepeat.ShouldAllowNavigationMove(
+                    _movesInHold,
+                    timeSinceLastNav,
+                    MinNavigationInterval,
+                    InitialRepeatDelay,
+                    RepeatDelay,
+                    hasPriorMove))
             {
-                if (timeSinceLastNav < RepeatDelay)
-                    return;
-            }
-            else
-            {
-                if (timeSinceLastNav < InitialRepeatDelay && _lastNavigationTime != DateTime.MinValue)
-                    return;
-                _isInitialNavigation = false;
+                return;
             }
 
             _lastNavigationTime = now;
+            _movesInHold++;
+
+            if (_comboBoxNavigation.TryHandleNavigation(direction))
+            {
+                OnNavigate?.Invoke(direction);
+                return;
+            }
+
+            if (_contextMenuNavigation.TryHandleNavigation(direction))
+            {
+                OnNavigate?.Invoke(direction);
+                return;
+            }
+
+            if (_modalDialogNavigation.TryHandleNavigation(direction))
+            {
+                OnNavigate?.Invoke(direction);
+                return;
+            }
+
+            if (NavigationInterceptor?.Invoke(direction) == true)
+            {
+                OnNavigate?.Invoke(direction);
+                return;
+            }
 
             var focused = TopLevel.GetTopLevel(_mainWindow)?.FocusManager?.GetFocusedElement() as Control;
 
@@ -251,10 +306,79 @@ namespace Quiver.Services
             OnNavigate?.Invoke(direction);
         }
 
-        public void ResetNavigationTimer()
+        public void ResetNavigationTimer() => ResetNavigationHold();
+
+        public void ResetNavigationHold()
         {
-            _isInitialNavigation = true;
+            _movesInHold = 0;
+        }
+
+        public void ResetNavigationState()
+        {
+            _movesInHold = 0;
             _lastNavigationTime = DateTime.MinValue;
+        }
+
+        private static NavigationDirection? GetHeldNavigationDirection(GamepadState state)
+        {
+            if (state.DPadUp)
+                return NavigationDirection.Up;
+            if (state.DPadDown)
+                return NavigationDirection.Down;
+            if (state.DPadLeft)
+                return NavigationDirection.Left;
+            if (state.DPadRight)
+                return NavigationDirection.Right;
+            if (state.LeftStickY < 0)
+                return NavigationDirection.Up;
+            if (state.LeftStickY > 0)
+                return NavigationDirection.Down;
+            if (state.LeftStickX < 0)
+                return NavigationDirection.Left;
+            if (state.LeftStickX > 0)
+                return NavigationDirection.Right;
+
+            return null;
+        }
+
+        public bool TryHandleContextMenuConfirm() => _contextMenuNavigation.TryHandleConfirm();
+
+        public bool TryHandleContextMenuCancel() => _contextMenuNavigation.TryHandleCancel();
+
+        public bool TryHandleComboBoxConfirm() => _comboBoxNavigation.TryHandleConfirm();
+
+        public bool TryHandleComboBoxCancel() => _comboBoxNavigation.TryHandleCancel();
+
+        public bool TryHandleModalConfirm() => _modalDialogNavigation.TryHandleConfirm();
+
+        public bool TryHandleModalCancel() => _modalDialogNavigation.TryHandleCancel();
+
+        private bool TryHandleOverlayConfirm()
+        {
+            if (_comboBoxNavigation.TryHandleConfirm())
+                return true;
+
+            if (_contextMenuNavigation.TryHandleConfirm())
+                return true;
+
+            if (_modalDialogNavigation.TryHandleConfirm())
+                return true;
+
+            return false;
+        }
+
+        private bool TryHandleOverlayCancel()
+        {
+            if (_comboBoxNavigation.TryHandleCancel())
+                return true;
+
+            if (_contextMenuNavigation.TryHandleCancel())
+                return true;
+
+            if (_modalDialogNavigation.TryHandleCancel())
+                return true;
+
+            return false;
         }
 
         private Control? GetNextControl(Control current, NavigationDirection direction)
@@ -500,7 +624,9 @@ namespace Quiver.Services
             public float LeftStickX { get; set; }
             public float LeftStickY { get; set; }
             public bool AButton { get; set; }
+            public bool BButton { get; set; }
             public bool XButton { get; set; }
+            public bool YButton { get; set; }
             public bool DPadUp { get; set; }
             public bool DPadDown { get; set; }
             public bool DPadLeft { get; set; }
@@ -513,7 +639,9 @@ namespace Quiver.Services
                     LeftStickX = this.LeftStickX,
                     LeftStickY = this.LeftStickY,
                     AButton = this.AButton,
+                    BButton = this.BButton,
                     XButton = this.XButton,
+                    YButton = this.YButton,
                     DPadUp = this.DPadUp,
                     DPadDown = this.DPadDown,
                     DPadLeft = this.DPadLeft,

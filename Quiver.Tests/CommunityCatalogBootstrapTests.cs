@@ -65,21 +65,15 @@ public class CommunityCatalogBootstrapTests
         var remoteIndex =
             """
             {
-              "version": 1,
+              "version": 2,
               "lists": [
                 {
                   "id": "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c",
-                  "name": "N64 Recomp Games",
-                  "description": "N64 recompilation ports",
-                  "remoteLocation": "https://example.com/n64-recomp.json",
-                  "listVersion": "1.0.0"
+                  "remoteLocation": "https://example.com/n64-recomp.json"
                 },
                 {
                   "id": "e7f1a5d4-6b8f-7a2e-0f0d-4a5b6c7d8e9f",
-                  "name": "Test Extra List",
-                  "description": "Added remotely",
-                  "remoteLocation": "https://example.com/general.json",
-                  "listVersion": "1.0.0"
+                  "remoteLocation": "https://example.com/general-game-recreations.json"
                 }
               ]
             }
@@ -94,7 +88,7 @@ public class CommunityCatalogBootstrapTests
         var result = await bootstrap.SyncCommunitySourcesFromIndexAsync(new HttpClient(), settings);
 
         result.AddedSourceCount.Should().Be(1);
-        result.AddedSourceNames.Should().Contain("Test Extra List");
+        result.AddedSourceNames.Should().Contain("general game recreations");
         settings.AppCatalogSources.Should().HaveCount(2);
         settings.AppCatalogSources.Single(s => s.Id == "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c")
             .Location.Should().Be("https://example.com/n64-recomp.json");
@@ -143,6 +137,43 @@ public class CommunityCatalogBootstrapTests
     }
 
     [Fact]
+    public async Task SyncCommunitySourcesFromIndexAsync_does_not_clear_existing_name_when_index_has_no_name()
+    {
+        var settings = new AppSettings();
+        settings.EnsureInitialized();
+        settings.AppCatalogSources.Add(new AppCatalogSource
+        {
+            Id = "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c",
+            Name = "N64 Recomps",
+            Description = "N64 recompilation ports",
+            Location = N64RemoteUrl,
+            IsCommunityManaged = true,
+        });
+
+        var reader = new FakeCatalogLocationReader(new Dictionary<string, string>
+        {
+            [CommunityCatalogDefaults.RemoteIndexUrl] = SampleRemoteIndex(),
+        });
+        var bootstrap = new CommunityCatalogBootstrap(reader);
+
+        await bootstrap.SyncCommunitySourcesFromIndexAsync(new HttpClient(), settings);
+
+        var source = settings.AppCatalogSources.Single(s => s.Id == "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c");
+        source.Name.Should().Be("N64 Recomps");
+        source.Description.Should().Be("N64 recompilation ports");
+    }
+
+    [Fact]
+    public void DeriveListDisplayNameFromRemoteLocation_formats_filename_without_extension()
+    {
+        CommunityCatalogBootstrap.DeriveListDisplayNameFromRemoteLocation(N64RemoteUrl)
+            .Should().Be("N64 Recomps");
+        CommunityCatalogBootstrap.DeriveListDisplayNameFromRemoteLocation(
+                "https://example.com/general-game-recreations.json")
+            .Should().Be("general game recreations");
+    }
+
+    [Fact]
     public void MigrateBundledCommunitySourceLocation_moves_remote_url_to_location()
     {
         var source = new AppCatalogSource
@@ -168,7 +199,7 @@ public class CommunityCatalogBootstrapTests
         {
             [CommunityCatalogDefaults.RemoteIndexUrl] = SampleRemoteIndex(),
             [N64RemoteUrl] = listJson,
-            ["https://example.com/general.json"] = listJson,
+            ["https://example.com/general-game-recreations.json"] = listJson,
         });
         var (service, tempDir) = TestFixtures.CreateIsolatedCatalogService(locationReader: reader);
         var settings = new AppSettings();
@@ -184,6 +215,9 @@ public class CommunityCatalogBootstrapTests
                 service.HasSourceCache(source.Id).Should().BeTrue();
                 source.CachedListVersion.Should().Be("1.0.2");
             }
+
+            settings.AppCatalogSources.Single(s => s.Id == "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c")
+                .Name.Should().Be("N64 Recomps");
         }
         finally
         {
@@ -206,21 +240,15 @@ public class CommunityCatalogBootstrapTests
     private static string SampleRemoteIndex() =>
         """
         {
-          "version": 1,
+          "version": 2,
           "lists": [
             {
               "id": "b4e8c2a1-3f5d-4e9b-8c7a-1d2e3f4a5b6c",
-              "name": "N64 Recomp Games",
-              "description": "N64 recompilation ports",
-              "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Recomps.json",
-              "listVersion": "1.0.0"
+              "remoteLocation": "https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/community-app-catalog/N64-Recomps.json"
             },
             {
               "id": "e7f1a5d4-6b8f-7a2e-0f0d-4a5b6c7d8e9f",
-              "name": "Test Extra List",
-              "description": "Added remotely",
-              "remoteLocation": "https://example.com/general.json",
-              "listVersion": "1.0.0"
+              "remoteLocation": "https://example.com/general-game-recreations.json"
             }
           ]
         }

@@ -610,6 +610,8 @@ public class App : Application, INotifyPropertyChanged
                 };
             }
 
+            GamepadModalDialogNavigation.Attach(messageBox);
+
             await messageBox.ShowDialog(desktop.MainWindow);
             return result;
         }
@@ -642,6 +644,8 @@ public class App : Application, INotifyPropertyChanged
             {
                 okButton.Click += (s, e) => messageBox.Close();
             }
+
+            GamepadModalDialogNavigation.Attach(messageBox);
 
             await messageBox.ShowDialog(desktop.MainWindow);
         }

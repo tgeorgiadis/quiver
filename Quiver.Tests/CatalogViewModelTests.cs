@@ -106,9 +106,9 @@ public class CatalogViewModelTests
     public void CreateSource_sets_enabled_defaults()
     {
         var viewModel = new CatalogViewModel();
-        var source = viewModel.CreateSource("My List", "https://example.com/list.json");
+        var source = viewModel.CreateSource("https://example.com/list.json");
 
-        source.Name.Should().Be("My List");
+        source.Name.Should().BeEmpty();
         source.Location.Should().Be("https://example.com/list.json");
         source.Enabled.Should().BeTrue();
     }
