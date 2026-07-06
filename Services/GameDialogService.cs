@@ -20,91 +20,99 @@ public static class GameDialogService
         return message.Contains("403", StringComparison.OrdinalIgnoreCase)
             || message.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static Window? TryGetDesktopMainWindow()
+    {
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            return desktop.MainWindow;
+
+        return null;
+    }
+
+    private static void WriteConsoleError(string title, string message)
+    {
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"ERROR: {title}");
+        Console.ResetColor();
+        Console.WriteLine(message);
+        Console.WriteLine();
+    }
+
     public static async Task ShowMessageBoxAsync(string message, string title)
     {
+        if (TryGetDesktopMainWindow() is not Window mainWindow)
+        {
+            WriteConsoleError(title, message);
+            return;
+        }
+
         await Dispatcher.UIThread.InvokeAsync(async () =>
         {
-            if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
-                desktop.MainWindow != null)
+            var messageBox = new Window
             {
-                var messageBox = new Window
-                {
-                    Title = title,
-                    MinWidth = 420,
-                    MaxWidth = 520,
-                    MaxHeight = 520,
-                    CanResize = true,
-                    SizeToContent = SizeToContent.Height,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                };
+                Title = title,
+                MinWidth = 420,
+                MaxWidth = 520,
+                MaxHeight = 520,
+                CanResize = true,
+                SizeToContent = SizeToContent.Height,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            };
 
-                var okButton = new Button
-                {
-                    Content = "OK",
-                    Width = 80,
-                    Padding = new Thickness(12, 6),
-                    HorizontalContentAlignment = HorizontalAlignment.Center,
-                    VerticalContentAlignment = VerticalAlignment.Center,
-                };
-                okButton.Click += (_, _) => messageBox.Close();
+            var okButton = new Button
+            {
+                Content = "OK",
+                Width = 80,
+                Padding = new Thickness(12, 6),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+            };
+            okButton.Click += (_, _) => messageBox.Close();
 
-                var buttonRow = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    Children = { okButton },
-                };
+            var buttonRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Children = { okButton },
+            };
 
-                messageBox.Content = new StackPanel
+            messageBox.Content = new StackPanel
+            {
+                Margin = new Thickness(20),
+                Spacing = 16,
+                Children =
                 {
-                    Margin = new Thickness(20),
-                    Spacing = 16,
-                    Children =
+                    new ScrollViewer
                     {
-                        new ScrollViewer
+                        MaxHeight = 360,
+                        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                        Content = new TextBlock
                         {
-                            MaxHeight = 360,
-                            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                            Content = new TextBlock
-                            {
-                                Text = message,
-                                TextWrapping = TextWrapping.Wrap,
-                                FontSize = 13,
-                            },
+                            Text = message,
+                            TextWrapping = TextWrapping.Wrap,
+                            FontSize = 13,
                         },
-                        buttonRow,
                     },
-                };
+                    buttonRow,
+                },
+            };
 
-                GamepadModalDialogNavigation.Attach(messageBox);
+            GamepadModalDialogNavigation.Attach(messageBox);
 
-                await messageBox.ShowDialog(desktop.MainWindow);
-            }
-            else
-            {
-                Console.WriteLine();
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"ERROR: {title}");
-                Console.ResetColor();
-                Console.WriteLine(message);
-                Console.WriteLine();
-            }
+            await messageBox.ShowDialog(mainWindow);
         });
     }
 
     public static async Task<bool> ShowWineNotFoundWarningAsync()
     {
+        if (TryGetDesktopMainWindow() is not Window mainWindow)
+            return true;
+
         var userChoice = false;
 
         await Dispatcher.UIThread.InvokeAsync(async () =>
         {
-            if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
-                desktop.MainWindow == null)
-            {
-                userChoice = true;
-                return;
-            }
-
             var messageBox = new Window
             {
                 Title = "Windows Runner Not Found",
@@ -149,7 +157,7 @@ public static class GameDialogService
 
             GamepadModalDialogNavigation.Attach(messageBox);
 
-            await messageBox.ShowDialog(desktop.MainWindow);
+            await messageBox.ShowDialog(mainWindow);
         });
 
         return userChoice;
@@ -157,17 +165,13 @@ public static class GameDialogService
 
     public static async Task<bool> ShowWineDownloadWarningAsync()
     {
+        if (TryGetDesktopMainWindow() is not Window mainWindow)
+            return true;
+
         var userChoice = false;
 
         await Dispatcher.UIThread.InvokeAsync(async () =>
         {
-            if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
-                desktop.MainWindow == null)
-            {
-                userChoice = true;
-                return;
-            }
-
             var messageBox = new Window
             {
                 Title = "Windows Runner Required",
@@ -210,7 +214,7 @@ public static class GameDialogService
 
             GamepadModalDialogNavigation.Attach(messageBox);
 
-            await messageBox.ShowDialog(desktop.MainWindow);
+            await messageBox.ShowDialog(mainWindow);
         });
 
         return userChoice;
@@ -218,12 +222,11 @@ public static class GameDialogService
 
     public static async Task ShowRateLimitErrorAsync()
     {
+        if (TryGetDesktopMainWindow() is not Window mainWindow)
+            return;
+
         await Dispatcher.UIThread.InvokeAsync(async () =>
         {
-            if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
-                desktop.MainWindow == null)
-                return;
-
             var hyperlinkText = new TextBlock
             {
                 Text = "https://github.com/settings/tokens",
@@ -330,14 +333,14 @@ public static class GameDialogService
             openSettingsButton.Click += (_, _) =>
             {
                 messageBox.Close();
-                if (desktop.MainWindow is MainWindow mainWindow)
-                    mainWindow.OpenGitHubApiTokenSettings();
+                if (mainWindow is MainWindow mainWindowInstance)
+                    mainWindowInstance.OpenGitHubApiTokenSettings();
             };
             closeButton.Click += (_, _) => messageBox.Close();
 
             GamepadModalDialogNavigation.Attach(messageBox);
 
-            await messageBox.ShowDialog(desktop.MainWindow);
+            await messageBox.ShowDialog(mainWindow);
         });
     }
 }

@@ -53,7 +53,8 @@ public class GamePerformActionTests
                 Content = new ByteArrayContent(CreateMinimalZipWithExe()),
             }));
 
-            var launched = await game.PerformActionAsync(client, gamesFolder, new AppSettings());
+            var launched = await game.PerformActionAsync(
+                client, gamesFolder, new AppSettings(), HeadlessGameDownloadDialogs.Instance);
 
             launched.Should().BeFalse("downloads must not count as a launch for Close After Launch");
             game.Status.Should().Be(GameStatus.Installed);
@@ -98,7 +99,8 @@ public class GamePerformActionTests
             using var client = new HttpClient(new StubHttpMessageHandler(_ =>
                 throw new HttpRequestException("Network error")));
 
-            var launched = await game.PerformActionAsync(client, gamesFolder, new AppSettings());
+            var launched = await game.PerformActionAsync(
+                client, gamesFolder, new AppSettings(), HeadlessGameDownloadDialogs.Instance);
 
             launched.Should().BeFalse("failed downloads must not count as a launch for Close After Launch");
             game.Status.Should().Be(GameStatus.NotInstalled);
@@ -131,7 +133,8 @@ public class GamePerformActionTests
             using var client = new HttpClient(new StubHttpMessageHandler(_ =>
                 throw new InvalidOperationException("HTTP should not be called when launching")));
 
-            var launched = await game.PerformActionAsync(client, gamesFolder, new AppSettings());
+            var launched = await game.PerformActionAsync(
+                client, gamesFolder, new AppSettings(), HeadlessGameDownloadDialogs.Instance);
 
             launched.Should().BeFalse("launch failures must not count as a launch for Close After Launch");
         }

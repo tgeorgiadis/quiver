@@ -69,7 +69,7 @@ namespace Quiver.Services
 
         private void InitializeSDL()
         {
-            if (SDL.SDL_Init(SDL.SDL_INIT_GAMECONTROLLER | SDL.SDL_INIT_VIDEO) < 0)
+            if (SDL.SDL_Init(SDL.SDL_INIT_GAMECONTROLLER) < 0)
             {
                 System.Diagnostics.Debug.WriteLine($"SDL initialization failed: {SDL.SDL_GetError()}");
                 return;

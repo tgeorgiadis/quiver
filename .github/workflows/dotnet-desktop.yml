@@ -32,7 +32,7 @@ jobs:
       run: dotnet restore Quiver.sln
 
     - name: Test with coverage
-      run: dotnet test Quiver.sln -c Release --no-restore --collect:"XPlat Code Coverage" --results-directory "${{ runner.temp }}/coverage"
+      run: dotnet test Quiver.sln -c Release --no-restore --logger "console;verbosity=normal" --blame-hang-timeout 5m --collect:"XPlat Code Coverage" --results-directory "${{ runner.temp }}/coverage"
 
     - name: Upload coverage report
       uses: actions/upload-artifact@v4

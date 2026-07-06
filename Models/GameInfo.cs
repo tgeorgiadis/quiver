@@ -997,7 +997,11 @@ namespace Quiver.Models
             }
         }
 
-        public async Task<bool> PerformActionAsync(HttpClient httpClient, string gamesFolder, AppSettings settings)
+        public async Task<bool> PerformActionAsync(
+            HttpClient httpClient,
+            string gamesFolder,
+            AppSettings settings,
+            IGameDownloadDialogs? dialogs = null)
         {
             if (string.IsNullOrEmpty(FolderName))
             {
@@ -1010,7 +1014,7 @@ namespace Quiver.Models
                 case GameStatus.NotInstalled:
                 case GameStatus.UpdateAvailable:
                     await GameDownloadInstallService.DownloadAndInstallAsync(
-                        this, httpClient, gamesFolder, GetLatestRelease(), settings, _status);
+                        this, httpClient, gamesFolder, GetLatestRelease(), settings, _status, dialogs);
                     return false;
 
                 case GameStatus.Installed:
