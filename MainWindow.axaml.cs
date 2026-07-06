@@ -1341,6 +1341,7 @@ namespace Quiver
         {
             if (sender is Button button && button.DataContext is GameInfo game)
             {
+                var launched = false;
                 try
                 {
                     if (game.Status == GameStatus.UpdateAvailable)
@@ -1349,7 +1350,7 @@ namespace Quiver
                         return;
                     }
 
-                    await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
+                    launched = await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
                     // Check if multiple downloads need selection
                     if ((game.Status == GameStatus.NotInstalled || game.Status == GameStatus.UpdateAvailable) &&
@@ -1378,10 +1379,9 @@ namespace Quiver
                 {
                     await ShowMessageBoxAsync($"Failed to perform action for {game.Name}: {ex.Message}", "Action Error");
                 }
-                if (_settings.CloseAfterLaunch)
-                {
+
+                if (launched && _settings.CloseAfterLaunch)
                     Close();
-                }
             }
         }
 
@@ -6896,6 +6896,7 @@ namespace Quiver
             if (anchor == null)
                 return;
 
+            var launched = false;
             try
             {
                 if (game.Status == GameStatus.UpdateAvailable)
@@ -6904,7 +6905,7 @@ namespace Quiver
                     return;
                 }
 
-                await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
+                launched = await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
                 if ((game.Status == GameStatus.NotInstalled || game.Status == GameStatus.UpdateAvailable) &&
                     game.HasMultipleDownloads && game.SelectedDownload == null)
@@ -6928,7 +6929,7 @@ namespace Quiver
                 await ShowMessageBoxAsync($"Failed to perform action for {game.Name}: {ex.Message}", "Action Error");
             }
 
-            if (_settings.CloseAfterLaunch)
+            if (launched && _settings.CloseAfterLaunch)
                 Close();
         }
 

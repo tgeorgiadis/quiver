@@ -75,7 +75,7 @@ jobs:
       if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
       shell: pwsh
       run: |
-        Copy-Item apps.json, version.txt -Destination publish/win-x64/
+        Copy-Item version.txt -Destination publish/win-x64/
         Compress-Archive -Path publish/win-x64/* -DestinationPath Quiver-Windows-x64.zip
 
     - name: Upload Windows release archive
@@ -129,8 +129,8 @@ jobs:
     - name: Package Linux release archives
       if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
       run: |
-        cp apps.json version.txt publish/linux-x64/
-        cp apps.json version.txt publish/linux-arm64/
+        cp version.txt publish/linux-x64/
+        cp version.txt publish/linux-arm64/
         tar -czf Quiver-Linux-X64.tar.gz -C publish/linux-x64 .
         tar -czf Quiver-Linux-ARM64.tar.gz -C publish/linux-arm64 .
 
@@ -182,7 +182,7 @@ jobs:
         
         # Copy all published files to the app bundle
         cp -r publish/osx-x64/* "$APP_BUNDLE/Contents/MacOS/"
-        cp apps.json version.txt "$APP_BUNDLE/Contents/MacOS/"
+        cp version.txt "$APP_BUNDLE/Contents/MacOS/"
         
         # Make the executable... executable
         chmod +x "$APP_BUNDLE/Contents/MacOS/${{ env.App_Name }}"
@@ -200,9 +200,9 @@ jobs:
             <key>CFBundleName</key>
             <string>${{ env.App_Name }}</string>
             <key>CFBundleVersion</key>
-            <string>2.3.0</string>
+            <string>2.3.1</string>
             <key>CFBundleShortVersionString</key>
-            <string>2.3.0</string>
+            <string>2.3.1</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>LSMinimumSystemVersion</key>

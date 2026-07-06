@@ -997,12 +997,12 @@ namespace Quiver.Models
             }
         }
 
-        public async Task PerformActionAsync(HttpClient httpClient, string gamesFolder, AppSettings settings)
+        public async Task<bool> PerformActionAsync(HttpClient httpClient, string gamesFolder, AppSettings settings)
         {
             if (string.IsNullOrEmpty(FolderName))
             {
                 await ShowMessageBoxAsync("App configuration is invalid (missing folder name).", "Configuration Error");
-                return;
+                return false;
             }
 
             switch (Status)
@@ -1011,11 +1011,13 @@ namespace Quiver.Models
                 case GameStatus.UpdateAvailable:
                     await GameDownloadInstallService.DownloadAndInstallAsync(
                         this, httpClient, gamesFolder, GetLatestRelease(), settings, _status);
-                    break;
+                    return false;
 
                 case GameStatus.Installed:
-                    await GameLaunchService.LaunchAsync(this, gamesFolder);
-                    break;
+                    return await GameLaunchService.LaunchAsync(this, gamesFolder);
+
+                default:
+                    return false;
             }
         }
 

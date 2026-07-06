@@ -7,12 +7,12 @@ namespace Quiver.Services;
 
 public static class GameLaunchService
 {
-    public static async Task LaunchAsync(GameInfo game, string gamesFolder)
+    public static async Task<bool> LaunchAsync(GameInfo game, string gamesFolder)
     {
         if (string.IsNullOrEmpty(game.FolderName))
         {
             await GameDialogService.ShowMessageBoxAsync("Cannot launch game: folder name is not configured.", "Configuration Error");
-            return;
+            return false;
         }
 
         try
@@ -22,7 +22,7 @@ public static class GameLaunchService
             if (!Directory.Exists(gamePath))
             {
                 await GameDialogService.ShowMessageBoxAsync($"App directory not found: {gamePath}", "Directory Not Found");
-                return;
+                return false;
             }
 
             GameInstallationService.EnsureExecutableAtRoot(gamePath, game.GetInstallationOptions());
@@ -47,7 +47,7 @@ public static class GameLaunchService
                 await GameDialogService.ShowMessageBoxAsync(
                     $"No executable found for {game.Name} in:\n{gamePath}\n\nThe game may not have installed correctly.",
                     "Executable Not Found");
-                return;
+                return false;
             }
 
             var settings = AppSettings.Load();
@@ -58,7 +58,7 @@ public static class GameLaunchService
                     "Only a Windows executable was found, but no Linux Windows-runner is configured or detected.\n\n" +
                     "Install Wine/Proton or set a custom command in Settings to launch Windows apps.",
                     "Windows Runner Not Found");
-                return;
+                return false;
             }
 
             game.AvailableExecutables = executables;
@@ -71,7 +71,7 @@ public static class GameLaunchService
             {
                 game.SelectedExecutable = null;
                 game.NotifyMultipleExecutablesChanged();
-                return;
+                return false;
             }
 
             var executablePath = !string.IsNullOrEmpty(game.SelectedExecutable) &&
@@ -103,7 +103,7 @@ public static class GameLaunchService
                     await GameDialogService.ShowMessageBoxAsync(
                         "A Linux Windows-runner was detected earlier but is no longer available.",
                         "Windows Runner Error");
-                    return;
+                    return false;
                 }
 
                 startInfo.UseShellExecute = false;
@@ -128,15 +128,27 @@ public static class GameLaunchService
                 : (Path.GetDirectoryName(executablePath) ?? gamePath));
 
             var gameProcess = Process.Start(startInfo);
+            if (gameProcess == null)
+            {
+                await GameDialogService.ShowMessageBoxAsync(
+                    $"Failed to start {game.Name}. The operating system did not create a process.",
+                    "Launch Error");
+                return false;
+            }
+
             game.RaiseGameProcessStarted(gameProcess);
 
             if (game.GameManager != null && Avalonia.Application.Current != null)
                 game.GameManager.OnPropertyChanged(nameof(GameManager.Games));
+
+            return true;
         }
         catch (Exception ex)
         {
             if (Avalonia.Application.Current != null)
                 await GameDialogService.ShowMessageBoxAsync($"Error launching {game.Name}: {ex.Message}", "Launch Error");
+
+            return false;
         }
     }
 

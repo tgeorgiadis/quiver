@@ -1023,6 +1023,7 @@ public class App : Application, INotifyPropertyChanged
     {
         string updaterScriptPath = Path.Combine(Path.GetTempPath(), "Quiver_Updater.cmd");
         string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
+        var preservedEntryCheckSubroutine = UpdaterUserDataPreservation.BuildWindowsPreservedEntryCheckSubroutine();
 
         string scriptContent = $@"@echo off
 echo Quiver Updater - Version {latestRelease.tag_name}
@@ -1048,20 +1049,35 @@ set ""appDir={currentAppDirectory}""
 set ""backupDir={backupDir}""
 set ""updateDir={tempUpdateFolder}""
 
-if not exist ""%backupDir%"" mkdir ""%backupDir%""
+if not exist ""%backupDir%"" mkdir ""%backupDir""
 
 echo Backing up current version...
 for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
+    call :IsPreservedUserDataEntry %%i
+    if not errorlevel 1 goto continue_backup
     if exist ""%appDir%\%%i\\"" (
         xcopy ""%appDir%\%%i"" ""%backupDir%\%%i\\"" /S /E /Y /I >nul 2>&1
     ) else if exist ""%appDir%\%%i"" (
         copy /Y ""%appDir%\%%i"" ""%backupDir%\"" >nul 2>&1
     )
+    :continue_backup
 )
 
 echo Applying update...
-xcopy ""%updateDir%\*"" ""%appDir%"" /S /E /Y /I >nul 2>&1
-if errorlevel 1 (
+set ""updateFailed=0""
+for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
+    call :IsPreservedUserDataEntry %%i
+    if not errorlevel 1 goto continue_apply
+    if exist ""%updateDir%\%%i\\"" (
+        xcopy ""%updateDir%\%%i"" ""%appDir%\%%i\\"" /S /E /Y /I >nul 2>&1
+        if errorlevel 1 set ""updateFailed=1""
+    ) else (
+        copy /Y ""%updateDir%\%%i"" ""%appDir%\"" >nul 2>&1
+        if errorlevel 1 set ""updateFailed=1""
+    )
+    :continue_apply
+)
+if ""%updateFailed%""==""1"" (
     echo Update failed! Restoring backup...
     xcopy ""%backupDir%\*"" ""%appDir%"" /S /E /Y /I >nul 2>&1
     echo Backup restored. Update failed.
@@ -1075,6 +1091,8 @@ echo {{""CurrentVersion"":""{latestRelease.tag_name}"",""LastCheckTime"":""{Date
 echo Update completed successfully!
 echo Restarting Quiver...
 start """" ""{applicationExecutable}""
+
+{preservedEntryCheckSubroutine}
 
 :cleanup
 echo Cleaning up temporary files...
@@ -1112,6 +1130,7 @@ del ""%~f0""
 
         bool isMacAppBundle = RuntimeInformation.IsOSPlatform(OSPlatform.OSX) &&
                              Directory.GetDirectories(tempUpdateFolder, "*.app", SearchOption.TopDirectoryOnly).Any();
+        var preservedCasePattern = UpdaterUserDataPreservation.BuildUnixPreserveCasePattern();
 
         string scriptContent = $@"#!/bin/bash
 echo ""Quiver Updater - Version {latestRelease.tag_name}""
@@ -1140,6 +1159,9 @@ mkdir -p ""$backupDir""
 echo ""Backing up current version...""
 if [ -d ""$appDir"" ]; then
     find ""$updateDir"" -mindepth 1 -maxdepth 1 -exec basename {{}} \; | while IFS= read -r entry; do
+        case ""$entry"" in
+            {preservedCasePattern}) continue ;;
+        esac
         if [ -e ""$appDir/$entry"" ]; then
             cp -R ""$appDir/$entry"" ""$backupDir/"" 2>/dev/null || true
         fi
@@ -1147,9 +1169,20 @@ if [ -d ""$appDir"" ]; then
 fi
 
 echo ""Applying update...""
-if cp -r ""$updateDir""/* ""$appDir""/ 2>/dev/null; then
-    echo ""Update applied successfully""
-else
+updateFailed=0
+for entryPath in ""$updateDir""/*; do
+    [ -e ""$entryPath"" ] || continue
+    entry=$(basename ""$entryPath"")
+    case ""$entry"" in
+        {preservedCasePattern}) continue ;;
+    esac
+    if ! cp -R ""$entryPath"" ""$appDir/"" 2>/dev/null; then
+        updateFailed=1
+        break
+    fi
+done
+
+if [ ""$updateFailed"" -eq 1 ]; then
     echo ""Update failed! Restoring backup...""
     cp -r ""$backupDir""/* ""$appDir""/ 2>/dev/null || true
     echo ""Backup restored. Update failed.""
