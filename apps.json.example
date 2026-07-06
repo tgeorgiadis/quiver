@@ -1,3 +1,10 @@
 {
-  "apps": []
+  "apps": [
+    {
+      "name": "Example App",
+      "repository": "username/example-app-repo",
+      "folderName": "ExampleApp",
+      "appIconUrl": null
+    }
+  ]
 }

@@ -930,28 +930,28 @@ if not exist ""%backupDir%"" mkdir ""%backupDir%""
 echo Backing up files replaced by this update...
 for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
     call :IsPreservedUserDataEntry %%i
-    if not errorlevel 1 goto continue_backup
-    if exist ""%appDir%\%%i\\"" (
-        xcopy ""%appDir%\%%i"" ""%backupDir%\%%i\\"" /S /E /Y /I >nul 2>&1
-    ) else if exist ""%appDir%\%%i"" (
-        copy /Y ""%appDir%\%%i"" ""%backupDir%\"" >nul 2>&1
+    if errorlevel 1 (
+        if exist ""%appDir%\%%i\\"" (
+            xcopy ""%appDir%\%%i"" ""%backupDir%\%%i\\"" /S /E /Y /I >nul 2>&1
+        ) else if exist ""%appDir%\%%i"" (
+            copy /Y ""%appDir%\%%i"" ""%backupDir%\"" >nul 2>&1
+        )
     )
-    :continue_backup
 )
 
 echo Applying update...
 set ""updateFailed=0""
 for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
     call :IsPreservedUserDataEntry %%i
-    if not errorlevel 1 goto continue_apply
-    if exist ""%updateDir%\%%i\\"" (
-        xcopy ""%updateDir%\%%i"" ""%appDir%\%%i\\"" /S /E /Y /I >nul 2>&1
-        if errorlevel 1 set ""updateFailed=1""
-    ) else (
-        copy /Y ""%updateDir%\%%i"" ""%appDir%\"" >nul 2>&1
-        if errorlevel 1 set ""updateFailed=1""
+    if errorlevel 1 (
+        if exist ""%updateDir%\%%i\\"" (
+            xcopy ""%updateDir%\%%i"" ""%appDir%\%%i\\"" /S /E /Y /I >nul 2>&1
+            if errorlevel 1 set ""updateFailed=1""
+        ) else (
+            copy /Y ""%updateDir%\%%i"" ""%appDir%\"" >nul 2>&1
+            if errorlevel 1 set ""updateFailed=1""
+        )
     )
-    :continue_apply
 )
 if ""%updateFailed%""==""1"" (
     echo Update failed! Restoring backup...
@@ -963,6 +963,7 @@ if ""%updateFailed%""==""1"" (
 echo {{""CurrentVersion"":""{release.tag_name}"",""LastCheckTime"":""{DateTime.UtcNow:o}"",""LastKnownVersion"":""{release.tag_name}"",""ETag"":"""",""UpdateAvailable"":false}} > ""{updateCheckFilePath}""
 echo Update completed successfully.
 start """" ""{applicationExecutable}""
+goto cleanup
 
 {preservedEntryCheckSubroutine}
 

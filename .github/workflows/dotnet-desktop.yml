@@ -76,6 +76,7 @@ jobs:
       shell: pwsh
       run: |
         Copy-Item version.txt -Destination publish/win-x64/
+        Remove-Item publish/win-x64/apps.json -ErrorAction SilentlyContinue
         Compress-Archive -Path publish/win-x64/* -DestinationPath Quiver-Windows-x64.zip
 
     - name: Upload Windows release archive
@@ -131,6 +132,7 @@ jobs:
       run: |
         cp version.txt publish/linux-x64/
         cp version.txt publish/linux-arm64/
+        rm -f publish/linux-x64/apps.json publish/linux-arm64/apps.json
         tar -czf Quiver-Linux-X64.tar.gz -C publish/linux-x64 .
         tar -czf Quiver-Linux-ARM64.tar.gz -C publish/linux-arm64 .
 
@@ -180,9 +182,11 @@ jobs:
         mkdir -p "$APP_BUNDLE/Contents/MacOS"
         mkdir -p "$APP_BUNDLE/Contents/Resources"
         
-        # Copy all published files to the app bundle
+        # Copy all published files to the app bundle (user library is created at runtime, not shipped)
+        rm -f publish/osx-x64/apps.json
         cp -r publish/osx-x64/* "$APP_BUNDLE/Contents/MacOS/"
         cp version.txt "$APP_BUNDLE/Contents/MacOS/"
+        rm -f "$APP_BUNDLE/Contents/MacOS/apps.json"
         
         # Make the executable... executable
         chmod +x "$APP_BUNDLE/Contents/MacOS/${{ env.App_Name }}"
@@ -200,9 +204,9 @@ jobs:
             <key>CFBundleName</key>
             <string>${{ env.App_Name }}</string>
             <key>CFBundleVersion</key>
-            <string>2.3.1</string>
+            <string>2.3.2</string>
             <key>CFBundleShortVersionString</key>
-            <string>2.3.1</string>
+            <string>2.3.2</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>LSMinimumSystemVersion</key>

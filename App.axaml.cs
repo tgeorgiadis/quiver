@@ -1054,28 +1054,28 @@ if not exist ""%backupDir%"" mkdir ""%backupDir""
 echo Backing up current version...
 for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
     call :IsPreservedUserDataEntry %%i
-    if not errorlevel 1 goto continue_backup
-    if exist ""%appDir%\%%i\\"" (
-        xcopy ""%appDir%\%%i"" ""%backupDir%\%%i\\"" /S /E /Y /I >nul 2>&1
-    ) else if exist ""%appDir%\%%i"" (
-        copy /Y ""%appDir%\%%i"" ""%backupDir%\"" >nul 2>&1
+    if errorlevel 1 (
+        if exist ""%appDir%\%%i\\"" (
+            xcopy ""%appDir%\%%i"" ""%backupDir%\%%i\\"" /S /E /Y /I >nul 2>&1
+        ) else if exist ""%appDir%\%%i"" (
+            copy /Y ""%appDir%\%%i"" ""%backupDir%\"" >nul 2>&1
+        )
     )
-    :continue_backup
 )
 
 echo Applying update...
 set ""updateFailed=0""
 for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
     call :IsPreservedUserDataEntry %%i
-    if not errorlevel 1 goto continue_apply
-    if exist ""%updateDir%\%%i\\"" (
-        xcopy ""%updateDir%\%%i"" ""%appDir%\%%i\\"" /S /E /Y /I >nul 2>&1
-        if errorlevel 1 set ""updateFailed=1""
-    ) else (
-        copy /Y ""%updateDir%\%%i"" ""%appDir%\"" >nul 2>&1
-        if errorlevel 1 set ""updateFailed=1""
+    if errorlevel 1 (
+        if exist ""%updateDir%\%%i\\"" (
+            xcopy ""%updateDir%\%%i"" ""%appDir%\%%i\\"" /S /E /Y /I >nul 2>&1
+            if errorlevel 1 set ""updateFailed=1""
+        ) else (
+            copy /Y ""%updateDir%\%%i"" ""%appDir%\"" >nul 2>&1
+            if errorlevel 1 set ""updateFailed=1""
+        )
     )
-    :continue_apply
 )
 if ""%updateFailed%""==""1"" (
     echo Update failed! Restoring backup...
@@ -1091,6 +1091,7 @@ echo {{""CurrentVersion"":""{latestRelease.tag_name}"",""LastCheckTime"":""{Date
 echo Update completed successfully!
 echo Restarting Quiver...
 start """" ""{applicationExecutable}""
+goto cleanup
 
 {preservedEntryCheckSubroutine}
 
