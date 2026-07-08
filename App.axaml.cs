@@ -241,6 +241,29 @@ public class App : Application, INotifyPropertyChanged
             httpClient);
     }
 
+    public async Task ApplyPendingLauncherUpdateAsync()
+    {
+        var launcherUpdateService = new LauncherUpdateService();
+        if (!launcherUpdateService.IsLauncherUpdatePending())
+            return;
+
+        string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
+        string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
+        UpdateCheckInfo updateCheckInfo = await LoadUpdateCheckInfo(updateCheckFilePath);
+
+        if (string.IsNullOrWhiteSpace(updateCheckInfo.LastKnownVersion) ||
+            !IsNewerVersion(updateCheckInfo.LastKnownVersion, updateCheckInfo.CurrentVersion))
+        {
+            return;
+        }
+
+        using var httpClient = CreateUpdateHttpClient();
+        await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            await ApplyLauncherUpdateAsync(currentAppDirectory, updateCheckInfo, httpClient);
+        });
+    }
+
     private static ManualLauncherCheckResult BuildManualLauncherResult(
         string installedVersion,
         bool checkSucceeded = true,
@@ -521,33 +544,48 @@ public class App : Application, INotifyPropertyChanged
     {
         await Dispatcher.UIThread.InvokeAsync(async () =>
         {
+            var message = AppUpdateReviewMessages.FormatQuiverOnlyUpdateMessage(versionTag);
             bool accepted = await ShowMessageBoxWithChoiceAsync(
-                $"Launcher update {versionTag} is available!\n\nWould you like to update now?",
-                "Update Available");
+                message,
+                "Update Available",
+                confirmText: "Update Quiver",
+                dismissText: "Not now");
 
             if (!accepted)
                 return;
 
-            try
-            {
-                GitHubRelease? latestRelease = await FetchLatestReleaseForUpdateAsync(httpClient);
-                if (latestRelease != null)
-                {
-                    await DownloadAndApplyUpdate(latestRelease, currentAppDirectory, updateCheckInfo);
-                }
-                else
-                {
-                    await ShowMessageBoxAsync("Failed to download update: could not fetch release information.", "Update Error");
-                }
-            }
-            catch (Exception ex)
-            {
-                await ShowMessageBoxAsync($"Failed to download update: {ex.Message}", "Update Error");
-            }
+            await ApplyLauncherUpdateAsync(currentAppDirectory, updateCheckInfo, httpClient);
         });
     }
 
-    private async Task<bool> ShowMessageBoxWithChoiceAsync(string message, string title)
+    private async Task ApplyLauncherUpdateAsync(
+        string currentAppDirectory,
+        UpdateCheckInfo updateCheckInfo,
+        HttpClient httpClient)
+    {
+        try
+        {
+            GitHubRelease? latestRelease = await FetchLatestReleaseForUpdateAsync(httpClient);
+            if (latestRelease != null)
+            {
+                await DownloadAndApplyUpdate(latestRelease, currentAppDirectory, updateCheckInfo);
+            }
+            else
+            {
+                await ShowMessageBoxAsync("Failed to download update: could not fetch release information.", "Update Error");
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowMessageBoxAsync($"Failed to download update: {ex.Message}", "Update Error");
+        }
+    }
+
+    private async Task<bool> ShowMessageBoxWithChoiceAsync(
+        string message,
+        string title,
+        string confirmText = "Yes",
+        string dismissText = "No")
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
             desktop.MainWindow != null)
@@ -578,13 +616,13 @@ public class App : Application, INotifyPropertyChanged
                         {
                             new Button
                             {
-                                Content = "Yes",
+                                Content = confirmText,
                                 Margin = new Thickness(0, 0, 10, 0),
                                 MinWidth = 80
                             },
                             new Button
                             {
-                                Content = "No",
+                                Content = dismissText,
                                 MinWidth = 80
                             }
                         }

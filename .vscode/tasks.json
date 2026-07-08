@@ -27,9 +27,11 @@
         "test",
         "${workspaceFolder}/Quiver.sln",
         "-c",
-        "Debug",
-        "--verbosity",
-        "minimal"
+        "Release",
+        "--filter",
+        "Category!=Slow",
+        "--logger",
+        "console;verbosity=normal"
       ],
       "group": "test",
       "problemMatcher": "$msCompile"

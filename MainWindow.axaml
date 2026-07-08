@@ -1997,6 +1997,21 @@
 												   HorizontalAlignment="Center"
 												   VerticalAlignment="Center"/>
 									</Border>
+									<Border Background="{DynamicResource ThemeSuccess}"
+											CornerRadius="8"
+											Width="16"
+											Height="16"
+											HorizontalAlignment="Right"
+											VerticalAlignment="Top"
+											Margin="0,-2,-2,0"
+											IsVisible="{Binding UpdatesUpToDateBadgeVisible}">
+										<TextBlock Text="✓"
+												   FontSize="10"
+												   FontWeight="Bold"
+												   Foreground="White"
+												   HorizontalAlignment="Center"
+												   VerticalAlignment="Center"/>
+									</Border>
 								</Grid>
 							</Button>
 

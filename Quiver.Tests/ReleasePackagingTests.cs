@@ -1,11 +1,22 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using FluentAssertions;
+using Xunit.Abstractions;
 
 namespace Quiver.Tests;
 
 public class ReleasePackagingTests
 {
+    private static readonly TimeSpan PublishTimeout = TimeSpan.FromMinutes(8);
+
+    private readonly ITestOutputHelper _output;
+
+    public ReleasePackagingTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     private static string RepoRoot => Path.GetFullPath(Path.Combine(
         AppContext.BaseDirectory,
         "..", "..", "..", ".."));
@@ -58,10 +69,13 @@ public class ReleasePackagingTests
     }
 
     [Fact]
+    [Trait("Category", "Slow")]
     public async Task Publish_output_does_not_include_apps_json()
     {
         var publishDir = Path.Combine(Path.GetTempPath(), "QuiverPublishTest", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(publishDir);
+
+        Process? process = null;
 
         try
         {
@@ -80,19 +94,68 @@ public class ReleasePackagingTests
                 CreateNoWindow = true,
             };
 
-            using var process = Process.Start(startInfo);
+            _output.WriteLine($"Starting publish (timeout {PublishTimeout.TotalMinutes:F0} minutes)...");
+            _output.WriteLine(startInfo.FileName + " " + startInfo.Arguments);
+
+            process = Process.Start(startInfo);
             process.Should().NotBeNull();
 
-            var stderr = await process!.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            var stdout = new StringBuilder();
+            var stderr = new StringBuilder();
 
-            process.ExitCode.Should().Be(0, because: stderr);
+            process!.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data == null)
+                    return;
+
+                stdout.AppendLine(e.Data);
+                _output.WriteLine("[stdout] " + e.Data);
+            };
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data == null)
+                    return;
+
+                stderr.AppendLine(e.Data);
+                _output.WriteLine("[stderr] " + e.Data);
+            };
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            using var timeoutCts = new CancellationTokenSource(PublishTimeout);
+
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!process.HasExited)
+            {
+                throw new TimeoutException(
+                    $"dotnet publish did not finish within {PublishTimeout.TotalMinutes:F0} minutes.");
+            }
+
+            process.ExitCode.Should().Be(0, because: stderr.ToString());
 
             File.Exists(Path.Combine(publishDir, "apps.json")).Should().BeFalse(
                 "release publish output must not ship a blank apps.json that could wipe user libraries on update");
         }
         finally
         {
+            if (process is { HasExited: false })
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort cleanup after timeout or test failure.
+                }
+            }
+
+            process?.Dispose();
+
             if (Directory.Exists(publishDir))
                 Directory.Delete(publishDir, true);
         }

@@ -59,16 +59,22 @@ If a previous run already downloaded a release into your output folder, delete `
 
 ### Automated tests
 
-Run the xUnit test suite:
+Fast local run (excludes the slow publish integration test; finishes in seconds):
 
 ```powershell
-dotnet test Quiver.sln
+dotnet test Quiver.sln -c Release --filter "Category!=Slow" --logger "console;verbosity=normal"
 ```
 
-Release configuration matches CI:
+Full suite including publish integration test (matches CI; the publish test can take several minutes):
 
 ```powershell
 dotnet test Quiver.sln -c Release
+```
+
+Run only the slow publish packaging test:
+
+```powershell
+dotnet test Quiver.sln -c Release --filter "Category=Slow"
 ```
 
 Test categories include catalog merge and sync, settings store round-trip, launcher version helpers, Windows runner command building, download asset selection, game status checks, ViewModel sorting/catalog helpers, GameManager hide/filter behavior, and Avalonia headless smoke tests.
@@ -76,7 +82,7 @@ Test categories include catalog merge and sync, settings store round-trip, launc
 Collect coverage locally with:
 
 ```powershell
-dotnet test Quiver.sln -c Release --collect:"XPlat Code Coverage"
+dotnet test Quiver.sln -c Release --filter "Category!=Slow" --collect:"XPlat Code Coverage"
 ```
 
 ## Configuration

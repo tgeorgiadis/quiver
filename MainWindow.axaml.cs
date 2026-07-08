@@ -71,6 +71,7 @@ namespace Quiver
         private bool _isCheckingUpdates;
         private int _pendingUpdatesCount;
         private DateTime? _lastUpdateCheckTime;
+        private string? _lastLauncherCheckNote;
 
         public bool IsCheckingUpdates
         {
@@ -101,6 +102,12 @@ namespace Quiver
         }
 
         public bool UpdatesBadgeVisible => PendingUpdatesCount > 0 && !IsCheckingUpdates;
+
+        public bool UpdatesUpToDateBadgeVisible =>
+            !IsCheckingUpdates &&
+            PendingUpdatesCount == 0 &&
+            LastUpdateCheckTime != null &&
+            string.IsNullOrEmpty(_lastLauncherCheckNote);
 
         public string UpdatesBadgeText =>
             PendingUpdatesCount > 9 ? "9+" : PendingUpdatesCount.ToString();
@@ -139,6 +146,13 @@ namespace Quiver
                         : $"Check for Quiver and app updates · {updateLabel} · {lastChecked}";
                 }
 
+                if (!string.IsNullOrEmpty(_lastLauncherCheckNote))
+                {
+                    return string.IsNullOrEmpty(lastChecked)
+                        ? $"Check for Quiver and app updates · {_lastLauncherCheckNote}"
+                        : $"Check for Quiver and app updates · {_lastLauncherCheckNote} · {lastChecked}";
+                }
+
                 if (!string.IsNullOrEmpty(lastChecked))
                     return $"Check for Quiver and app updates · Up to date · {lastChecked}";
 
@@ -149,6 +163,7 @@ namespace Quiver
         private void NotifyUpdateCheckUiProperties()
         {
             OnPropertyChanged(nameof(UpdatesBadgeVisible));
+            OnPropertyChanged(nameof(UpdatesUpToDateBadgeVisible));
             OnPropertyChanged(nameof(UpdatesBadgeText));
             OnPropertyChanged(nameof(CheckForUpdatesIconOpacity));
             OnPropertyChanged(nameof(CheckForUpdatesToolTip));
@@ -1714,6 +1729,209 @@ namespace Quiver
             UpdateContinueButtonState();
         }
 
+        private async Task ShowAppUpdatesReviewDialogAsync()
+        {
+            if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+                desktop.MainWindow == null)
+            {
+                return;
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                var dialog = new Window
+                {
+                    Title = "App Updates",
+                    MinWidth = 480,
+                    MaxWidth = 560,
+                    SizeToContent = SizeToContent.Height,
+                    MaxHeight = 520,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    CanResize = true,
+                };
+
+                var listPanel = new StackPanel { Spacing = 8 };
+                var scrollViewer = new ScrollViewer
+                {
+                    MaxHeight = 360,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    Content = listPanel,
+                };
+
+                var updateAllButton = new Button
+                {
+                    Content = "Update All",
+                    MinWidth = 100,
+                    Margin = new Thickness(0, 0, 10, 0),
+                };
+                var closeButton = new Button
+                {
+                    Content = "Close",
+                    MinWidth = 80,
+                };
+
+                void RebuildList()
+                {
+                    listPanel.Children.Clear();
+                    var pending = GetPendingAppUpdates();
+                    if (pending.Count == 0)
+                    {
+                        dialog.Close();
+                        return;
+                    }
+
+                    foreach (var game in pending)
+                    {
+                        var row = new Grid
+                        {
+                            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                            Margin = new Thickness(0, 0, 0, 4),
+                        };
+
+                        var versionText = !string.IsNullOrWhiteSpace(game.InstalledVersion) &&
+                                          !string.IsNullOrWhiteSpace(game.LatestVersion)
+                            ? $"{game.InstalledVersion} → {game.LatestVersion}"
+                            : game.StatusText;
+
+                        var infoPanel = new StackPanel { Spacing = 2 };
+                        infoPanel.Children.Add(new TextBlock
+                        {
+                            Text = game.Name ?? "Unknown app",
+                            FontWeight = FontWeight.Bold,
+                            TextWrapping = TextWrapping.Wrap,
+                        });
+                        infoPanel.Children.Add(new TextBlock
+                        {
+                            Text = versionText,
+                            FontSize = 12,
+                            Opacity = 0.8,
+                            TextWrapping = TextWrapping.Wrap,
+                        });
+                        Grid.SetColumn(infoPanel, 0);
+                        row.Children.Add(infoPanel);
+
+                        var updateButton = new Button
+                        {
+                            Content = "Update",
+                            MinWidth = 72,
+                            Margin = new Thickness(8, 0, 0, 0),
+                            VerticalAlignment = VerticalAlignment.Center,
+                        };
+                        var skipButton = new Button
+                        {
+                            Content = "Skip",
+                            MinWidth = 72,
+                            Margin = new Thickness(8, 0, 0, 0),
+                            VerticalAlignment = VerticalAlignment.Center,
+                        };
+
+                        var capturedGame = game;
+                        updateButton.Click += async (_, _) =>
+                        {
+                            updateButton.IsEnabled = false;
+                            skipButton.IsEnabled = false;
+                            updateAllButton.IsEnabled = false;
+                            try
+                            {
+                                await HandleUpdateNowAsync(updateButton, capturedGame);
+                                RefreshUpdateCheckStatus();
+                                NotifyUpdateCheckUiProperties();
+                                RebuildList();
+                            }
+                            finally
+                            {
+                                updateAllButton.IsEnabled = true;
+                            }
+                        };
+
+                        skipButton.Click += async (_, _) =>
+                        {
+                            updateButton.IsEnabled = false;
+                            skipButton.IsEnabled = false;
+                            updateAllButton.IsEnabled = false;
+                            try
+                            {
+                                await HandleSkipUpdateAsync(capturedGame);
+                                RefreshUpdateCheckStatus();
+                                NotifyUpdateCheckUiProperties();
+                                RebuildList();
+                            }
+                            finally
+                            {
+                                updateAllButton.IsEnabled = true;
+                            }
+                        };
+
+                        Grid.SetColumn(updateButton, 1);
+                        Grid.SetColumn(skipButton, 2);
+                        row.Children.Add(updateButton);
+                        row.Children.Add(skipButton);
+                        listPanel.Children.Add(row);
+                    }
+                }
+
+                updateAllButton.Click += async (_, _) =>
+                {
+                    updateAllButton.IsEnabled = false;
+                    closeButton.IsEnabled = false;
+                    try
+                    {
+                        foreach (var game in GetPendingAppUpdates().ToList())
+                        {
+                            if (game.Status != GameStatus.UpdateAvailable)
+                                continue;
+
+                            await HandleUpdateNowAsync(updateAllButton, game);
+                            RefreshUpdateCheckStatus();
+                            NotifyUpdateCheckUiProperties();
+                            RebuildList();
+
+                            if (!dialog.IsVisible)
+                                break;
+                        }
+                    }
+                    finally
+                    {
+                        updateAllButton.IsEnabled = true;
+                        closeButton.IsEnabled = true;
+                    }
+                };
+
+                closeButton.Click += (_, _) => dialog.Close();
+
+                RebuildList();
+                if (GetPendingAppUpdates().Count == 0)
+                    return;
+
+                var buttonRow = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 12, 0, 0),
+                    Children = { updateAllButton, closeButton },
+                };
+
+                dialog.Content = new StackPanel
+                {
+                    Margin = new Thickness(20),
+                    Spacing = 12,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "Select apps to update or skip.",
+                            TextWrapping = TextWrapping.Wrap,
+                        },
+                        scrollViewer,
+                        buttonRow,
+                    },
+                };
+
+                GamepadModalDialogNavigation.Attach(dialog);
+                await dialog.ShowDialog(desktop.MainWindow);
+            });
+        }
+
         private async Task HandleChangeVersionAsync(Control anchor, GameInfo game)
         {
             try
@@ -2659,21 +2877,28 @@ namespace Quiver
                 _settings.EnsureInitialized();
                 RefreshCatalogSourcesList();
 
-                if (_settings.AppCatalogSources.Any(s => s.Enabled && s.UpdateAvailable))
-                {
-                    await ShowMessageBoxAsync(
-                        FormatPendingReviewSourcesMessage(_settings, includeOpenPrompt: false),
-                        "Updates Available");
-                }
-                else
-                {
-                    await ShowMessageBoxAsync("Catalog sources refreshed.", "Refresh Complete");
-                }
+                await TryPromptCatalogReviewAsync();
             }
             catch (Exception ex)
             {
                 await ShowMessageBoxAsync($"Failed to refresh catalog sources: {ex.Message}", "Refresh Error");
             }
+        }
+
+        private async Task<bool> TryPromptCatalogReviewAsync()
+        {
+            if (!_settings.AppCatalogSources.Any(s => s.Enabled && s.UpdateAvailable))
+                return false;
+
+            var openCatalog = await ShowMessageBoxAsync(
+                FormatPendingReviewSourcesMessage(_settings, includeOpenPrompt: true),
+                "Catalog Updates",
+                true);
+
+            if (openCatalog)
+                await OpenAppCatalogForReviewAsync();
+
+            return true;
         }
 
         private async Task NotifyCatalogUpdatesIfNeededAsync()
@@ -2684,16 +2909,131 @@ namespace Quiver
                 return;
             }
 
-            if (_settings.AppCatalogSources.Any(s => s.Enabled && s.UpdateAvailable))
-            {
-                var openCatalog = await ShowMessageBoxAsync(
-                    FormatPendingReviewSourcesMessage(_settings, includeOpenPrompt: true),
-                    "Catalog Updates",
-                    true);
+            await TryPromptCatalogReviewAsync();
+        }
 
-                if (openCatalog)
-                    await OpenAppCatalogForReviewAsync();
-            }
+        private List<GameInfo> GetPendingAppUpdates() =>
+            Games
+                .Where(g => g.Status == GameStatus.UpdateAvailable)
+                .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        private async Task<bool> TryPromptAppUpdatesReviewAsync()
+        {
+            var pendingGames = GetPendingAppUpdates();
+            if (pendingGames.Count == 0)
+                return false;
+
+            var openReview = await ShowMessageBoxAsync(
+                AppUpdateReviewMessages.FormatPendingAppUpdatesMessage(pendingGames, includeOpenPrompt: true),
+                "App Updates",
+                true);
+
+            if (openReview)
+                await ShowAppUpdatesReviewDialogAsync();
+
+            return true;
+        }
+
+        private enum CombinedUpdateChoice
+        {
+            Dismiss,
+            UpdateQuiver,
+            UpdateApps,
+        }
+
+        private async Task<CombinedUpdateChoice> PromptCombinedUpdatesAsync(
+            string? launcherVersion,
+            IReadOnlyList<GameInfo> pendingApps)
+        {
+            return await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+                    desktop.MainWindow == null)
+                {
+                    return CombinedUpdateChoice.Dismiss;
+                }
+
+                var message = AppUpdateReviewMessages.FormatCombinedUpdatesMessage(launcherVersion, pendingApps);
+                var choice = CombinedUpdateChoice.Dismiss;
+
+                var messageBox = new Window
+                {
+                    Title = "Updates Available",
+                    MinWidth = 420,
+                    MaxWidth = 520,
+                    MaxHeight = 520,
+                    CanResize = true,
+                    SizeToContent = SizeToContent.Height,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                };
+
+                var scrollViewer = new ScrollViewer
+                {
+                    MaxHeight = 360,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    Content = new TextBlock
+                    {
+                        Text = message,
+                        TextWrapping = TextWrapping.Wrap,
+                        FontSize = 13,
+                    },
+                };
+
+                var updateQuiverButton = new Button
+                {
+                    Content = "Update Quiver",
+                    MinWidth = 110,
+                    Margin = new Thickness(0, 0, 8, 0),
+                };
+                var updateAppsButton = new Button
+                {
+                    Content = "Update Apps",
+                    MinWidth = 110,
+                    Margin = new Thickness(0, 0, 8, 0),
+                };
+                var dismissButton = new Button
+                {
+                    Content = "Not now",
+                    MinWidth = 80,
+                };
+
+                updateQuiverButton.Click += (_, _) =>
+                {
+                    choice = CombinedUpdateChoice.UpdateQuiver;
+                    messageBox.Close();
+                };
+                updateAppsButton.Click += (_, _) =>
+                {
+                    choice = CombinedUpdateChoice.UpdateApps;
+                    messageBox.Close();
+                };
+                dismissButton.Click += (_, _) =>
+                {
+                    choice = CombinedUpdateChoice.Dismiss;
+                    messageBox.Close();
+                };
+
+                messageBox.Content = new StackPanel
+                {
+                    Margin = new Thickness(20),
+                    Spacing = 16,
+                    Children =
+                    {
+                        scrollViewer,
+                        new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                            Children = { updateQuiverButton, updateAppsButton, dismissButton },
+                        },
+                    },
+                };
+
+                GamepadModalDialogNavigation.Attach(messageBox);
+                await messageBox.ShowDialog(desktop.MainWindow);
+                return choice;
+            });
         }
 
         private static string FormatPendingReviewSourcesMessage(AppSettings settings, bool includeOpenPrompt)
@@ -3403,13 +3743,32 @@ namespace Quiver
                 ApplySorting();
                 RefreshUpdateCheckStatus(DateTime.Now);
 
-                var appUpdatesPending = Games.Count(g => g.Status == GameStatus.UpdateAvailable);
-                await ShowMessageBoxAsync(
-                    UpdateCheckSummaryMessages.BuildManualCheckSummary(launcherResult, appUpdatesPending),
-                    "Update Check Complete");
+                _lastLauncherCheckNote = launcherResult.CheckSucceeded ? null : "Could not check Quiver";
+                NotifyUpdateCheckUiProperties();
 
-                if (launcherResult.LauncherUpdatePending && _app != null)
-                    await _app.PromptForPendingLauncherUpdateAsync();
+                var pendingApps = GetPendingAppUpdates();
+                var app = _app;
+                var launcherPending = launcherResult.LauncherUpdatePending && app != null;
+
+                if (launcherPending && pendingApps.Count > 0)
+                {
+                    var choice = await PromptCombinedUpdatesAsync(
+                        launcherResult.AvailableLauncherVersion,
+                        pendingApps);
+
+                    if (choice == CombinedUpdateChoice.UpdateQuiver)
+                        await app.ApplyPendingLauncherUpdateAsync();
+                    else if (choice == CombinedUpdateChoice.UpdateApps)
+                        await ShowAppUpdatesReviewDialogAsync();
+                }
+                else if (launcherPending)
+                {
+                    await app.PromptForPendingLauncherUpdateAsync();
+                }
+                else if (pendingApps.Count > 0)
+                {
+                    await TryPromptAppUpdatesReviewAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -5084,7 +5443,7 @@ namespace Quiver
             FormTitleText.Text = "Edit App Entry";
             NewGameNameTextBox.Text = game.Name ?? "";
             NewGameRepoTextBox.Text = game.Repository ?? "";
-            NewGameRepoTextBox.IsEnabled = false;
+            NewGameRepoTextBox.IsReadOnly = true;
             NewGameFolderTextBox.Text = game.FolderName ?? "";
             NewGameIconTextBox.Text = game.GameIconUrl ?? "";
             if (NewGameTagsTextBox != null)
@@ -5336,7 +5695,7 @@ namespace Quiver
             if (NewGameRepoTextBox != null)
             {
                 NewGameRepoTextBox.Text = "";
-                NewGameRepoTextBox.IsEnabled = true;
+                NewGameRepoTextBox.IsReadOnly = false;
             }
             if (NewGameFolderTextBox != null) NewGameFolderTextBox.Text = "";
             if (NewGameIconTextBox != null) NewGameIconTextBox.Text = "";
