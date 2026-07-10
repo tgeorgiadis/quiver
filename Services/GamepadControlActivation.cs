@@ -40,13 +40,10 @@ internal static class GamepadControlActivation
             return;
 
         item.Focus();
-
-        RaiseClickEvent(item, MenuItem.ClickEvent);
+        item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, RoutingStrategies.Bubble) { Source = item });
 
         if (item.Command?.CanExecute(null) == true)
             item.Command.Execute(null);
-
-        SimulateActivationKeys(item);
 
         CloseParentMenuIfOpen(item);
     }

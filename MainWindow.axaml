@@ -797,7 +797,6 @@
 					Padding="10"
 					Width="340"
 					Margin="0,0,16,16"
-					Classes.catalog-source-needs-review="{Binding NeedsReviewHighlight}"
 					Classes.gamepad-focused="{Binding IsGamepadFocused}">
 				<StackPanel Spacing="4">
 					<Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -1197,11 +1196,6 @@
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
-	<Style Selector="Border.catalog-source-needs-review">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeWarning}"/>
-		<Setter Property="BorderThickness" Value="2"/>
-	</Style>
-
 	<Style Selector="Button.catalog-review-pending">
 		<Setter Property="Background" Value="{DynamicResource ThemeWarning}"/>
 		<Setter Property="Foreground" Value="#18181b"/>
@@ -1408,8 +1402,22 @@
 	</Style>
 
 	<Style Selector="Button.scope-filter.selected">
-		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+		<Setter Property="Opacity" Value="0.95"/>
+	</Style>
+
+	<Style Selector="Button.scope-filter.gamepad-focused">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+	</Style>
+
+	<Style Selector="Button.scope-filter.selected.gamepad-focused">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 	
 	<Style Selector="Button.iconbutton">
@@ -1449,7 +1457,7 @@
 	                 Border.gamecardgrid.gamepad-focused,
 	                 Border.gamecardcompact.gamepad-focused,
 	                 Border.gamepad-focused">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 	</Style>
@@ -1510,10 +1518,16 @@
 	</Style>
 
 	<Style Selector="Button.settings:focus">
+		<!-- Selected/current page uses background only; orange ring is gamepad-focused. -->
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
-		<Setter Property="BorderThickness" Value="2"/>
+		<Setter Property="BorderBrush" Value="Transparent"/>
+		<Setter Property="BorderThickness" Value="0"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+	</Style>
+
+	<Style Selector="Button.settings:focus /template/ Border">
+		<Setter Property="BorderBrush" Value="Transparent"/>
+		<Setter Property="BorderThickness" Value="0"/>
 	</Style>
 
 	<Style Selector="Button.settings.gamepad-focused">
@@ -1523,12 +1537,41 @@
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 	</Style>
 
+	<Style Selector="Button.settings.gamepad-focused /template/ Border">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
 	<Style Selector="Button.iconbutton:focus">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
 	<Style Selector="CheckBox:focus /template/ Border#NormalRectangle">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="CheckBox.gamepad-focused /template/ Border#NormalRectangle">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="CheckBox.gamepad-focused">
+		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+	</Style>
+
+	<Style Selector="TextBox.gamepad-focused /template/ Border#PART_BorderElement">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="Slider.gamepad-focused /template/ Thumb">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="3"/>
+	</Style>
+
+	<Style Selector="ComboBox.gamepad-focused">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
@@ -1570,10 +1613,34 @@
 		<Setter Property="Cursor" Value="Hand"/>
 	</Style>
 
+	<!-- Keep all five settings tabs on one row -->
+	<Style Selector="TabControl#SettingsTabControl">
+		<Setter Property="Padding" Value="4,4,4,0"/>
+	</Style>
+	<Style Selector="TabControl#SettingsTabControl TabItem">
+		<Setter Property="Padding" Value="8,4"/>
+		<Setter Property="Margin" Value="1,8,1,0"/>
+		<Setter Property="FontSize" Value="11"/>
+		<Setter Property="MinHeight" Value="36"/>
+	</Style>
+
 	<Style Selector="TabItem:selected">
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 		<Setter Property="BorderThickness" Value="0"/>
+	</Style>
+
+	<Style Selector="TabItem.gamepad-focused">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="TabItem:selected.gamepad-focused">
+		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
 	<Style Selector="TabItem:pointerover /template/ ContentPresenter">
@@ -2271,7 +2338,6 @@
 				</Grid>
 
 				<TextBlock x:Name="GamepadHintsBar"
-						   Text="A Select · Y Options · X Back · D-pad Navigate"
 						   FontSize="11"
 						   Foreground="{DynamicResource ThemeTextSecondary}"
 						   HorizontalAlignment="Center"
@@ -2309,7 +2375,8 @@
 											   FontWeight="Bold"
 											   Foreground="{DynamicResource ThemeText}"
 											   VerticalAlignment="Center"/>
-									<Button Grid.Column="1"
+									<Button x:Name="CloseSettingsButton"
+											Grid.Column="1"
 											Classes="modern-icon"
 											Width="28"
 											Height="28"
@@ -2326,8 +2393,13 @@
 							<TabControl x:Name="SettingsTabControl"
 										Background="Transparent"
 										Foreground="{DynamicResource ThemeText}"
-										Padding="8,4,8,0"
+										Padding="4,4,4,0"
 										Margin="0">
+								<TabControl.ItemsPanel>
+									<ItemsPanelTemplate>
+										<StackPanel Orientation="Horizontal"/>
+									</ItemsPanelTemplate>
+								</TabControl.ItemsPanel>
 
 								<!-- General Tab -->
 								<TabItem Header="General">
@@ -2339,19 +2411,6 @@
 												   Foreground="{DynamicResource ThemeTextSecondary}"
 												   LetterSpacing="1"
 												   Margin="0,0,0,4"/>
-
-										<StackPanel Spacing="2">
-											<CheckBox x:Name="EnableGamepadCheckBox"
-													  Content="Enable Gamepad Input"
-													  Foreground="{DynamicResource ThemeText}"
-													  FontSize="13" FontWeight="SemiBold"
-													  Checked="EnableGamepadCheckBox_Checked"
-													  Unchecked="EnableGamepadCheckBox_Unchecked"/>
-											<TextBlock Text="Navigate apps with the D-pad or stick. The selected app is highlighted. A selects, Y opens options, X/B goes back."
-													   FontSize="11"
-													   Foreground="{DynamicResource ThemeTextSecondary}"
-													   Margin="20,0,0,0"/>
-										</StackPanel>
 
 										<StackPanel Spacing="2">
 											<CheckBox x:Name="CloseAfterLaunchCheckBox"
@@ -2466,6 +2525,84 @@
 													   Foreground="{DynamicResource ThemeTextSecondary}"
 													   Margin="0,0,0,4"/>
 										</StackPanel>
+
+									</StackPanel>
+								</TabItem>
+
+								<!-- Controls Tab -->
+								<TabItem Header="Controls">
+									<StackPanel Margin="16,12,16,16" Spacing="4">
+
+										<TextBlock Text="ENABLE"
+												   FontSize="10" FontWeight="Bold"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   LetterSpacing="1"
+												   Margin="0,0,0,4"/>
+
+										<StackPanel Spacing="2">
+											<CheckBox x:Name="EnableGamepadCheckBox"
+													  Content="Enable Gamepad Input"
+													  Foreground="{DynamicResource ThemeText}"
+													  FontSize="13" FontWeight="SemiBold"
+													  Checked="EnableGamepadCheckBox_Checked"
+													  Unchecked="EnableGamepadCheckBox_Unchecked"/>
+											<TextBlock Text="Navigate with the bound controls. The selected app is highlighted."
+													   FontSize="11"
+													   Foreground="{DynamicResource ThemeTextSecondary}"
+													   Margin="20,0,0,0"
+													   TextWrapping="Wrap"/>
+										</StackPanel>
+
+										<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,8,0,8"/>
+
+										<TextBlock Text="CONNECTED CONTROLLERS"
+												   FontSize="10" FontWeight="Bold"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   LetterSpacing="1"
+												   Margin="0,0,0,4"/>
+
+										<TextBlock x:Name="ConnectedGamepadsText"
+												   Text="No controllers detected"
+												   FontSize="12"
+												   Foreground="{DynamicResource ThemeText}"
+												   TextWrapping="Wrap"
+												   Margin="0,0,0,4"/>
+
+										<TextBlock Text="All connected controllers are used. No exclusive selection."
+												   FontSize="11"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   TextWrapping="Wrap"
+												   Margin="0,0,0,4"/>
+
+										<Button Classes="options"
+												Content="Refresh Controllers"
+												HorizontalAlignment="Stretch"
+												Click="RefreshConnectedGamepads_Click"
+												FontSize="12"/>
+
+										<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,8,0,8"/>
+
+										<TextBlock Text="BINDINGS"
+												   FontSize="10" FontWeight="Bold"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   LetterSpacing="1"
+												   Margin="0,0,0,4"/>
+
+										<TextBlock x:Name="GamepadRebindStatusText"
+												   FontSize="11"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   TextWrapping="Wrap"
+												   Margin="0,0,0,4"
+												   IsVisible="False"/>
+
+										<StackPanel x:Name="GamepadBindingsPanel" Spacing="6"/>
+
+										<Button Classes="options"
+												Content="Reset Bindings to Defaults"
+												HorizontalAlignment="Stretch"
+												Click="ResetGamepadBindings_Click"
+												FontSize="12"
+												Margin="0,8,0,0"/>
 
 									</StackPanel>
 								</TabItem>
@@ -2939,16 +3076,33 @@
 						Background="{DynamicResource ThemeBase}"
 						IsVisible="False"
 						ZIndex="100">
-					<Grid>
-						<ScrollViewer VerticalScrollBarVisibility="Auto"
-									  Margin="40">
-							<StackPanel MaxWidth="900">
+					<Grid RowDefinitions="Auto,*">
+						<Border Grid.Row="0"
+								Background="{DynamicResource ThemeDarker}"
+								BorderBrush="{DynamicResource ThemeBorder}"
+								BorderThickness="0,0,0,1"
+								Padding="40,16,40,16">
+							<Grid ColumnDefinitions="*,Auto">
 								<TextBlock x:Name="ChangelogTitle"
+										   Grid.Column="0"
 										   Text="Changelog"
 										   FontSize="28"
 										   FontWeight="Bold"
 										   Foreground="{DynamicResource ThemeText}"
-										   Margin="0,0,0,20"/>
+										   VerticalAlignment="Center"/>
+								<Button x:Name="CloseChangelogButton"
+										Grid.Column="1"
+										Classes="options"
+										Content="Close"
+										Width="100"
+										Click="CloseChangelog_Click"/>
+							</Grid>
+						</Border>
+						<ScrollViewer x:Name="ChangelogScrollViewer"
+									  Grid.Row="1"
+									  VerticalScrollBarVisibility="Auto"
+									  Margin="40,20,40,40">
+							<StackPanel MaxWidth="900">
 								<ItemsControl x:Name="ChangelogContent"
 											  ItemsSource="{Binding}">
 									<ItemsControl.ItemTemplate>
@@ -3170,11 +3324,13 @@
 									   Foreground="{DynamicResource ThemeTextSecondary}"
 									   TextWrapping="Wrap"/>
 							<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-								<Button Classes="options"
+								<Button x:Name="CancelDisplayFilterButton"
+										Classes="options"
 										Content="Cancel"
 										Width="100"
 										Click="CancelDisplayFilterEdit_Click"/>
-								<Button Classes="options"
+								<Button x:Name="SaveDisplayFilterButton"
+										Classes="options"
 										Content="Save"
 										Width="100"
 										Click="SaveDisplayFilter_Click"/>

@@ -48,9 +48,31 @@ public class GamepadComboBoxNavigationTests
             GamepadComboBoxNavigation.Open(comboBox);
 
             GamepadComboBoxNavigation.Instance.HasActiveComboBox.Should().BeTrue();
+            comboBox.IsDropDownOpen.Should().BeTrue();
         }
         finally
         {
+            comboBox.IsDropDownOpen = false;
+            GamepadComboBoxNavigation.Instance.Close(comboBox);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Open_expands_closed_dropdown()
+    {
+        var comboBox = CreateSortComboBox();
+        comboBox.IsDropDownOpen = false;
+
+        try
+        {
+            GamepadComboBoxNavigation.Open(comboBox);
+
+            comboBox.IsDropDownOpen.Should().BeTrue();
+            GamepadComboBoxNavigation.Instance.HasActiveComboBox.Should().BeTrue();
+        }
+        finally
+        {
+            comboBox.IsDropDownOpen = false;
             GamepadComboBoxNavigation.Instance.Close(comboBox);
         }
     }

@@ -40,4 +40,21 @@ public class GamepadControlActivationTests
 
         clickCount.Should().BeGreaterThanOrEqualTo(3);
     }
+
+    [AvaloniaFact]
+    public void ActivateMenuItem_raises_click_once()
+    {
+        var clickCount = 0;
+        var item = new MenuItem
+        {
+            Header = "Locate Existing Install",
+            IsEnabled = true,
+            IsVisible = true,
+        };
+        item.Click += (_, _) => clickCount++;
+
+        GamepadControlActivation.ActivateMenuItem(item);
+
+        clickCount.Should().Be(1);
+    }
 }

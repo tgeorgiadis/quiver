@@ -94,6 +94,8 @@ namespace Quiver
         public float MusicVolume { get; set; } = 0.2f;
         public float BackgroundOpacity { get; set; } = 0.15f;
         public bool EnableGamepadInput { get; set; } = true;
+        public Dictionary<GamepadAction, List<GamepadBinding>> GamepadBindings { get; set; } =
+            GamepadBindingDefaults.Create();
         public string LinuxWindowsLaunchCommand { get; set; } = string.Empty;
         public List<AppCatalogSource> AppCatalogSources { get; set; } = new List<AppCatalogSource>();
         public bool LocalFirstCatalogMigrationComplete { get; set; }
@@ -109,6 +111,8 @@ namespace Quiver
             ManuallyHiddenApps ??= new List<string>();
             TagDisplayFilters ??= new List<TagDisplayFilter>();
             UserAppTags ??= new Dictionary<string, List<string>>();
+            GamepadBindings ??= GamepadBindingDefaults.Create();
+            GamepadBindingDefaults.EnsureComplete(GamepadBindings);
 
             foreach (var source in AppCatalogSources)
             {

@@ -24,6 +24,14 @@ public enum GamepadNavigationZone
 
     CatalogReviewList,
 
+    CatalogReviewRowActions,
+
+    DisplayFilterOverlay,
+
+    EntryFormOverlay,
+
+    ChangelogOverlay,
+
     Settings,
 
 }
@@ -75,6 +83,10 @@ public sealed class GamepadNavigationService
 
 
     public int CatalogReviewSelectedIndex { get; set; } = -1;
+
+
+
+    public int CatalogReviewRowActionIndex { get; set; } = -1;
 
 
 

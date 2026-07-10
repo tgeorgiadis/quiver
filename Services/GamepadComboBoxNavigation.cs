@@ -34,6 +34,9 @@ public sealed class GamepadComboBoxNavigation
         if (_focusedItemIndex < 0)
             _focusedItemIndex = _items.Count > 0 ? 0 : -1;
 
+        if (!comboBox.IsDropDownOpen)
+            comboBox.IsDropDownOpen = true;
+
         Dispatcher.UIThread.Post(FocusCurrentItem, DispatcherPriority.Loaded);
     }
 

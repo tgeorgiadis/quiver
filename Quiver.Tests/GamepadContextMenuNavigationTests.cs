@@ -45,10 +45,10 @@ public class GamepadContextMenuNavigationTests
     }
 
     [Fact]
-    public void MoveMenuItemIndex_treats_left_right_like_vertical_navigation()
+    public void MoveMenuItemIndex_ignores_left_right()
     {
-        GamepadContextMenuNavigation.MoveMenuItemIndex(0, NavigationDirection.Right, 2).Should().Be(1);
-        GamepadContextMenuNavigation.MoveMenuItemIndex(1, NavigationDirection.Left, 2).Should().Be(0);
+        GamepadContextMenuNavigation.MoveMenuItemIndex(0, NavigationDirection.Right, 2).Should().Be(0);
+        GamepadContextMenuNavigation.MoveMenuItemIndex(1, NavigationDirection.Left, 2).Should().Be(1);
     }
 
     [AvaloniaFact]
@@ -90,5 +90,104 @@ public class GamepadContextMenuNavigationTests
     {
         GamepadContextMenuNavigation.MoveMenuItemIndex(0, NavigationDirection.Down, 1).Should().Be(0);
         GamepadContextMenuNavigation.MoveMenuItemIndex(0, NavigationDirection.Up, 1).Should().Be(0);
+    }
+
+    [AvaloniaFact]
+    public void HasOpenableChildren_detects_nested_items()
+    {
+        var parent = new MenuItem
+        {
+            Header = "Catalog",
+            Items =
+            {
+                new MenuItem { Header = "Browse" },
+                new MenuItem { Header = "Refresh" },
+            },
+        };
+
+        GamepadContextMenuNavigation.HasOpenableChildren(parent).Should().BeTrue();
+        GamepadContextMenuNavigation.HasOpenableChildren(new MenuItem { Header = "Leaf" }).Should().BeFalse();
+    }
+
+    [AvaloniaFact]
+    public void TryHandleOptionsDismiss_closes_active_context_menu()
+    {
+        var menu = new ContextMenu
+        {
+            Items =
+            {
+                new MenuItem { Header = "Download" },
+                new MenuItem { Header = "Cancel" },
+            },
+        };
+
+        try
+        {
+            GamepadContextMenuNavigation.Attach(menu);
+            GamepadContextMenuNavigation.Instance.HasActiveContextMenu.Should().BeTrue();
+
+            GamepadContextMenuNavigation.Instance.TryHandleOptionsDismiss().Should().BeTrue();
+            GamepadContextMenuNavigation.Instance.HasActiveContextMenu.Should().BeFalse();
+        }
+        finally
+        {
+            GamepadContextMenuNavigation.Instance.UnregisterContextMenu(menu);
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleNavigation_right_opens_submenu_and_left_closes_it()
+    {
+        var childA = new MenuItem { Header = "Browse" };
+        var childB = new MenuItem { Header = "Refresh" };
+        var parent = new MenuItem
+        {
+            Header = "Catalog",
+            Items = { childA, childB },
+        };
+        var leaf = new MenuItem { Header = "Download" };
+        var menu = new ContextMenu { Items = { parent, leaf } };
+
+        try
+        {
+            GamepadContextMenuNavigation.Attach(menu);
+            GamepadContextMenuNavigation.Instance.TryHandleNavigation(NavigationDirection.Right)
+                .Should().BeTrue();
+            parent.IsSubMenuOpen.Should().BeTrue();
+
+            GamepadContextMenuNavigation.Instance.TryHandleNavigation(NavigationDirection.Down)
+                .Should().BeTrue();
+
+            GamepadContextMenuNavigation.Instance.TryHandleCancel().Should().BeTrue();
+            parent.IsSubMenuOpen.Should().BeFalse();
+            GamepadContextMenuNavigation.Instance.HasActiveContextMenu.Should().BeTrue();
+        }
+        finally
+        {
+            GamepadContextMenuNavigation.Instance.UnregisterContextMenu(menu);
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleConfirm_opens_submenu_for_parent_items()
+    {
+        var child = new MenuItem { Header = "Browse" };
+        var parent = new MenuItem
+        {
+            Header = "Catalog",
+            Items = { child },
+        };
+        var menu = new ContextMenu { Items = { parent } };
+
+        try
+        {
+            GamepadContextMenuNavigation.Attach(menu);
+            GamepadContextMenuNavigation.Instance.TryHandleConfirm().Should().BeTrue();
+            parent.IsSubMenuOpen.Should().BeTrue();
+        }
+        finally
+        {
+            GamepadContextMenuNavigation.Instance.UnregisterContextMenu(menu);
+        }
     }
 }

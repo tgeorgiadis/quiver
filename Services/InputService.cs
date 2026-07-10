@@ -15,14 +15,26 @@ namespace Quiver.Services
     {
         private readonly Window _mainWindow;
         private DispatcherTimer? _gamepadTimer;
-        private readonly Dictionary<int, GamepadState> _gamepadStates = new();
+        private readonly Dictionary<int, GamepadSample> _gamepadStates = new();
         private readonly Dictionary<int, IntPtr> _gameControllers = new();
+        private Dictionary<GamepadAction, List<GamepadBinding>> _bindings = GamepadBindingDefaults.Create();
         private bool _disposed = false;
         private bool _isWindowActive = true;
+        private bool _captureMode;
 
         // Gamepad deadzone threshold
         private const float DeadZone = 0.3f;
         private const short AxisMax = 32767;
+
+        private static readonly SDL.SDL_GameControllerButton[] AllButtons =
+            Enum.GetValues<SDL.SDL_GameControllerButton>()
+                .Where(b => b != SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_INVALID)
+                .ToArray();
+
+        private static readonly SDL.SDL_GameControllerAxis[] AllAxes =
+            Enum.GetValues<SDL.SDL_GameControllerAxis>()
+                .Where(a => a != SDL.SDL_GameControllerAxis.SDL_CONTROLLER_AXIS_INVALID)
+                .ToArray();
 
         // Input repeat delays
         private const int MinNavigationInterval = 250;
@@ -41,6 +53,7 @@ namespace Quiver.Services
         public event Action? OnConfirm;
         public event Action? OnCancel;
         public event Action? OnOptions;
+        public event Action<GamepadBinding>? OnRawInput;
 
         public Func<NavigationDirection, bool>? NavigationInterceptor { get; set; }
 
@@ -55,15 +68,83 @@ namespace Quiver.Services
 
         public bool ShouldKeepPollingWhenDeactivated() => IsGamepadOverlayActive;
 
+        public bool IsCaptureMode => _captureMode;
+
         public InputService(Window mainWindow, AppSettings appSettings)
         {
             _mainWindow = mainWindow;
             _modalDialogNavigation.Configure(this);
+            ApplyBindings(appSettings.GamepadBindings);
             InitializeSDL();
 
             if (appSettings.EnableGamepadInput)
             {
                 InitializeGamepadPolling();
+            }
+        }
+
+        public void ApplyBindings(IReadOnlyDictionary<GamepadAction, List<GamepadBinding>>? bindings)
+        {
+            _bindings = bindings == null
+                ? GamepadBindingDefaults.Create()
+                : GamepadBindingDefaults.Clone(bindings);
+            GamepadBindingDefaults.EnsureComplete(_bindings);
+        }
+
+        public void SetCaptureMode(bool enabled)
+        {
+            _captureMode = enabled;
+            if (enabled)
+                ResetNavigationState();
+        }
+
+        public IReadOnlyList<ConnectedGamepadInfo> GetConnectedGamepads()
+        {
+            RefreshConnectedControllers();
+
+            return _gameControllers
+                .OrderBy(kvp => kvp.Key)
+                .Select(kvp =>
+                {
+                    var name = SDL.SDL_GameControllerName(kvp.Value);
+                    return new ConnectedGamepadInfo
+                    {
+                        Index = kvp.Key,
+                        Name = string.IsNullOrWhiteSpace(name) ? $"Controller {kvp.Key + 1}" : name,
+                    };
+                })
+                .ToList();
+        }
+
+        public void RefreshConnectedControllers()
+        {
+            int numJoysticks = SDL.SDL_NumJoysticks();
+            var seen = new HashSet<int>();
+
+            for (int i = 0; i < numJoysticks; i++)
+            {
+                if (SDL.SDL_IsGameController(i) != SDL.SDL_bool.SDL_TRUE)
+                    continue;
+
+                seen.Add(i);
+                if (_gameControllers.ContainsKey(i))
+                    continue;
+
+                IntPtr controller = SDL.SDL_GameControllerOpen(i);
+                if (controller == IntPtr.Zero)
+                    continue;
+
+                _gameControllers[i] = controller;
+                _gamepadStates[i] = new GamepadSample();
+                System.Diagnostics.Debug.WriteLine($"Game controller {i} connected: {SDL.SDL_GameControllerName(controller)}");
+            }
+
+            var removed = _gameControllers.Keys.Where(index => !seen.Contains(index)).ToList();
+            foreach (var index in removed)
+            {
+                SDL.SDL_GameControllerClose(_gameControllers[index]);
+                _gameControllers.Remove(index);
+                _gamepadStates.Remove(index);
             }
         }
 
@@ -75,21 +156,7 @@ namespace Quiver.Services
                 return;
             }
 
-            // Open all available game controllers
-            int numJoysticks = SDL.SDL_NumJoysticks();
-            for (int i = 0; i < numJoysticks; i++)
-            {
-                if (SDL.SDL_IsGameController(i) == SDL.SDL_bool.SDL_TRUE)
-                {
-                    IntPtr controller = SDL.SDL_GameControllerOpen(i);
-                    if (controller != IntPtr.Zero)
-                    {
-                        _gameControllers[i] = controller;
-                        _gamepadStates[i] = new GamepadState();
-                        System.Diagnostics.Debug.WriteLine($"Game controller {i} connected: {SDL.SDL_GameControllerName(controller)}");
-                    }
-                }
-            }
+            RefreshConnectedControllers();
         }
 
         public void SetGamepadEnabled(bool enabled)
@@ -121,7 +188,7 @@ namespace Quiver.Services
 
             var overlayActive = IsGamepadOverlayActive;
 
-            if (!_isWindowActive && !overlayActive)
+            if (!_isWindowActive && !overlayActive && !_captureMode)
             {
                 ResetNavigationState();
                 _lastConfirmTime = DateTime.MinValue;
@@ -139,33 +206,19 @@ namespace Quiver.Services
                 IntPtr controller = kvp.Value;
 
                 if (!_gamepadStates.ContainsKey(index))
-                    _gamepadStates[index] = new GamepadState();
+                    _gamepadStates[index] = new GamepadSample();
 
                 var currentState = _gamepadStates[index];
                 var previousState = currentState.Clone();
+                SampleController(controller, currentState);
 
-                // Read analog stick
-                short leftX = SDL.SDL_GameControllerGetAxis(controller, SDL.SDL_GameControllerAxis.SDL_CONTROLLER_AXIS_LEFTX);
-                short leftY = SDL.SDL_GameControllerGetAxis(controller, SDL.SDL_GameControllerAxis.SDL_CONTROLLER_AXIS_LEFTY);
-
-                currentState.LeftStickX = leftX / (float)AxisMax;
-                currentState.LeftStickY = leftY / (float)AxisMax;
-
-                // Apply deadzone
-                if (Math.Abs(currentState.LeftStickX) < DeadZone)
-                    currentState.LeftStickX = 0;
-                if (Math.Abs(currentState.LeftStickY) < DeadZone)
-                    currentState.LeftStickY = 0;
-
-                // Read buttons
-                currentState.AButton = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_A) == 1;
-                currentState.BButton = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_B) == 1;
-                currentState.XButton = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_X) == 1;
-                currentState.YButton = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_Y) == 1;
-                currentState.DPadUp = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_DPAD_UP) == 1;
-                currentState.DPadDown = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_DPAD_DOWN) == 1;
-                currentState.DPadLeft = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_DPAD_LEFT) == 1;
-                currentState.DPadRight = SDL.SDL_GameControllerGetButton(controller, SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_DPAD_RIGHT) == 1;
+                if (_captureMode)
+                {
+                    var rising = FindRisingEdgeBinding(previousState, currentState);
+                    if (rising != null)
+                        OnRawInput?.Invoke(rising);
+                    continue;
+                }
 
                 if (!heldDirection.HasValue)
                 {
@@ -174,8 +227,7 @@ namespace Quiver.Services
                         heldDirection = direction;
                 }
 
-                // Handle A button (Confirm)
-                if (currentState.AButton && !previousState.AButton)
+                if (IsActionRisingEdge(GamepadAction.Confirm, previousState, currentState))
                 {
                     var now = DateTime.Now;
                     if ((now - _lastConfirmTime).TotalMilliseconds > ButtonRepeatDelay)
@@ -186,9 +238,7 @@ namespace Quiver.Services
                     }
                 }
 
-                // Handle X/B button (Cancel)
-                if ((currentState.XButton && !previousState.XButton) ||
-                    (currentState.BButton && !previousState.BButton))
+                if (IsActionRisingEdge(GamepadAction.Cancel, previousState, currentState))
                 {
                     var now = DateTime.Now;
                     if ((now - _lastCancelTime).TotalMilliseconds > ButtonRepeatDelay)
@@ -199,8 +249,7 @@ namespace Quiver.Services
                     }
                 }
 
-                // Handle Y button (Options)
-                if (currentState.YButton && !previousState.YButton)
+                if (IsActionRisingEdge(GamepadAction.Options, previousState, currentState))
                 {
                     var now = DateTime.Now;
                     if ((now - _lastOptionsTime).TotalMilliseconds > ButtonRepeatDelay)
@@ -211,10 +260,88 @@ namespace Quiver.Services
                 }
             }
 
+            if (_captureMode)
+                return;
+
             if (heldDirection.HasValue)
                 HandleNavigation(heldDirection.Value);
             else
                 ResetNavigationHold();
+        }
+
+        private void SampleController(IntPtr controller, GamepadSample state)
+        {
+            state.Pressed.Clear();
+
+            foreach (var button in AllButtons)
+            {
+                if (SDL.SDL_GameControllerGetButton(controller, button) == 1)
+                    state.Pressed.Add(GamepadBinding.Button(button));
+            }
+
+            foreach (var axis in AllAxes)
+            {
+                short raw = SDL.SDL_GameControllerGetAxis(controller, axis);
+                float value = raw / (float)AxisMax;
+
+                // Triggers are 0..1; sticks are -1..1.
+                bool isTrigger = axis is SDL.SDL_GameControllerAxis.SDL_CONTROLLER_AXIS_TRIGGERLEFT
+                    or SDL.SDL_GameControllerAxis.SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
+
+                if (isTrigger)
+                {
+                    if (value >= DeadZone)
+                        state.Pressed.Add(GamepadBinding.AxisPositive(axis));
+                    continue;
+                }
+
+                if (value >= DeadZone)
+                    state.Pressed.Add(GamepadBinding.AxisPositive(axis));
+                else if (value <= -DeadZone)
+                    state.Pressed.Add(GamepadBinding.AxisNegative(axis));
+            }
+        }
+
+        private static GamepadBinding? FindRisingEdgeBinding(GamepadSample previous, GamepadSample current)
+        {
+            foreach (var binding in current.Pressed)
+            {
+                if (!previous.Pressed.Contains(binding))
+                    return binding;
+            }
+
+            return null;
+        }
+
+        private bool IsActionPressed(GamepadAction action, GamepadSample state)
+        {
+            if (!_bindings.TryGetValue(action, out var list) || list == null)
+                return false;
+
+            foreach (var binding in list)
+            {
+                if (state.Pressed.Contains(binding))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool IsActionRisingEdge(GamepadAction action, GamepadSample previous, GamepadSample current) =>
+            IsActionPressed(action, current) && !IsActionPressed(action, previous);
+
+        private NavigationDirection? GetHeldNavigationDirection(GamepadSample state)
+        {
+            if (IsActionPressed(GamepadAction.NavUp, state))
+                return NavigationDirection.Up;
+            if (IsActionPressed(GamepadAction.NavDown, state))
+                return NavigationDirection.Down;
+            if (IsActionPressed(GamepadAction.NavLeft, state))
+                return NavigationDirection.Left;
+            if (IsActionPressed(GamepadAction.NavRight, state))
+                return NavigationDirection.Right;
+
+            return null;
         }
         private void CheckSDLWindowFocus()
         {
@@ -319,31 +446,11 @@ namespace Quiver.Services
             _lastNavigationTime = DateTime.MinValue;
         }
 
-        private static NavigationDirection? GetHeldNavigationDirection(GamepadState state)
-        {
-            if (state.DPadUp)
-                return NavigationDirection.Up;
-            if (state.DPadDown)
-                return NavigationDirection.Down;
-            if (state.DPadLeft)
-                return NavigationDirection.Left;
-            if (state.DPadRight)
-                return NavigationDirection.Right;
-            if (state.LeftStickY < 0)
-                return NavigationDirection.Up;
-            if (state.LeftStickY > 0)
-                return NavigationDirection.Down;
-            if (state.LeftStickX < 0)
-                return NavigationDirection.Left;
-            if (state.LeftStickX > 0)
-                return NavigationDirection.Right;
-
-            return null;
-        }
-
         public bool TryHandleContextMenuConfirm() => _contextMenuNavigation.TryHandleConfirm();
 
         public bool TryHandleContextMenuCancel() => _contextMenuNavigation.TryHandleCancel();
+
+        public bool TryHandleContextMenuOptionsDismiss() => _contextMenuNavigation.TryHandleOptionsDismiss();
 
         public bool TryHandleComboBoxConfirm() => _comboBoxNavigation.TryHandleConfirm();
 
@@ -619,34 +726,16 @@ namespace Quiver.Services
             }
         }
 
-        private class GamepadState
+        private class GamepadSample
         {
-            public float LeftStickX { get; set; }
-            public float LeftStickY { get; set; }
-            public bool AButton { get; set; }
-            public bool BButton { get; set; }
-            public bool XButton { get; set; }
-            public bool YButton { get; set; }
-            public bool DPadUp { get; set; }
-            public bool DPadDown { get; set; }
-            public bool DPadLeft { get; set; }
-            public bool DPadRight { get; set; }
+            public HashSet<GamepadBinding> Pressed { get; } = new();
 
-            public GamepadState Clone()
+            public GamepadSample Clone()
             {
-                return new GamepadState
-                {
-                    LeftStickX = this.LeftStickX,
-                    LeftStickY = this.LeftStickY,
-                    AButton = this.AButton,
-                    BButton = this.BButton,
-                    XButton = this.XButton,
-                    YButton = this.YButton,
-                    DPadUp = this.DPadUp,
-                    DPadDown = this.DPadDown,
-                    DPadLeft = this.DPadLeft,
-                    DPadRight = this.DPadRight
-                };
+                var clone = new GamepadSample();
+                foreach (var binding in Pressed)
+                    clone.Pressed.Add(binding);
+                return clone;
             }
         }
     }
