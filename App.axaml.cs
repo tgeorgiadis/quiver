@@ -122,6 +122,13 @@ public class App : Application, INotifyPropertyChanged
     private static bool _hasCheckedForAppUpdates = false;
     private static readonly object _updateLock = new object();
     private static readonly SemaphoreSlim _updateCheckSemaphore = new(1, 1);
+    private readonly TaskCompletionSource _startupSelfUpdatePromptCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes when the startup Quiver self-update check (and any prompt) finishes or is skipped.
+    /// Catalog startup prompts await this so the two dialogs do not stack.
+    /// </summary>
+    public Task StartupSelfUpdatePromptCompleted => _startupSelfUpdatePromptCompleted.Task;
     private const string Repository = "tgeorgiadis/quiver";
     private const string VersionFileName = "version.txt";
     private const string UpdateCheckFileName = "update_check.json";
@@ -163,7 +170,21 @@ public class App : Application, INotifyPropertyChanged
             if (!_hasCheckedForAppUpdates)
             {
                 _hasCheckedForAppUpdates = true;
-                Task.Run(async () => await CheckForUpdatesAndApplyAsync(isManualCheck: false));
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        await CheckForUpdatesAndApplyAsync(isManualCheck: false);
+                    }
+                    finally
+                    {
+                        _startupSelfUpdatePromptCompleted.TrySetResult();
+                    }
+                });
+            }
+            else
+            {
+                _startupSelfUpdatePromptCompleted.TrySetResult();
             }
         }
     }
@@ -597,6 +618,7 @@ public class App : Application, INotifyPropertyChanged
                 Width = 450,
                 Height = 170,
                 WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterOwner,
+                Tag = false,
                 Content = new StackPanel
                 {
                     Margin = new Thickness(20),
@@ -638,19 +660,27 @@ public class App : Application, INotifyPropertyChanged
                 yesButton.Click += (s, e) =>
                 {
                     result = true;
+                    messageBox.Tag = true;
                     messageBox.Close();
                 };
 
                 noButton.Click += (s, e) =>
                 {
                     result = false;
+                    messageBox.Tag = false;
                     messageBox.Close();
                 };
             }
 
-            GamepadModalDialogNavigation.Attach(messageBox);
+            GamepadModalDialogNavigation.Attach(messageBox, accepted =>
+            {
+                result = accepted;
+                messageBox.Tag = accepted;
+            });
 
             await messageBox.ShowDialog(desktop.MainWindow);
+            if (messageBox.Tag is bool tagResult)
+                return tagResult;
             return result;
         }
         return false;

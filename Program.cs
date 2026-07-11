@@ -121,9 +121,21 @@ namespace Quiver
         }
 
         public static AppBuilder BuildAvaloniaApp()
-            => AppBuilder.Configure<App>()
+        {
+            var builder = AppBuilder.Configure<App>()
                 .UsePlatformDetect()
                 .WithInterFont()
                 .LogToTrace();
+
+            // Gamescope (Steam Deck Gaming Mode) treats separate X11 popup windows as
+            // fullscreen surfaces. Embed popups in the main window so ContextMenus
+            // stay composited over Quiver instead of showing a black letterbox.
+            if (OperatingSystem.IsLinux())
+            {
+                builder = builder.With(new X11PlatformOptions { OverlayPopups = true });
+            }
+
+            return builder;
+        }
     }
 }

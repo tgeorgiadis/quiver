@@ -1375,13 +1375,16 @@ namespace Quiver
                 {
                     if (game.Status == GameStatus.UpdateAvailable)
                     {
-                        ShowUpdateActionMenu(button, game);
+                        ShowUpdateActionMenu(ResolveDownloadMenuAnchor(game, button) ?? button, game);
                         return;
                     }
 
                     launched = await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
-                    if (TryShowPendingSelectionMenus(button, game))
+                    // Re-resolve after async: the action button can be recycled when Status
+                    // briefly becomes Downloading, which breaks Gamescope popup parenting.
+                    var anchor = ResolveDownloadMenuAnchor(game, button);
+                    if (anchor != null && TryShowPendingSelectionMenus(anchor, game))
                         return;
 
                     UpdateContinueButtonState();
@@ -1773,7 +1776,7 @@ namespace Quiver
             button.IsEnabled = false;
             try
             {
-                await HandleUpdateNowAsync(button, game);
+                await HandleUpdateNowAsync(ResolveDownloadMenuAnchor(game, button) ?? button, game);
                 RefreshUpdateCheckStatus();
                 NotifyUpdateCheckUiProperties();
                 CloseAppUpdatesReviewIfEmpty();
@@ -2174,7 +2177,8 @@ namespace Quiver
                     return;
                 }
 
-                ShowExecutableSelectionMenu(anchor, game);
+                var menuAnchor = ResolveDownloadMenuAnchor(game, anchor) ?? anchor;
+                ShowExecutableSelectionMenu(menuAnchor, game);
             }
             catch (Exception ex)
             {
@@ -2907,6 +2911,9 @@ namespace Quiver
 
         private async Task NotifyCatalogUpdatesIfNeededAsync()
         {
+            if (_app != null)
+                await _app.StartupSelfUpdatePromptCompleted;
+
             if (!_settings.LocalFirstCatalogMigrationComplete)
             {
                 await RunLocalFirstCatalogMigrationAsync();
@@ -3897,11 +3904,9 @@ namespace Quiver
             {
                 var launched = await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
-                var anchor = (menuItem != null ? ResolveMenuAnchor(menuItem) : null)
-                    ?? FindGameActionButton(game)
-                    ?? FindGameOptionsButton(game) as Control
-                    ?? FindGameCardBorder(game)
-                    ?? FindGameMenuAnchor(game);
+                var anchor = ResolveDownloadMenuAnchor(
+                    game,
+                    menuItem != null ? ResolveMenuAnchor(menuItem) : null);
 
                 if (anchor != null && TryShowPendingSelectionMenus(anchor, game))
                     return;
@@ -4267,6 +4272,7 @@ namespace Quiver
             Control buttonRow;
             if (isQuestion)
             {
+                messageBox.Tag = false;
                 var yesButton = new Button
                 {
                     Content = "Yes",
@@ -4281,11 +4287,13 @@ namespace Quiver
 
                 yesButton.Click += (_, _) =>
                 {
+                    messageBox.Tag = true;
                     onQuestionResult?.Invoke(true);
                     messageBox.Close();
                 };
                 noButton.Click += (_, _) =>
                 {
+                    messageBox.Tag = false;
                     onQuestionResult?.Invoke(false);
                     messageBox.Close();
                 };
@@ -4323,7 +4331,18 @@ namespace Quiver
                 Children = { scrollViewer, buttonRow },
             };
 
-            GamepadModalDialogNavigation.Attach(messageBox);
+            if (isQuestion)
+            {
+                GamepadModalDialogNavigation.Attach(messageBox, accepted =>
+                {
+                    messageBox.Tag = accepted;
+                    onQuestionResult?.Invoke(accepted);
+                });
+            }
+            else
+            {
+                GamepadModalDialogNavigation.Attach(messageBox);
+            }
 
             return messageBox;
         }
@@ -5082,6 +5101,8 @@ namespace Quiver
                         onQuestionResult: value => result = value);
 
                     await messageBox.ShowDialog(desktop.MainWindow);
+                    if (messageBox.Tag is bool tagResult)
+                        return tagResult;
                     return result;
                 }
                 return false;
@@ -8794,27 +8815,36 @@ namespace Quiver
             GetActiveGamesItemsControl()?.GetVisualDescendants().OfType<Button>()
                 .FirstOrDefault(b => ReferenceEquals(b.DataContext, game) && b.ContextMenu != null);
 
+        /// <summary>
+        /// Prefer a stable placement target for download/executable menus. The action button
+        /// mutates during PerformActionAsync and can orphan X11 popups under Gamescope.
+        /// </summary>
+        private Control? ResolveDownloadMenuAnchor(GameInfo game, Control? fallback = null) =>
+            FindGameOptionsButton(game) as Control
+            ?? FindGameCardBorder(game)
+            ?? FindGameActionButton(game)
+            ?? fallback
+            ?? FindGameMenuAnchor(game);
+
         private async Task PerformSelectedGameActionAsync(GameInfo game)
         {
-            var actionButton = FindGameActionButton(game);
-            var anchor = actionButton as Control
-                ?? FindGameOptionsButton(game) as Control
-                ?? FindGameCardBorder(game);
-            if (anchor == null)
-                return;
-
             var launched = false;
             try
             {
                 if (game.Status == GameStatus.UpdateAvailable)
                 {
-                    ShowUpdateActionMenu(anchor, game);
+                    var updateAnchor = ResolveDownloadMenuAnchor(game);
+                    if (updateAnchor == null)
+                        return;
+
+                    ShowUpdateActionMenu(updateAnchor, game);
                     return;
                 }
 
                 launched = await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
-                if (TryShowPendingSelectionMenus(anchor, game))
+                var anchor = ResolveDownloadMenuAnchor(game);
+                if (anchor != null && TryShowPendingSelectionMenus(anchor, game))
                     return;
 
                 UpdateContinueButtonState();

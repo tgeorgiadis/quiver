@@ -154,4 +154,176 @@ public class GamepadModalDialogNavigationTests
                 dialog.Close();
         }
     }
+
+    [AvaloniaFact]
+    public void Attach_stacks_dialogs_and_unregister_restores_previous()
+    {
+        var dialogA = new Window { Content = new Button { Content = "Yes" } };
+        var dialogB = new Window { Content = new Button { Content = "Update Quiver" } };
+        var nav = GamepadModalDialogNavigation.Instance;
+
+        try
+        {
+            nav.UnregisterModalDialog(dialogA);
+            nav.UnregisterModalDialog(dialogB);
+
+            GamepadModalDialogNavigation.Attach(dialogA);
+            nav.HasActiveDialog.Should().BeTrue();
+            nav.ActiveDialog.Should().BeSameAs(dialogA);
+            nav.DialogStackCount.Should().Be(1);
+
+            GamepadModalDialogNavigation.Attach(dialogB);
+            nav.ActiveDialog.Should().BeSameAs(dialogB);
+            nav.DialogStackCount.Should().Be(2);
+
+            nav.UnregisterModalDialog(dialogB);
+            nav.HasActiveDialog.Should().BeTrue();
+            nav.ActiveDialog.Should().BeSameAs(dialogA);
+            nav.DialogStackCount.Should().Be(1);
+
+            nav.UnregisterModalDialog(dialogA);
+            nav.HasActiveDialog.Should().BeFalse();
+            nav.ActiveDialog.Should().BeNull();
+            nav.DialogStackCount.Should().Be(0);
+        }
+        finally
+        {
+            nav.UnregisterModalDialog(dialogB);
+            nav.UnregisterModalDialog(dialogA);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Unregister_top_dialog_keeps_has_active_and_restores_previous()
+    {
+        var dialogA = new Window { Content = new Button { Content = "Yes" } };
+        var dialogB = new Window
+        {
+            Content = new StackPanel
+            {
+                Children =
+                {
+                    new Button { Content = "Update Quiver" },
+                    new Button { Content = "Not now" },
+                },
+            },
+        };
+        var nav = GamepadModalDialogNavigation.Instance;
+
+        try
+        {
+            GamepadModalDialogNavigation.Attach(dialogA);
+            GamepadModalDialogNavigation.Attach(dialogB);
+            nav.DialogStackCount.Should().Be(2);
+
+            nav.UnregisterModalDialog(dialogB);
+
+            nav.HasActiveDialog.Should().BeTrue();
+            nav.ActiveDialog.Should().BeSameAs(dialogA);
+            nav.DialogStackCount.Should().Be(1);
+
+            var act = () => nav.RefreshDialogButtons();
+            act.Should().NotThrow();
+        }
+        finally
+        {
+            nav.UnregisterModalDialog(dialogB);
+            nav.UnregisterModalDialog(dialogA);
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleConfirm_on_yes_invokes_question_result_callback_true()
+    {
+        bool? callbackResult = null;
+        var yesButton = new Button { Content = "Yes", MinWidth = 80 };
+        var noButton = new Button { Content = "No", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 420,
+            Height = 200,
+            Content = new StackPanel
+            {
+                Children = { yesButton, noButton },
+            },
+        };
+
+        yesButton.Click += (_, _) => dialog.Close();
+        noButton.Click += (_, _) => dialog.Close();
+
+        var nav = GamepadModalDialogNavigation.Instance;
+
+        try
+        {
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog, accepted => callbackResult = accepted);
+            nav.RefreshDialogButtons();
+
+            nav.TryHandleConfirm().Should().BeTrue();
+            callbackResult.Should().Be(true);
+            dialog.IsVisible.Should().BeFalse();
+        }
+        finally
+        {
+            nav.UnregisterModalDialog(dialog);
+            if (dialog.IsVisible)
+                dialog.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleCancel_invokes_question_result_callback_false()
+    {
+        bool? callbackResult = null;
+        var yesButton = new Button { Content = "Yes", MinWidth = 80 };
+        var noButton = new Button { Content = "No", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 420,
+            Height = 200,
+            Content = new StackPanel
+            {
+                Children = { yesButton, noButton },
+            },
+        };
+
+        yesButton.Click += (_, _) => dialog.Close();
+        noButton.Click += (_, _) => dialog.Close();
+
+        var nav = GamepadModalDialogNavigation.Instance;
+
+        try
+        {
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog, accepted => callbackResult = accepted);
+            nav.RefreshDialogButtons();
+
+            nav.TryHandleCancel().Should().BeTrue();
+            callbackResult.Should().Be(false);
+            dialog.IsVisible.Should().BeFalse();
+        }
+        finally
+        {
+            nav.UnregisterModalDialog(dialog);
+            if (dialog.IsVisible)
+                dialog.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ApplyDialogResultHint_sets_tag_for_yes_and_no()
+    {
+        var dialog = new Window();
+        GamepadModalDialogNavigation.ApplyDialogResultHint(dialog, new Button { Content = "Yes" });
+        dialog.Tag.Should().Be(true);
+
+        GamepadModalDialogNavigation.ApplyDialogResultHint(dialog, new Button { Content = "No" });
+        dialog.Tag.Should().Be(false);
+
+        GamepadModalDialogNavigation.ApplyDialogResultHint(dialog, new Button { Content = "Update Quiver" });
+        dialog.Tag.Should().Be(true);
+
+        GamepadModalDialogNavigation.ApplyDialogResultHint(dialog, new Button { Content = "Not now" });
+        dialog.Tag.Should().Be(false);
+    }
 }

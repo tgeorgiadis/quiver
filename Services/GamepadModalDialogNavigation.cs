@@ -9,35 +9,59 @@ public sealed class GamepadModalDialogNavigation
 {
     private static GamepadModalDialogNavigation? _instance;
 
-    private Window? _activeDialog;
+    private readonly List<Window> _dialogStack = [];
+    private readonly Dictionary<Window, Action<bool>> _questionResultCallbacks = new();
     private List<Button> _dialogButtons = [];
     private int _focusedButtonIndex;
 
     public static GamepadModalDialogNavigation Instance => _instance ??= new GamepadModalDialogNavigation();
 
-    public bool HasActiveDialog => _activeDialog != null;
+    public bool HasActiveDialog => _dialogStack.Count > 0;
+
+    public Window? ActiveDialog =>
+        _dialogStack.Count > 0 ? _dialogStack[^1] : null;
+
+    public int DialogStackCount => _dialogStack.Count;
 
     public void Configure(InputService inputService)
     {
     }
 
-    public static void Attach(Window dialog)
+    public static void Attach(Window dialog) =>
+        Attach(dialog, setQuestionResult: null);
+
+    public static void Attach(Window dialog, Action<bool>? setQuestionResult)
     {
-        Instance.PrepareDialog(dialog);
+        Instance.PrepareDialog(dialog, setQuestionResult);
     }
 
-    public void PrepareDialog(Window dialog)
+    public void PrepareDialog(Window dialog, Action<bool>? setQuestionResult = null)
     {
-        _activeDialog = dialog;
+        if (setQuestionResult != null)
+            _questionResultCallbacks[dialog] = setQuestionResult;
+        else
+            _questionResultCallbacks.Remove(dialog);
+
+        if (_dialogStack.Contains(dialog))
+        {
+            BringToTop(dialog);
+            RefreshDialogButtons();
+            return;
+        }
+
+        _dialogStack.Add(dialog);
         RefreshDialogButtons();
 
         void OnDialogOpened(object? sender, EventArgs e)
         {
+            if (!ReferenceEquals(ActiveDialog, dialog))
+                return;
+
             RefreshDialogButtons();
 
             void OnLayoutUpdated(object? s, EventArgs args)
             {
-                if (!ReferenceEquals(_activeDialog, dialog))
+                if (!ReferenceEquals(ActiveDialog, dialog))
                     return;
 
                 RefreshDialogButtons();
@@ -60,10 +84,11 @@ public sealed class GamepadModalDialogNavigation
 
     public void RefreshDialogButtons()
     {
-        if (_activeDialog == null)
+        var activeDialog = ActiveDialog;
+        if (activeDialog == null)
             return;
 
-        _dialogButtons = CollectDialogButtons(_activeDialog);
+        _dialogButtons = CollectDialogButtons(activeDialog);
         _focusedButtonIndex = GetDefaultButtonIndex(_dialogButtons);
 
         Dispatcher.UIThread.Post(FocusCurrentButton, DispatcherPriority.Loaded);
@@ -71,17 +96,34 @@ public sealed class GamepadModalDialogNavigation
 
     public void UnregisterModalDialog(Window dialog)
     {
-        if (!ReferenceEquals(_activeDialog, dialog))
+        _questionResultCallbacks.Remove(dialog);
+
+        var wasTop = ReferenceEquals(ActiveDialog, dialog);
+        if (!_dialogStack.Remove(dialog))
             return;
 
-        _activeDialog = null;
-        _dialogButtons = [];
-        _focusedButtonIndex = 0;
+        if (_dialogStack.Count == 0)
+        {
+            _dialogButtons = [];
+            _focusedButtonIndex = 0;
+            return;
+        }
+
+        if (wasTop)
+            RefreshDialogButtons();
+    }
+
+    private void BringToTop(Window dialog)
+    {
+        if (!_dialogStack.Remove(dialog))
+            return;
+
+        _dialogStack.Add(dialog);
     }
 
     public bool TryHandleNavigation(NavigationDirection direction)
     {
-        if (_activeDialog == null)
+        if (ActiveDialog == null)
             return false;
 
         EnsureDialogButtons();
@@ -99,12 +141,14 @@ public sealed class GamepadModalDialogNavigation
 
     public bool TryHandleConfirm()
     {
-        if (_activeDialog == null)
+        var activeDialog = ActiveDialog;
+        if (activeDialog == null)
             return false;
 
         EnsureDialogButtons();
         if (_dialogButtons.Count == 0)
         {
+            InvokeQuestionResult(activeDialog, false);
             CloseDialogIfStillOpen();
             return true;
         }
@@ -113,20 +157,24 @@ public sealed class GamepadModalDialogNavigation
         if (button == null)
             return false;
 
-        GamepadControlActivation.ActivateDialogButton(button, _activeDialog);
-        CloseDialogIfStillOpen();
+        var accepted = IsAffirmativeDialogButtonLabel(GetButtonLabel(button));
+        InvokeQuestionResult(activeDialog, accepted);
+        ApplyDialogResultHint(activeDialog, button);
+        ActivateAndCloseDialogButton(activeDialog, button);
         return true;
     }
 
     public bool TryHandleCancel()
     {
-        if (_activeDialog == null)
+        var activeDialog = ActiveDialog;
+        if (activeDialog == null)
             return false;
 
         EnsureDialogButtons();
 
         if (_dialogButtons.Count == 0)
         {
+            InvokeQuestionResult(activeDialog, false);
             CloseDialogIfStillOpen();
             return true;
         }
@@ -140,27 +188,91 @@ public sealed class GamepadModalDialogNavigation
 
         if (button == null)
         {
+            InvokeQuestionResult(activeDialog, false);
             CloseDialogIfStillOpen();
             return true;
         }
 
-        GamepadControlActivation.ActivateDialogButton(button, _activeDialog);
-        CloseDialogIfStillOpen();
+        InvokeQuestionResult(activeDialog, false);
+        ApplyDialogResultHint(activeDialog, button);
+        ActivateAndCloseDialogButton(activeDialog, button);
         return true;
     }
 
+    private void InvokeQuestionResult(Window dialog, bool accepted)
+    {
+        if (_questionResultCallbacks.TryGetValue(dialog, out var setResult))
+            setResult(accepted);
+    }
+
+    private static void ActivateAndCloseDialogButton(Window dialog, Button button)
+    {
+        GamepadControlActivation.ActivateButton(button);
+        if (dialog.IsVisible)
+            dialog.Close();
+    }
+
+    /// <summary>
+    /// Stores Yes/No (or equivalent) on <see cref="Window.Tag"/> before activation/close so
+    /// force-closing a dialog cannot drop the user's choice when Click handlers are skipped.
+    /// </summary>
+    internal static void ApplyDialogResultHint(Window dialog, Button button)
+    {
+        var label = GetButtonLabel(button);
+        if (IsAffirmativeDialogButtonLabel(label))
+        {
+            dialog.Tag = true;
+            return;
+        }
+
+        if (IsDismissDialogButtonLabel(label))
+        {
+            dialog.Tag = false;
+            return;
+        }
+    }
+
+    internal static bool IsAffirmativeDialogButtonLabel(string label) =>
+        AffirmativeDialogLabels.Any(preferred =>
+            string.Equals(label, preferred, StringComparison.OrdinalIgnoreCase));
+
+    internal static bool IsDismissDialogButtonLabel(string label) =>
+        DismissDialogLabels.Any(dismiss =>
+            string.Equals(label, dismiss, StringComparison.OrdinalIgnoreCase));
+
+    private static readonly string[] AffirmativeDialogLabels =
+    [
+        "ok",
+        "yes",
+        "add",
+        "download anyway",
+        "open settings",
+        "update quiver",
+        "update apps",
+    ];
+
+    private static readonly string[] DismissDialogLabels =
+    [
+        "cancel",
+        "no",
+        "close",
+        "not now",
+    ];
+
     private void CloseDialogIfStillOpen()
     {
-        if (_activeDialog != null && _activeDialog.IsVisible)
-            _activeDialog.Close();
+        var activeDialog = ActiveDialog;
+        if (activeDialog != null && activeDialog.IsVisible)
+            activeDialog.Close();
     }
 
     private void EnsureDialogButtons()
     {
-        if (_activeDialog == null || _dialogButtons.Count > 0)
+        var activeDialog = ActiveDialog;
+        if (activeDialog == null || _dialogButtons.Count > 0)
             return;
 
-        _dialogButtons = CollectDialogButtons(_activeDialog);
+        _dialogButtons = CollectDialogButtons(activeDialog);
         _focusedButtonIndex = GetDefaultButtonIndex(_dialogButtons);
     }
 
@@ -186,6 +298,8 @@ public sealed class GamepadModalDialogNavigation
             "add",
             "download anyway",
             "open settings",
+            "update quiver",
+            "update apps",
         };
 
         for (var i = 0; i < buttons.Count; i++)
@@ -200,7 +314,7 @@ public sealed class GamepadModalDialogNavigation
 
     public static int FindCancelButtonIndex(IReadOnlyList<Button> buttons)
     {
-        var cancelLabels = new[] { "cancel", "no", "close" };
+        var cancelLabels = new[] { "cancel", "no", "close", "not now" };
 
         for (var i = 0; i < buttons.Count; i++)
         {
@@ -278,10 +392,11 @@ public sealed class GamepadModalDialogNavigation
 
     private (double X, double Y)? GetButtonCenter(Button button)
     {
-        if (_activeDialog == null)
+        var activeDialog = ActiveDialog;
+        if (activeDialog == null)
             return GetApproximateCenter(button);
 
-        var topLeft = button.TranslatePoint(new Avalonia.Point(0, 0), _activeDialog);
+        var topLeft = button.TranslatePoint(new Avalonia.Point(0, 0), activeDialog);
         if (!topLeft.HasValue)
             return null;
 

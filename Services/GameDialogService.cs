@@ -151,13 +151,30 @@ public static class GameDialogService
                 buttonPanel.Children[0] is Button yesButton &&
                 buttonPanel.Children[1] is Button noButton)
             {
-                yesButton.Click += (_, _) => { userChoice = true; messageBox.Close(); };
-                noButton.Click += (_, _) => { userChoice = false; messageBox.Close(); };
+                messageBox.Tag = false;
+                yesButton.Click += (_, _) =>
+                {
+                    userChoice = true;
+                    messageBox.Tag = true;
+                    messageBox.Close();
+                };
+                noButton.Click += (_, _) =>
+                {
+                    userChoice = false;
+                    messageBox.Tag = false;
+                    messageBox.Close();
+                };
             }
 
-            GamepadModalDialogNavigation.Attach(messageBox);
+            GamepadModalDialogNavigation.Attach(messageBox, accepted =>
+            {
+                userChoice = accepted;
+                messageBox.Tag = accepted;
+            });
 
             await messageBox.ShowDialog(mainWindow);
+            if (messageBox.Tag is bool tagResult)
+                userChoice = tagResult;
         });
 
         return userChoice;
@@ -208,13 +225,30 @@ public static class GameDialogService
                 buttonPanel.Children[0] is Button yesButton &&
                 buttonPanel.Children[1] is Button noButton)
             {
-                yesButton.Click += (_, _) => { userChoice = true; messageBox.Close(); };
-                noButton.Click += (_, _) => { userChoice = false; messageBox.Close(); };
+                messageBox.Tag = false;
+                yesButton.Click += (_, _) =>
+                {
+                    userChoice = true;
+                    messageBox.Tag = true;
+                    messageBox.Close();
+                };
+                noButton.Click += (_, _) =>
+                {
+                    userChoice = false;
+                    messageBox.Tag = false;
+                    messageBox.Close();
+                };
             }
 
-            GamepadModalDialogNavigation.Attach(messageBox);
+            GamepadModalDialogNavigation.Attach(messageBox, accepted =>
+            {
+                userChoice = accepted;
+                messageBox.Tag = accepted;
+            });
 
             await messageBox.ShowDialog(mainWindow);
+            if (messageBox.Tag is bool tagResult)
+                userChoice = tagResult;
         });
 
         return userChoice;
