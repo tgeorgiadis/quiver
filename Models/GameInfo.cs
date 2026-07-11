@@ -43,6 +43,7 @@ namespace Quiver.Models
         public bool IsCustom { get; set; }
         public string? CatalogSourceId { get; set; }
         public List<string> Tags { get; set; } = [];
+        public List<string> FilesToAdd { get; set; } = [];
         private bool _isInLocalAppsJson;
         public bool IsInLocalAppsJson
         {
@@ -1031,7 +1032,11 @@ namespace Quiver.Models
             GameDownloadService.TrySelectPlatformDownload(this, GetLatestRelease(), settings);
 
         internal GameInstallationOptions GetInstallationOptions() =>
-            CreateInstallationOptions();
+            new()
+            {
+                Log = message => Debug.WriteLine(message),
+                AdditionalMetadataFileNames = AppFilesToAddService.Normalize(FilesToAdd),
+            };
 
         internal void ApplyCachedRelease(string version, GitHubRelease? release)
         {

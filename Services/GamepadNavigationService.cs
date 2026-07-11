@@ -26,6 +26,12 @@ public enum GamepadNavigationZone
 
     CatalogReviewRowActions,
 
+    AppUpdatesReviewToolbar,
+
+    AppUpdatesReviewList,
+
+    AppUpdatesReviewRowActions,
+
     DisplayFilterOverlay,
 
     EntryFormOverlay,
@@ -87,6 +93,18 @@ public sealed class GamepadNavigationService
 
 
     public int CatalogReviewRowActionIndex { get; set; } = -1;
+
+
+
+    public int AppUpdatesReviewToolbarIndex { get; set; } = -1;
+
+
+
+    public int AppUpdatesReviewSelectedIndex { get; set; } = -1;
+
+
+
+    public int AppUpdatesReviewRowActionIndex { get; set; } = -1;
 
 
 
@@ -572,6 +590,13 @@ public sealed class GamepadNavigationService
 
 
 
+            if (mainContentZone is GamepadNavigationZone.AppUpdatesReviewList
+                or GamepadNavigationZone.AppUpdatesReviewToolbar)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.AppUpdatesReviewToolbar, 0);
+
+
+
             if (mainContentZone == GamepadNavigationZone.CatalogSources)
 
                 return new GamepadZoneTransition(GamepadNavigationZone.CatalogSourcesToolbar, 0);
@@ -734,6 +759,48 @@ public sealed class GamepadNavigationService
 
 
 
+        if (zone == GamepadNavigationZone.AppUpdatesReviewToolbar)
+
+        {
+
+            if (direction == NavigationDirection.Up)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.TopBar, null);
+
+
+
+            if (direction == NavigationDirection.Down)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.AppUpdatesReviewList, 0);
+
+
+
+            if (direction == NavigationDirection.Left && currentIndex <= 0)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
+
+        }
+
+
+
+        if (zone == GamepadNavigationZone.AppUpdatesReviewList)
+
+        {
+
+            if (direction == NavigationDirection.Left)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
+
+
+
+            if (direction == NavigationDirection.Up && (itemCount == 0 || currentIndex <= 0))
+
+                return new GamepadZoneTransition(GamepadNavigationZone.AppUpdatesReviewToolbar, null);
+
+        }
+
+
+
         return null;
 
     }
@@ -766,7 +833,8 @@ public sealed class GamepadNavigationService
 
 
 
-            if (zone is GamepadNavigationZone.Library or GamepadNavigationZone.CatalogSources or GamepadNavigationZone.CatalogReviewList)
+            if (zone is GamepadNavigationZone.Library or GamepadNavigationZone.CatalogSources or GamepadNavigationZone.CatalogReviewList
+                or GamepadNavigationZone.AppUpdatesReviewList)
 
                 return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
 
@@ -805,6 +873,18 @@ public sealed class GamepadNavigationService
             if (zone == GamepadNavigationZone.CatalogReviewFilters)
 
                 return new GamepadZoneTransition(GamepadNavigationZone.TopBar, null);
+
+
+
+            if (zone == GamepadNavigationZone.AppUpdatesReviewToolbar)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.TopBar, null);
+
+
+
+            if (zone == GamepadNavigationZone.AppUpdatesReviewList && (itemCount == 0 || currentIndex <= 0))
+
+                return new GamepadZoneTransition(GamepadNavigationZone.AppUpdatesReviewToolbar, null);
 
 
 

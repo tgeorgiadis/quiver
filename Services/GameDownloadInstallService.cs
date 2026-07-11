@@ -182,6 +182,8 @@ public static class GameDownloadInstallService
                     latestRelease.tag_name,
                     game.GetInstallationOptions()).ConfigureAwait(false);
 
+                AppFilesToAddService.Sync(gamePath, previous: null, game.FilesToAdd);
+
                 game.DownloadProgress = 100;
                 await Task.Delay(500).ConfigureAwait(false);
 

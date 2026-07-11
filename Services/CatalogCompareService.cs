@@ -83,6 +83,7 @@ namespace Quiver.Services
             "appIconUrl",
             "preferredVersion",
             "tags",
+            "filesToAdd",
         ];
 
         public static IReadOnlyList<CatalogSyncRowItem> BuildCompareRows(
@@ -169,6 +170,8 @@ namespace Quiver.Services
                     TagHelper.FormatTagsForDisplay(external.Tags),
                     StringComparison.OrdinalIgnoreCase))
                 changed.Add("tags");
+            if (!AppFilesToAddService.AreEquivalent(local.FilesToAdd, external.FilesToAdd))
+                changed.Add("filesToAdd");
 
             return changed;
         }
@@ -184,6 +187,7 @@ namespace Quiver.Services
                 PreferredVersion = external.PreferredVersion,
                 SkippedUpdateVersion = external.SkippedUpdateVersion,
                 Tags = TagHelper.NormalizeTags(external.Tags),
+                FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 IsExperimental = false,
                 IsCustom = true,
                 GameManager = external.GameManager,
@@ -201,6 +205,7 @@ namespace Quiver.Services
                 PreferredVersion = external.PreferredVersion,
                 SkippedUpdateVersion = external.SkippedUpdateVersion,
                 Tags = TagHelper.NormalizeTags(external.Tags),
+                FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 IsExperimental = local.IsExperimental,
                 IsCustom = local.IsCustom,
                 GameManager = local.GameManager,
@@ -222,6 +227,7 @@ namespace Quiver.Services
                 PreferredVersion = external.PreferredVersion,
                 SkippedUpdateVersion = local.SkippedUpdateVersion,
                 Tags = mergedTags,
+                FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 IsExperimental = local.IsExperimental,
                 IsCustom = local.IsCustom,
                 GameManager = local.GameManager,

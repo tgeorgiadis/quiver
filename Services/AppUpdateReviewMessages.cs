@@ -47,7 +47,7 @@ public static class AppUpdateReviewMessages
         var body = header + "\n\n" + string.Join('\n', lines);
 
         return includeOpenPrompt
-            ? body + "\n\nReview and update these apps now?"
+            ? body + "\n\nOpen the App Updates review to update or skip these apps?"
             : body;
     }
 

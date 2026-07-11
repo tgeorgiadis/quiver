@@ -29,7 +29,7 @@ public class AppUpdateReviewMessagesTests
         summary.Should().Be(
             "1 app update is available:\n\n" +
             "• Doom (v1.0.0 → v1.1.0)\n\n" +
-            "Review and update these apps now?");
+            "Open the App Updates review to update or skip these apps?");
     }
 
     [Fact]

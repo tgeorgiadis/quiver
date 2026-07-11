@@ -73,6 +73,7 @@ public static class CatalogSyncFieldDiffBuilder
         ["appIconUrl"] = "Icon",
         ["preferredVersion"] = "Preferred version",
         ["tags"] = "Tags",
+        ["filesToAdd"] = "Files to add",
     };
 
     public static IReadOnlyList<CatalogSyncFieldDiffItem> BuildFieldDiffs(
@@ -216,6 +217,7 @@ public static class CatalogSyncFieldDiffBuilder
             "appIconUrl" => app.GameIconUrl ?? "",
             "preferredVersion" => app.PreferredVersion ?? "",
             "tags" => TagHelper.FormatTagsForDisplay(app.Tags),
+            "filesToAdd" => AppFilesToAddService.FormatForDisplay(app.FilesToAdd),
             _ => "",
         };
 }

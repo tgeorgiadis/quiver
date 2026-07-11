@@ -51,6 +51,7 @@ namespace Quiver
         public ObservableCollection<TagDisplayFilterListItem> TagDisplayFilters { get; } = new();
         public ObservableCollection<CatalogSourceListItem> CatalogSources { get; } = new();
         public ObservableCollection<CatalogSyncRowItem> CatalogSyncRows { get; } = new();
+        public ObservableCollection<GameInfo> AppUpdateReviewRows { get; } = new();
 
         public int CatalogReviewBadgeCount =>
             CatalogSources.Where(s => s.Enabled).Sum(s => s.PendingReviewCount);
@@ -190,6 +191,7 @@ namespace Quiver
         private AppCatalogSource? _activeCatalogSyncSource;
         private MainViewMode _mainViewMode = MainViewMode.Library;
         private AppCatalogSubView _appCatalogSubView = AppCatalogSubView.Sources;
+        private bool _isAppUpdatesReviewOpen;
         private bool _suppressCatalogSourceUiEvents;
         private bool _suppressSettingsUiEvents;
         private bool _isRefreshingCatalogSources;
@@ -1389,8 +1391,7 @@ namespace Quiver
                     await ShowMessageBoxAsync($"Failed to perform action for {game.Name}: {ex.Message}", "Action Error");
                 }
 
-                if (launched && _settings.CloseAfterLaunch)
-                    Close();
+                CloseAfterLaunchIfNeeded(launched);
             }
         }
 
@@ -1476,43 +1477,10 @@ namespace Quiver
                 // Detect platform icon
                 string? iconPath = GameInfo.GetPlatformIcon(asset.name);
 
-                // Create grid
-                var contentGrid = new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-                    HorizontalAlignment = HorizontalAlignment.Stretch
-                };
-
-                // Add icon if detected
-                if (!string.IsNullOrEmpty(iconPath))
-                {
-                    var icon = new Avalonia.Controls.Image
-                    {
-                        Source = new Avalonia.Media.Imaging.Bitmap(
-                            Avalonia.Platform.AssetLoader.Open(new Uri(iconPath))),
-                        Width = 28,
-                        Height = 28,
-                        Margin = new Thickness(0, 0, 10, 0),
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    Grid.SetColumn(icon, 0);
-                    contentGrid.Children.Add(icon);
-                }
-
-                // Add filename text
                 var displayName = asset.name + (isPreferred ? " (Recommended)" : "");
-                var textBlock = new TextBlock
-                {
-                    Text = displayName,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                };
-                Grid.SetColumn(textBlock, 1);
-                contentGrid.Children.Add(textBlock);
-
                 var menuItem = new MenuItem
                 {
-                    Header = contentGrid,
+                    Header = CreateDownloadAssetMenuHeader(displayName, iconPath),
                     Tag = asset
                 };
 
@@ -1551,7 +1519,51 @@ namespace Quiver
             };
             contextMenu.Items.Add(cancelItem);
 
+            ApplyDownloadSelectionMenuWidth(contextMenu);
             OpenContextMenu(anchor, contextMenu);
+        }
+
+        private void ApplyDownloadSelectionMenuWidth(ContextMenu contextMenu)
+        {
+            var availableWidth = Bounds.Width > 0 ? Bounds.Width - 80 : 720;
+            var minWidth = Math.Min(720, availableWidth);
+            contextMenu.MinWidth = minWidth;
+            contextMenu.MaxWidth = Math.Max(minWidth, availableWidth);
+        }
+
+        private static Grid CreateDownloadAssetMenuHeader(string displayName, string? iconPath)
+        {
+            var contentGrid = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("Auto,Auto"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+
+            if (!string.IsNullOrEmpty(iconPath))
+            {
+                var icon = new Avalonia.Controls.Image
+                {
+                    Source = new Avalonia.Media.Imaging.Bitmap(
+                        Avalonia.Platform.AssetLoader.Open(new Uri(iconPath))),
+                    Width = 28,
+                    Height = 28,
+                    Margin = new Thickness(0, 0, 10, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                Grid.SetColumn(icon, 0);
+                contentGrid.Children.Add(icon);
+            }
+
+            var textBlock = new TextBlock
+            {
+                Text = displayName,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap
+            };
+            Grid.SetColumn(textBlock, 1);
+            contentGrid.Children.Add(textBlock);
+
+            return contentGrid;
         }
 
         private Control? ResolveMenuAnchor(Control sourceControl)
@@ -1670,7 +1682,7 @@ namespace Quiver
             e.Handled = true;
         }
 
-        private async Task HandleUpdateNowAsync(Control anchor, GameInfo game)
+        private async Task HandleUpdateNowAsync(Control anchor, GameInfo game, bool preferAutoPlatform = false)
         {
             try
             {
@@ -1699,10 +1711,36 @@ namespace Quiver
                     await PersistGameVersionPreferencesAsync(game, null, latestRelease.tag_name);
                     ApplySorting();
                     UpdateContinueButtonState();
+                    if (_isAppUpdatesReviewOpen)
+                        CloseAppUpdatesReviewIfEmpty();
                     return;
                 }
 
-                ShowReleaseDownloadSelectionMenu(anchor, game, latestRelease, null, latestRelease.tag_name);
+                if (preferAutoPlatform)
+                {
+                    var platformIdentifier = GameInfo.GetPlatformIdentifier(_settings);
+                    var preferredAsset = availableAssets
+                        .FirstOrDefault(asset => GameInfo.MatchesPlatform(asset.name, platformIdentifier));
+                    if (preferredAsset != null)
+                    {
+                        await game.InstallReleaseAsync(
+                            _gameManager.HttpClient,
+                            _gameManager.GamesFolder,
+                            _settings,
+                            latestRelease,
+                            preferredAsset);
+                        await PersistGameVersionPreferencesAsync(game, null, latestRelease.tag_name);
+                        ApplySorting();
+                        UpdateContinueButtonState();
+                        if (_isAppUpdatesReviewOpen)
+                            CloseAppUpdatesReviewIfEmpty();
+                        return;
+                    }
+                }
+
+                await ShowReleaseDownloadSelectionMenuAsync(anchor, game, latestRelease, null, latestRelease.tag_name);
+                if (_isAppUpdatesReviewOpen)
+                    CloseAppUpdatesReviewIfEmpty();
             }
             catch (Exception ex)
             {
@@ -1720,209 +1758,115 @@ namespace Quiver
             await PersistGameVersionPreferencesAsync(game, game.PreferredVersion, game.SkippedUpdateVersion);
             ApplySorting();
             UpdateContinueButtonState();
+            if (_isAppUpdatesReviewOpen)
+                CloseAppUpdatesReviewIfEmpty();
         }
 
-        private async Task ShowAppUpdatesReviewDialogAsync()
+        private void AppUpdatesBackToLibrary_Click(object? sender, RoutedEventArgs e) =>
+            ShowLibraryView();
+
+        private async void AppUpdateReviewRowUpdate_Click(object? sender, RoutedEventArgs e)
         {
-            if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
-                desktop.MainWindow == null)
-            {
+            if (sender is not Button button || button.DataContext is not GameInfo game)
                 return;
-            }
 
-            await Dispatcher.UIThread.InvokeAsync(async () =>
+            button.IsEnabled = false;
+            try
             {
-                var dialog = new Window
-                {
-                    Title = "App Updates",
-                    MinWidth = 480,
-                    MaxWidth = 560,
-                    SizeToContent = SizeToContent.Height,
-                    MaxHeight = 520,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    CanResize = true,
-                };
+                await HandleUpdateNowAsync(button, game);
+                RefreshUpdateCheckStatus();
+                NotifyUpdateCheckUiProperties();
+                CloseAppUpdatesReviewIfEmpty();
+            }
+            finally
+            {
+                button.IsEnabled = true;
+            }
+        }
 
-                var listPanel = new StackPanel { Spacing = 8 };
-                var scrollViewer = new ScrollViewer
-                {
-                    MaxHeight = 360,
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                    Content = listPanel,
-                };
+        private async void AppUpdateReviewRowSkip_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button || button.DataContext is not GameInfo game)
+                return;
 
-                var updateAllButton = new Button
-                {
-                    Content = "Update All",
-                    MinWidth = 100,
-                    Margin = new Thickness(0, 0, 10, 0),
-                };
-                var closeButton = new Button
-                {
-                    Content = "Close",
-                    MinWidth = 80,
-                };
+            await HandleSkipUpdateAsync(game);
+            RefreshUpdateCheckStatus();
+            NotifyUpdateCheckUiProperties();
+            CloseAppUpdatesReviewIfEmpty();
+        }
 
-                void RebuildList()
+        private async void AppUpdateReviewRowVersions_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button || button.DataContext is not GameInfo game)
+                return;
+
+            ShowUpdateActionMenu(button, game);
+            await Task.CompletedTask;
+        }
+
+        private async void AppUpdatesUpdateAll_Click(object? sender, RoutedEventArgs e)
+        {
+            if (this.FindControl<Button>("AppUpdatesUpdateAllButton") is not Button updateAllButton)
+                return;
+
+            updateAllButton.IsEnabled = false;
+            if (this.FindControl<Button>("AppUpdatesSkipAllButton") is Button skipAllButton)
+                skipAllButton.IsEnabled = false;
+
+            try
+            {
+                foreach (var game in GetPendingAppUpdates().ToList())
                 {
-                    listPanel.Children.Clear();
-                    var pending = GetPendingAppUpdates();
-                    if (pending.Count == 0)
+                    if (!_isAppUpdatesReviewOpen)
+                        break;
+                    if (game.Status != GameStatus.UpdateAvailable)
+                        continue;
+
+                    var anchor = FindAppUpdateReviewActionButton(game, "Update") ?? updateAllButton;
+                    await HandleUpdateNowAsync(anchor, game, preferAutoPlatform: true);
+                    RefreshUpdateCheckStatus();
+                    NotifyUpdateCheckUiProperties();
+                    RefreshAppUpdateReviewRows();
+
+                    if (AppUpdateReviewRows.Count == 0)
                     {
-                        dialog.Close();
-                        return;
-                    }
-
-                    foreach (var game in pending)
-                    {
-                        var row = new Grid
-                        {
-                            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
-                            Margin = new Thickness(0, 0, 0, 4),
-                        };
-
-                        var versionText = !string.IsNullOrWhiteSpace(game.InstalledVersion) &&
-                                          !string.IsNullOrWhiteSpace(game.LatestVersion)
-                            ? $"{game.InstalledVersion} → {game.LatestVersion}"
-                            : game.StatusText;
-
-                        var infoPanel = new StackPanel { Spacing = 2 };
-                        infoPanel.Children.Add(new TextBlock
-                        {
-                            Text = game.Name ?? "Unknown app",
-                            FontWeight = FontWeight.Bold,
-                            TextWrapping = TextWrapping.Wrap,
-                        });
-                        infoPanel.Children.Add(new TextBlock
-                        {
-                            Text = versionText,
-                            FontSize = 12,
-                            Opacity = 0.8,
-                            TextWrapping = TextWrapping.Wrap,
-                        });
-                        Grid.SetColumn(infoPanel, 0);
-                        row.Children.Add(infoPanel);
-
-                        var updateButton = new Button
-                        {
-                            Content = "Update",
-                            MinWidth = 72,
-                            Margin = new Thickness(8, 0, 0, 0),
-                            VerticalAlignment = VerticalAlignment.Center,
-                        };
-                        var skipButton = new Button
-                        {
-                            Content = "Skip",
-                            MinWidth = 72,
-                            Margin = new Thickness(8, 0, 0, 0),
-                            VerticalAlignment = VerticalAlignment.Center,
-                        };
-
-                        var capturedGame = game;
-                        updateButton.Click += async (_, _) =>
-                        {
-                            updateButton.IsEnabled = false;
-                            skipButton.IsEnabled = false;
-                            updateAllButton.IsEnabled = false;
-                            try
-                            {
-                                await HandleUpdateNowAsync(updateButton, capturedGame);
-                                RefreshUpdateCheckStatus();
-                                NotifyUpdateCheckUiProperties();
-                                RebuildList();
-                            }
-                            finally
-                            {
-                                updateAllButton.IsEnabled = true;
-                            }
-                        };
-
-                        skipButton.Click += async (_, _) =>
-                        {
-                            updateButton.IsEnabled = false;
-                            skipButton.IsEnabled = false;
-                            updateAllButton.IsEnabled = false;
-                            try
-                            {
-                                await HandleSkipUpdateAsync(capturedGame);
-                                RefreshUpdateCheckStatus();
-                                NotifyUpdateCheckUiProperties();
-                                RebuildList();
-                            }
-                            finally
-                            {
-                                updateAllButton.IsEnabled = true;
-                            }
-                        };
-
-                        Grid.SetColumn(updateButton, 1);
-                        Grid.SetColumn(skipButton, 2);
-                        row.Children.Add(updateButton);
-                        row.Children.Add(skipButton);
-                        listPanel.Children.Add(row);
+                        ShowLibraryView();
+                        break;
                     }
                 }
-
-                updateAllButton.Click += async (_, _) =>
+            }
+            finally
+            {
+                if (_isAppUpdatesReviewOpen)
                 {
-                    updateAllButton.IsEnabled = false;
-                    closeButton.IsEnabled = false;
-                    try
-                    {
-                        foreach (var game in GetPendingAppUpdates().ToList())
-                        {
-                            if (game.Status != GameStatus.UpdateAvailable)
-                                continue;
+                    updateAllButton.IsEnabled = AppUpdateReviewRows.Count > 0;
+                    if (this.FindControl<Button>("AppUpdatesSkipAllButton") is Button skipAll)
+                        skipAll.IsEnabled = AppUpdateReviewRows.Count > 0;
+                }
+            }
+        }
 
-                            await HandleUpdateNowAsync(updateAllButton, game);
-                            RefreshUpdateCheckStatus();
-                            NotifyUpdateCheckUiProperties();
-                            RebuildList();
+        private async void AppUpdatesSkipAll_Click(object? sender, RoutedEventArgs e)
+        {
+            foreach (var game in GetPendingAppUpdates().ToList())
+                await HandleSkipUpdateAsync(game);
 
-                            if (!dialog.IsVisible)
-                                break;
-                        }
-                    }
-                    finally
-                    {
-                        updateAllButton.IsEnabled = true;
-                        closeButton.IsEnabled = true;
-                    }
-                };
+            RefreshUpdateCheckStatus();
+            NotifyUpdateCheckUiProperties();
+            ShowLibraryView();
+        }
 
-                closeButton.Click += (_, _) => dialog.Close();
+        private Button? FindAppUpdateReviewActionButton(GameInfo game, string content)
+        {
+            var itemsControl = this.FindControl<ItemsControl>("AppUpdatesReviewItemsControl");
+            if (itemsControl == null)
+                return null;
 
-                RebuildList();
-                if (GetPendingAppUpdates().Count == 0)
-                    return;
-
-                var buttonRow = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    Margin = new Thickness(0, 12, 0, 0),
-                    Children = { updateAllButton, closeButton },
-                };
-
-                dialog.Content = new StackPanel
-                {
-                    Margin = new Thickness(20),
-                    Spacing = 12,
-                    Children =
-                    {
-                        new TextBlock
-                        {
-                            Text = "Select apps to update or skip.",
-                            TextWrapping = TextWrapping.Wrap,
-                        },
-                        scrollViewer,
-                        buttonRow,
-                    },
-                };
-
-                GamepadModalDialogNavigation.Attach(dialog);
-                await dialog.ShowDialog(desktop.MainWindow);
-            });
+            return itemsControl.GetVisualDescendants()
+                .OfType<Button>()
+                .FirstOrDefault(b =>
+                    ReferenceEquals(b.DataContext, game) &&
+                    string.Equals(b.Content?.ToString(), content, StringComparison.Ordinal));
         }
 
         private async Task HandleChangeVersionAsync(Control anchor, GameInfo game)
@@ -2012,7 +1956,15 @@ namespace Quiver
             OpenContextMenu(anchor, contextMenu);
         }
 
-        private void ShowReleaseDownloadSelectionMenu(Control anchor, GameInfo game, GitHubRelease release, string preferredVersion, string skippedUpdateVersion)
+        private void ShowReleaseDownloadSelectionMenu(Control anchor, GameInfo game, GitHubRelease release, string? preferredVersion, string? skippedUpdateVersion) =>
+            _ = ShowReleaseDownloadSelectionMenuAsync(anchor, game, release, preferredVersion, skippedUpdateVersion);
+
+        private Task ShowReleaseDownloadSelectionMenuAsync(
+            Control anchor,
+            GameInfo game,
+            GitHubRelease release,
+            string? preferredVersion,
+            string? skippedUpdateVersion)
         {
             var availableAssets = release.assets?
                 .Where(asset => !asset.name.Contains("flatpak", StringComparison.OrdinalIgnoreCase))
@@ -2020,8 +1972,9 @@ namespace Quiver
                 .ToList() ?? [];
 
             if (availableAssets.Count == 0)
-                return;
+                return Task.CompletedTask;
 
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var contextMenu = new ContextMenu();
             contextMenu.Items.Add(new MenuItem
             {
@@ -2038,39 +1991,10 @@ namespace Quiver
                 bool isPreferred = GameInfo.MatchesPlatform(asset.name, platformIdentifier);
                 string? iconPath = GameInfo.GetPlatformIcon(asset.name);
 
-                var contentGrid = new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-                    HorizontalAlignment = HorizontalAlignment.Stretch
-                };
-
-                if (!string.IsNullOrEmpty(iconPath))
-                {
-                    var icon = new Avalonia.Controls.Image
-                    {
-                        Source = new Avalonia.Media.Imaging.Bitmap(Avalonia.Platform.AssetLoader.Open(new Uri(iconPath))),
-                        Width = 28,
-                        Height = 28,
-                        Margin = new Thickness(0, 0, 10, 0),
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    Grid.SetColumn(icon, 0);
-                    contentGrid.Children.Add(icon);
-                }
-
                 var displayName = asset.name + (isPreferred ? " (Recommended)" : "");
-                var textBlock = new TextBlock
-                {
-                    Text = displayName,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                };
-                Grid.SetColumn(textBlock, 1);
-                contentGrid.Children.Add(textBlock);
-
                 var menuItem = new MenuItem
                 {
-                    Header = contentGrid
+                    Header = CreateDownloadAssetMenuHeader(displayName, iconPath)
                 };
 
                 if (isPreferred)
@@ -2102,7 +2026,17 @@ namespace Quiver
 
             contextMenu.Items.Add(new Separator());
             contextMenu.Items.Add(new MenuItem { Header = "Cancel" });
+            ApplyDownloadSelectionMenuWidth(contextMenu);
+
+            void OnClosed(object? sender, EventArgs e)
+            {
+                contextMenu.Closed -= OnClosed;
+                tcs.TrySetResult();
+            }
+
+            contextMenu.Closed += OnClosed;
             OpenContextMenu(anchor, contextMenu);
+            return tcs.Task;
         }
 
         private void ShowExecutableSelectionMenu(Control anchor, GameInfo game)
@@ -2267,14 +2201,18 @@ namespace Quiver
             var latestGame = _gameManager.GetLatestPlayedInstalledGame();
             if (latestGame != null)
             {
+                var launched = false;
                 try
                 {
-                    await latestGame.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
+                    launched = await latestGame.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
+                    UpdateContinueButtonState();
                 }
                 catch (Exception ex)
                 {
                     await ShowMessageBoxAsync($"Failed to launch {latestGame.Name}: {ex.Message}", "Launch Error");
                 }
+
+                CloseAfterLaunchIfNeeded(launched);
             }
             else
             {
@@ -2352,6 +2290,7 @@ namespace Quiver
 
             if (_settings.EnableGamepadInput)
             {
+                DismissTextInputFocus();
                 SelectInitialGamepadItemForCurrentView();
                 return true;
             }
@@ -2608,6 +2547,7 @@ namespace Quiver
         {
             _mainViewMode = MainViewMode.Library;
             _appCatalogSubView = AppCatalogSubView.Sources;
+            _isAppUpdatesReviewOpen = false;
             ResetGamepadNavigationIndices();
             UpdateMainViewUi();
             if (_settings.EnableGamepadInput)
@@ -2618,6 +2558,7 @@ namespace Quiver
         {
             _mainViewMode = MainViewMode.AppCatalog;
             _appCatalogSubView = AppCatalogSubView.Sources;
+            _isAppUpdatesReviewOpen = false;
             _activeCatalogSyncSource = null;
             CatalogSyncRows.Clear();
             ResetGamepadNavigationIndices();
@@ -2630,6 +2571,7 @@ namespace Quiver
         {
             _mainViewMode = MainViewMode.AppCatalog;
             _appCatalogSubView = AppCatalogSubView.Review;
+            _isAppUpdatesReviewOpen = false;
             _activeCatalogSyncSource = source;
             ResetGamepadNavigationIndices();
             UpdateMainViewUi();
@@ -2641,11 +2583,61 @@ namespace Quiver
                 SelectInitialCatalogReviewGamepadItem();
         }
 
+        private void OpenAppUpdatesReview()
+        {
+            _mainViewMode = MainViewMode.Library;
+            _appCatalogSubView = AppCatalogSubView.Sources;
+            _isAppUpdatesReviewOpen = true;
+            RefreshAppUpdateReviewRows();
+            ResetGamepadNavigationIndices();
+            UpdateMainViewUi();
+
+            if (_settings.EnableGamepadInput)
+                SelectInitialAppUpdatesReviewGamepadItem();
+        }
+
+        private void RefreshAppUpdateReviewRows()
+        {
+            var pending = GetPendingAppUpdates();
+            AppUpdateReviewRows.Clear();
+            foreach (var game in pending)
+                AppUpdateReviewRows.Add(game);
+
+            if (this.FindControl<TextBlock>("AppUpdatesReviewHeaderText") is TextBlock header)
+            {
+                header.Text = pending.Count == 0
+                    ? "No app updates pending."
+                    : pending.Count == 1
+                        ? "1 app update is available"
+                        : $"{pending.Count} app updates are available";
+            }
+
+            if (this.FindControl<TextBlock>("AppUpdatesReviewEmptyText") is TextBlock emptyText)
+                emptyText.IsVisible = pending.Count == 0;
+
+            if (this.FindControl<Button>("AppUpdatesUpdateAllButton") is Button updateAll)
+                updateAll.IsEnabled = pending.Count > 0;
+
+            if (this.FindControl<Button>("AppUpdatesSkipAllButton") is Button skipAll)
+                skipAll.IsEnabled = pending.Count > 0;
+        }
+
+        private void CloseAppUpdatesReviewIfEmpty()
+        {
+            if (!_isAppUpdatesReviewOpen)
+                return;
+
+            RefreshAppUpdateReviewRows();
+            if (AppUpdateReviewRows.Count == 0)
+                ShowLibraryView();
+        }
+
         private void UpdateMainViewUi()
         {
             var isLibrary = _mainViewMode == MainViewMode.Library;
             var isCatalog = _mainViewMode == MainViewMode.AppCatalog;
             var isReview = isCatalog && _appCatalogSubView == AppCatalogSubView.Review;
+            var isAppUpdatesReview = isLibrary && _isAppUpdatesReviewOpen;
 
             if (this.FindControl<Grid>("LibraryViewContainer") is Grid libraryView)
                 libraryView.IsVisible = isLibrary;
@@ -2659,8 +2651,11 @@ namespace Quiver
             if (this.FindControl<Grid>("CatalogReviewPanel") is Grid reviewPanel)
                 reviewPanel.IsVisible = isReview;
 
+            if (this.FindControl<Grid>("AppUpdatesReviewPanel") is Grid appUpdatesPanel)
+                appUpdatesPanel.IsVisible = isAppUpdatesReview;
+
             if (this.FindControl<StackPanel>("LibraryTopBarPanel") is StackPanel libraryTopBar)
-                libraryTopBar.IsVisible = isLibrary;
+                libraryTopBar.IsVisible = isLibrary && !isAppUpdatesReview;
 
             if (this.FindControl<StackPanel>("CatalogReviewTopBarPanel") is StackPanel catalogReviewTopBar)
                 catalogReviewTopBar.IsVisible = isReview;
@@ -2669,18 +2664,20 @@ namespace Quiver
                 backButton.IsVisible = isReview;
 
             if (this.FindControl<Grid>("LibraryFiltersPanel") is Grid libraryFilters)
-                libraryFilters.IsVisible = isLibrary;
+                libraryFilters.IsVisible = isLibrary && !isAppUpdatesReview;
 
             LibraryNavButton?.Classes.Set("selected", isLibrary);
             AppCatalogNavButton?.Classes.Set("selected", isCatalog);
 
             if (this.FindControl<TextBlock>("HeaderTitleText") is TextBlock headerTitle)
             {
-                headerTitle.Text = isLibrary
-                    ? "Library"
-                    : isReview && _activeCatalogSyncSource != null
-                        ? $"Review: {_activeCatalogSyncSource.Name}"
-                        : "App Catalog";
+                headerTitle.Text = isAppUpdatesReview
+                    ? "App Updates"
+                    : isLibrary
+                        ? "Library"
+                        : isReview && _activeCatalogSyncSource != null
+                            ? $"Review: {_activeCatalogSyncSource.Name}"
+                            : "App Catalog";
             }
 
             UpdateLibraryEmptyState();
@@ -2689,14 +2686,14 @@ namespace Quiver
 
         private void UpdateLibraryEmptyState()
         {
-            var showLibrary = _mainViewMode == MainViewMode.Library;
+            var showLibrary = _mainViewMode == MainViewMode.Library && !_isAppUpdatesReviewOpen;
             var showEmptyState = showLibrary && IsLibraryEmpty;
 
             if (EmptyLibraryPanel != null)
                 EmptyLibraryPanel.IsVisible = showEmptyState;
 
             if (LibraryContentPanel != null)
-                LibraryContentPanel.IsVisible = showLibrary && !IsLibraryEmpty;
+                LibraryContentPanel.IsVisible = showLibrary && !showEmptyState;
         }
 
         private void EmptyLibraryAddApp_Click(object? sender, RoutedEventArgs e) =>
@@ -2937,7 +2934,7 @@ namespace Quiver
                 true);
 
             if (openReview)
-                await ShowAppUpdatesReviewDialogAsync();
+                OpenAppUpdatesReview();
 
             return true;
         }
@@ -3231,7 +3228,22 @@ namespace Quiver
 
         private async Task ApplyCatalogSyncLocalAppsAsync(List<GameInfo> localApps)
         {
+            var previousApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
+            var previousByRepo = previousApps
+                .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
+                .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
+
             await _gameManager.CatalogService.SaveLocalAppsAsync(localApps);
+
+            foreach (var app in localApps.Where(a => !string.IsNullOrWhiteSpace(a.Repository)))
+            {
+                previousByRepo.TryGetValue(app.Repository!, out var previous);
+                AppFilesToAddService.SyncForGame(
+                    app,
+                    _gameManager.GamesFolder,
+                    previous?.FilesToAdd);
+            }
+
             await _gameManager.LoadGamesAsync();
             ApplySorting();
 
@@ -3767,7 +3779,7 @@ namespace Quiver
                     if (choice == CombinedUpdateChoice.UpdateQuiver)
                         await app.ApplyPendingLauncherUpdateAsync();
                     else if (choice == CombinedUpdateChoice.UpdateApps)
-                        await ShowAppUpdatesReviewDialogAsync();
+                        OpenAppUpdatesReview();
                 }
                 else if (launcherPending)
                 {
@@ -3896,8 +3908,7 @@ namespace Quiver
 
                 UpdateContinueButtonState();
 
-                if (launched && _settings.CloseAfterLaunch)
-                    Close();
+                CloseAfterLaunchIfNeeded(launched);
             }
             catch (Exception ex)
             {
@@ -5719,6 +5730,8 @@ namespace Quiver
             NewGameIconTextBox.Text = game.GameIconUrl ?? "";
             if (NewGameTagsTextBox != null)
                 NewGameTagsTextBox.Text = TagHelper.FormatTagsForDisplay(game.Tags);
+            if (NewGameFilesToAddTextBox != null)
+                NewGameFilesToAddTextBox.Text = AppFilesToAddService.FormatForDisplay(game.FilesToAdd);
             CreateEditButton.Content = "Update Entry";
             CancelButton.IsVisible = true;
 
@@ -5796,6 +5809,7 @@ namespace Quiver
                 var folderName = NewGameFolderTextBox?.Text?.Trim();
                 var iconUrl = NewGameIconTextBox?.Text?.Trim();
                 var tags = TagHelper.ParseCommaSeparatedTags(NewGameTagsTextBox?.Text);
+                var filesToAdd = AppFilesToAddService.ParseCommaSeparated(NewGameFilesToAddTextBox?.Text);
 
                 if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(repository) || string.IsNullOrEmpty(folderName))
                 {
@@ -5839,12 +5853,15 @@ namespace Quiver
                         }
                     }
 
+                    var previousFilesToAdd = AppFilesToAddService.Normalize(appToUpdate.FilesToAdd);
                     appToUpdate.Name = name;
                     appToUpdate.FolderName = folderName;
                     appToUpdate.GameIconUrl = iconUrl;
                     appToUpdate.Tags = tags;
+                    appToUpdate.FilesToAdd = filesToAdd;
 
                     await SaveGamesToJsonAsync(games);
+                    AppFilesToAddService.SyncForGame(appToUpdate, _gameManager.GamesFolder, previousFilesToAdd);
                     _ = ShowMessageBoxAsync("App entry updated successfully", "App Updated");
                 }
                 else
@@ -5855,18 +5872,21 @@ namespace Quiver
                         return;
                     }
 
-                    games.Add(new GameInfo
+                    var newApp = new GameInfo
                     {
                         Name = name,
                         Repository = repository,
                         FolderName = folderName,
                         GameIconUrl = iconUrl,
                         Tags = tags,
+                        FilesToAdd = filesToAdd,
                         IsCustom = true,
                         IsExperimental = false
-                    });
+                    };
+                    games.Add(newApp);
 
                     await SaveGamesToJsonAsync(games);
+                    AppFilesToAddService.SyncForGame(newApp, _gameManager.GamesFolder);
                     _ = ShowMessageBoxAsync("New app entry created successfully", "App Added");
                 }
 
@@ -5971,6 +5991,7 @@ namespace Quiver
             if (NewGameFolderTextBox != null) NewGameFolderTextBox.Text = "";
             if (NewGameIconTextBox != null) NewGameIconTextBox.Text = "";
             if (NewGameTagsTextBox != null) NewGameTagsTextBox.Text = "";
+            if (NewGameFilesToAddTextBox != null) NewGameFilesToAddTextBox.Text = "";
             if (CreateEditButton != null) CreateEditButton.Content = "Create Entry";
             if (FormTitleText != null) FormTitleText.Text = "Create New Entry";
             if (ValidationStatusText != null) ValidationStatusText.Text = "";
@@ -6424,6 +6445,9 @@ namespace Quiver
             if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Review)
                 return HandleCatalogReviewGamepadNavigation(direction);
 
+            if (_mainViewMode == MainViewMode.Library && _isAppUpdatesReviewOpen)
+                return HandleAppUpdatesReviewGamepadNavigation(direction);
+
             if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Sources)
             {
                 return _gamepadNavigation.ActiveZone switch
@@ -6555,6 +6579,7 @@ namespace Quiver
             Add(NewGameFolderTextBox);
             Add(NewGameTagsTextBox);
             Add(NewGameIconTextBox);
+            Add(NewGameFilesToAddTextBox);
             Add(CancelButton);
             Add(CreateEditButton);
             return controls;
@@ -6935,6 +6960,9 @@ namespace Quiver
 
         private GamepadNavigationZone GetMainContentGamepadZone()
         {
+            if (_mainViewMode == MainViewMode.Library && _isAppUpdatesReviewOpen)
+                return GamepadNavigationZone.AppUpdatesReviewList;
+
             if (_mainViewMode == MainViewMode.Library)
                 return GamepadNavigationZone.Library;
 
@@ -6951,6 +6979,9 @@ namespace Quiver
             _gamepadNavigation.CatalogReviewFilterIndex = -1;
             _gamepadNavigation.CatalogReviewSelectedIndex = -1;
             _gamepadNavigation.CatalogReviewRowActionIndex = -1;
+            _gamepadNavigation.AppUpdatesReviewToolbarIndex = -1;
+            _gamepadNavigation.AppUpdatesReviewSelectedIndex = -1;
+            _gamepadNavigation.AppUpdatesReviewRowActionIndex = -1;
             _gamepadNavigation.CatalogSourcesToolbarSelectedIndex = -1;
             _gamepadNavigation.CatalogSourcesFilterIndex = -1;
             _gamepadNavigation.CatalogSourceCardActionIndex = -1;
@@ -7068,6 +7099,25 @@ namespace Quiver
                     }
 
                     ApplyCatalogReviewRowSelection(transition.SelectedIndex ?? 0);
+                    return true;
+                case GamepadNavigationZone.AppUpdatesReviewToolbar:
+                    ApplyAppUpdatesReviewToolbarSelection(transition.SelectedIndex ?? 0);
+                    return true;
+                case GamepadNavigationZone.AppUpdatesReviewList:
+                    if (AppUpdateReviewRows.Count == 0)
+                    {
+                        ApplyAppUpdatesReviewToolbarSelection(0);
+                        return true;
+                    }
+
+                    ApplyAppUpdatesReviewRowSelection(transition.SelectedIndex ?? 0);
+                    return true;
+                case GamepadNavigationZone.AppUpdatesReviewRowActions:
+                    ApplyAppUpdatesReviewRowActionSelection(
+                        transition.SelectedIndex ??
+                        (_gamepadNavigation.AppUpdatesReviewRowActionIndex < 0
+                            ? 0
+                            : _gamepadNavigation.AppUpdatesReviewRowActionIndex));
                     return true;
                 default:
                     return false;
@@ -7393,15 +7443,42 @@ namespace Quiver
 
         private bool HandleCatalogReviewFiltersGamepadNavigation(Services.NavigationDirection direction)
         {
+            var filterChips = CollectCatalogReviewFilterChipControls();
+            var bulkActions = CollectCatalogReviewBulkActionControls();
             var controls = CollectCatalogReviewFilterControls();
             if (controls.Count == 0)
                 return false;
 
-            var currentIndex = _gamepadNavigation.CatalogReviewFilterIndex;
+            var filterCount = filterChips.Count;
+            var currentIndex = _gamepadNavigation.ClampIndex(
+                _gamepadNavigation.CatalogReviewFilterIndex,
+                controls.Count);
+            var onBulkRow = filterCount > 0
+                ? currentIndex >= filterCount
+                : bulkActions.Count > 0;
 
-            // Down: prefer empty-state Back buttons when the review list is empty.
+            if (direction == Services.NavigationDirection.Up)
+            {
+                // Filters sit below bulk actions — Up from a filter chip focuses the bulk row.
+                if (!onBulkRow && bulkActions.Count > 0)
+                {
+                    ApplyCatalogReviewFilterSelection(filterCount);
+                    return true;
+                }
+
+                return TryApplyGamepadZoneTransition(
+                    new GamepadZoneTransition(GamepadNavigationZone.TopBar, null));
+            }
+
             if (direction == Services.NavigationDirection.Down)
             {
+                // Bulk actions sit above filters — Down from the bulk row focuses the filter chips.
+                if (onBulkRow && filterCount > 0)
+                {
+                    ApplyCatalogReviewFilterSelection(0);
+                    return true;
+                }
+
                 if (CatalogSyncRows.Count == 0)
                 {
                     var emptyActions = CollectCatalogReviewEmptyActionControls();
@@ -7418,13 +7495,91 @@ namespace Quiver
                     new GamepadZoneTransition(GamepadNavigationZone.CatalogReviewList, 0));
             }
 
-            if (direction == Services.NavigationDirection.Up)
+            // Left/Right stay within the current row (filters or bulk actions).
+            if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
+                return true;
+
+            if (onBulkRow)
             {
-                return TryApplyGamepadZoneTransition(
-                    new GamepadZoneTransition(GamepadNavigationZone.TopBar, null));
+                var localIndex = Math.Max(0, currentIndex - filterCount);
+                if (direction == Services.NavigationDirection.Left && localIndex <= 0)
+                {
+                    return TryApplyGamepadZoneTransition(
+                        new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null));
+                }
+
+                var nextLocal = _gamepadNavigation.MoveHorizontalIndex(localIndex, direction, bulkActions.Count);
+                ApplyCatalogReviewFilterSelection(filterCount + nextLocal);
+                return true;
             }
 
-            // Left/Right stay in the filter strip; only Left from the first chip exits to sidebar.
+            if (direction == Services.NavigationDirection.Left && currentIndex <= 0)
+            {
+                return TryApplyGamepadZoneTransition(
+                    new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null));
+            }
+
+            var nextIndex = _gamepadNavigation.MoveHorizontalIndex(currentIndex, direction, filterCount);
+            ApplyCatalogReviewFilterSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleAppUpdatesReviewGamepadNavigation(Services.NavigationDirection direction)
+        {
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewToolbar)
+                return HandleAppUpdatesReviewToolbarNavigation(direction);
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewRowActions)
+                return HandleAppUpdatesReviewRowActionsNavigation(direction);
+
+            var rows = AppUpdateReviewRows.ToList();
+            var currentIndex = _gamepadNavigation.AppUpdatesReviewSelectedIndex;
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.AppUpdatesReviewList,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                currentIndex,
+                rows.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            if (rows.Count == 0)
+                return true;
+
+            if (direction == Services.NavigationDirection.Right)
+            {
+                ApplyAppUpdatesReviewRowActionSelection(0);
+                return true;
+            }
+
+            var nextIndex = _gamepadNavigation.MoveListIndex(currentIndex, direction, rows.Count);
+            ApplyAppUpdatesReviewRowSelection(nextIndex);
+            return true;
+        }
+
+        private bool HandleAppUpdatesReviewToolbarNavigation(Services.NavigationDirection direction)
+        {
+            var controls = CollectAppUpdatesReviewToolbarControls();
+            if (controls.Count == 0)
+                return false;
+
+            var currentIndex = _gamepadNavigation.AppUpdatesReviewToolbarIndex;
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.AppUpdatesReviewToolbar,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                currentIndex,
+                controls.Count);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
             if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
                 return true;
 
@@ -7435,8 +7590,224 @@ namespace Quiver
             }
 
             var nextIndex = _gamepadNavigation.MoveHorizontalIndex(currentIndex, direction, controls.Count);
-            ApplyCatalogReviewFilterSelection(nextIndex);
+            ApplyAppUpdatesReviewToolbarSelection(nextIndex);
             return true;
+        }
+
+        private bool HandleAppUpdatesReviewRowActionsNavigation(Services.NavigationDirection direction)
+        {
+            var rows = AppUpdateReviewRows.ToList();
+            if (rows.Count == 0)
+                return false;
+
+            var rowIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.AppUpdatesReviewSelectedIndex, rows.Count);
+            if (rowIndex < 0 || rowIndex >= rows.Count)
+                return false;
+
+            var controls = CollectAppUpdatesReviewRowActionControls(rows[rowIndex]);
+            if (controls.Count == 0)
+                return false;
+
+            var currentIndex = _gamepadNavigation.AppUpdatesReviewRowActionIndex;
+
+            if (direction is Services.NavigationDirection.Up or Services.NavigationDirection.Down)
+            {
+                ClearAppUpdatesReviewRowActionsGamepadFocus();
+                var nextRow = _gamepadNavigation.MoveListIndex(rowIndex, direction, rows.Count);
+                ApplyAppUpdatesReviewRowSelection(nextRow);
+                return true;
+            }
+
+            if (direction == Services.NavigationDirection.Left && currentIndex <= 0)
+            {
+                ClearAppUpdatesReviewRowActionsGamepadFocus();
+                ApplyAppUpdatesReviewRowSelection(rowIndex);
+                return true;
+            }
+
+            if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
+                return false;
+
+            var nextIndex = _gamepadNavigation.MoveHorizontalIndex(currentIndex, direction, controls.Count);
+            ApplyAppUpdatesReviewRowActionSelection(nextIndex);
+            return true;
+        }
+
+        private List<Control> CollectAppUpdatesReviewToolbarControls()
+        {
+            var controls = new List<Control>();
+
+            void Add(Control? control)
+            {
+                if (control != null && control.IsVisible && control.IsEnabled)
+                    controls.Add(control);
+            }
+
+            Add(this.FindControl<Button>("AppUpdatesUpdateAllButton"));
+            Add(this.FindControl<Button>("AppUpdatesSkipAllButton"));
+            Add(this.FindControl<Button>("AppUpdatesBackToLibraryButton"));
+            return controls;
+        }
+
+        private List<Control> CollectAppUpdatesReviewRowActionControls(GameInfo game)
+        {
+            var controls = new List<Control>();
+            var itemsControl = this.FindControl<ItemsControl>("AppUpdatesReviewItemsControl");
+            if (itemsControl == null)
+                return controls;
+
+            foreach (var button in itemsControl.GetVisualDescendants().OfType<Button>())
+            {
+                if (!ReferenceEquals(button.DataContext, game))
+                    continue;
+                if (!button.IsVisible || !button.IsEnabled)
+                    continue;
+                controls.Add(button);
+            }
+
+            return controls;
+        }
+
+        private void ApplyAppUpdatesReviewToolbarSelection(int index)
+        {
+            var controls = CollectAppUpdatesReviewToolbarControls();
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _gamepadNavigation.AppUpdatesReviewToolbarIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.AppUpdatesReviewToolbar;
+
+            ClearGamepadFocus();
+            ClearAppUpdatesReviewRowFocus();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            controls[index].Focus();
+        }
+
+        private void ApplyAppUpdatesReviewRowSelection(int index)
+        {
+            var rows = AppUpdateReviewRows.ToList();
+            index = _gamepadNavigation.ClampIndex(index, rows.Count);
+            _gamepadNavigation.AppUpdatesReviewSelectedIndex = index;
+            _gamepadNavigation.AppUpdatesReviewRowActionIndex = -1;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.AppUpdatesReviewList;
+
+            ClearAppUpdatesReviewToolbarGamepadFocus();
+            ClearAppUpdatesReviewRowActionsGamepadFocus();
+            ClearAppUpdatesReviewRowFocus();
+            ClearGamepadFocus();
+            if (index < 0 || index >= rows.Count)
+                return;
+
+            rows[index].IsGamepadFocused = true;
+            Dispatcher.UIThread.Post(
+                () => FindAppUpdateReviewRowBorder(rows[index])?.BringIntoView(),
+                DispatcherPriority.Loaded);
+        }
+
+        private void ApplyAppUpdatesReviewRowActionSelection(int index)
+        {
+            var rows = AppUpdateReviewRows.ToList();
+            var rowIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.AppUpdatesReviewSelectedIndex, rows.Count);
+            if (rowIndex < 0 || rowIndex >= rows.Count)
+                return;
+
+            var controls = CollectAppUpdatesReviewRowActionControls(rows[rowIndex]);
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _gamepadNavigation.AppUpdatesReviewRowActionIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.AppUpdatesReviewRowActions;
+
+            ClearAppUpdatesReviewToolbarGamepadFocus();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            controls[index].Focus();
+        }
+
+        private void ClearAppUpdatesReviewToolbarGamepadFocus() =>
+            ClearStyledControlsGamepadFocusClasses(CollectAppUpdatesReviewToolbarControls());
+
+        private void ClearAppUpdatesReviewRowActionsGamepadFocus()
+        {
+            var rows = AppUpdateReviewRows.ToList();
+            var rowIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.AppUpdatesReviewSelectedIndex, rows.Count);
+            if (rowIndex < 0 || rowIndex >= rows.Count)
+                return;
+
+            ClearStyledControlsGamepadFocusClasses(CollectAppUpdatesReviewRowActionControls(rows[rowIndex]));
+        }
+
+        private void ClearAppUpdatesReviewRowFocus()
+        {
+            foreach (var game in AppUpdateReviewRows)
+                game.IsGamepadFocused = false;
+        }
+
+        private Border? FindAppUpdateReviewRowBorder(GameInfo game)
+        {
+            var itemsControl = this.FindControl<ItemsControl>("AppUpdatesReviewItemsControl");
+            return itemsControl?.GetVisualDescendants()
+                .OfType<Border>()
+                .FirstOrDefault(b => ReferenceEquals(b.DataContext, game));
+        }
+
+        private void SelectInitialAppUpdatesReviewGamepadItem()
+        {
+            if (AppUpdateReviewRows.Count == 0)
+            {
+                ApplyAppUpdatesReviewToolbarSelection(0);
+                return;
+            }
+
+            ApplyAppUpdatesReviewRowSelection(0);
+        }
+
+        private void ActivateAppUpdatesReviewToolbarSelection()
+        {
+            var controls = CollectAppUpdatesReviewToolbarControls();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.AppUpdatesReviewToolbarIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is Button button)
+                GamepadControlActivation.ActivateButton(button);
+        }
+
+        private void ActivateAppUpdatesReviewRowSelection()
+        {
+            var rows = AppUpdateReviewRows.ToList();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.AppUpdatesReviewSelectedIndex, rows.Count);
+            if (index < 0 || index >= rows.Count)
+                return;
+
+            var controls = CollectAppUpdatesReviewRowActionControls(rows[index]);
+            if (controls.Count == 0)
+                return;
+
+            ApplyAppUpdatesReviewRowActionSelection(0);
+        }
+
+        private void ActivateAppUpdatesReviewRowActionSelection()
+        {
+            var rows = AppUpdateReviewRows.ToList();
+            var rowIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.AppUpdatesReviewSelectedIndex, rows.Count);
+            if (rowIndex < 0 || rowIndex >= rows.Count)
+                return;
+
+            var controls = CollectAppUpdatesReviewRowActionControls(rows[rowIndex]);
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.AppUpdatesReviewRowActionIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is Button button)
+                GamepadControlActivation.ActivateButton(button);
         }
 
         private bool HandleSidebarGamepadNavigation(Services.NavigationDirection direction)
@@ -7580,7 +7951,7 @@ namespace Quiver
             return controls;
         }
 
-        private List<Control> CollectCatalogReviewFilterControls()
+        private List<Control> CollectCatalogReviewFilterChipControls()
         {
             var controls = new List<Control>();
 
@@ -7590,7 +7961,6 @@ namespace Quiver
                     controls.Add(control);
             }
 
-            // Filter chips first so Left/Right lands on filters, not bulk actions.
             Add(CatalogFilterAllButton);
             Add(CatalogFilterNeedsReviewButton);
             Add(CatalogFilterNewButton);
@@ -7598,9 +7968,31 @@ namespace Quiver
             Add(CatalogFilterChangedButton);
             Add(CatalogFilterUpToDateButton);
             Add(CatalogFilterHiddenButton);
+            return controls;
+        }
+
+        private List<Control> CollectCatalogReviewBulkActionControls()
+        {
+            var controls = new List<Control>();
+
+            void Add(Control? control)
+            {
+                if (control != null && control.IsVisible && control.IsEnabled)
+                    controls.Add(control);
+            }
+
             Add(CatalogSyncAddAllButton);
             Add(CatalogSyncReplaceAllButton);
             Add(CatalogSyncAcknowledgeButton);
+            return controls;
+        }
+
+        private List<Control> CollectCatalogReviewFilterControls()
+        {
+            // Filter chips first so initial focus / Left-Right within the filter row
+            // lands on filters; bulk actions follow as the row above (reached via Up).
+            var controls = CollectCatalogReviewFilterChipControls();
+            controls.AddRange(CollectCatalogReviewBulkActionControls());
             return controls;
         }
 
@@ -7920,6 +8312,24 @@ namespace Quiver
             }
         }
 
+        private void DismissTextInputFocus()
+        {
+            TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
+        }
+
+        private void CloseAfterLaunchIfNeeded(bool launched)
+        {
+            if (!launched || !_settings.CloseAfterLaunch)
+                return;
+
+            DismissTextInputFocus();
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                Hide();
+
+            Close();
+        }
+
         private void ApplyCatalogReviewFilterSelection(int index)
         {
             var controls = CollectCatalogReviewFilterControls();
@@ -7985,7 +8395,9 @@ namespace Quiver
 
         private void SelectInitialGamepadItemForCurrentView()
         {
-            if (_mainViewMode == MainViewMode.Library)
+            if (_mainViewMode == MainViewMode.Library && _isAppUpdatesReviewOpen)
+                SelectInitialAppUpdatesReviewGamepadItem();
+            else if (_mainViewMode == MainViewMode.Library)
                 SelectInitialLibraryGamepadItem();
             else if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Sources)
                 SelectInitialCatalogGamepadItem();
@@ -8414,8 +8826,7 @@ namespace Quiver
                 RestoreLibraryGamepadFocusAfterMenu();
             }
 
-            if (launched && _settings.CloseAfterLaunch)
-                Close();
+            CloseAfterLaunchIfNeeded(launched);
         }
 
         private async Task ReviewCatalogSourceByIdAsync(string sourceId)
@@ -8699,6 +9110,27 @@ namespace Quiver
             }
 
             if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewToolbar)
+            {
+                ActivateAppUpdatesReviewToolbarSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewList)
+            {
+                ActivateAppUpdatesReviewRowSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewRowActions)
+            {
+                ActivateAppUpdatesReviewRowActionSelection();
+                return;
+            }
+
+            if (_settings.EnableGamepadInput &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesToolbar)
             {
                 ActivateCatalogSourcesToolbarSelection();
@@ -8859,6 +9291,17 @@ namespace Quiver
                     SelectInitialCatalogReviewGamepadItem();
                     return true;
 
+                case GamepadNavigationZone.AppUpdatesReviewToolbar:
+                case GamepadNavigationZone.AppUpdatesReviewRowActions:
+                    ClearAppUpdatesReviewToolbarGamepadFocus();
+                    ClearAppUpdatesReviewRowActionsGamepadFocus();
+                    SelectInitialAppUpdatesReviewGamepadItem();
+                    return true;
+
+                case GamepadNavigationZone.AppUpdatesReviewList:
+                    ShowLibraryView();
+                    return true;
+
                 default:
                     return false;
             }
@@ -8955,6 +9398,7 @@ namespace Quiver
 
         private void OnGameProcessStarted(Process? process)
         {
+            DismissTextInputFocus();
             _launchedGameOwnsInput = true;
             _trackingLaunchedGameProcess = process != null;
             _inputService?.SetWindowActive(false);

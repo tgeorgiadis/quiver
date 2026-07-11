@@ -238,7 +238,7 @@ public class AppCatalogServiceTests
             fetched.Should().BeTrue();
             source.Name.Should().Be("N64 Recomps");
             source.Description.Should().Be("N64 recompilation ports");
-            source.CachedListVersion.Should().Be("1.0.2");
+            source.CachedListVersion.Should().Be("1.0.4");
         }
         finally
         {

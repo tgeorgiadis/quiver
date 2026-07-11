@@ -1,24 +1,21 @@
-# Quiver v2.3.4
+# Quiver v2.3.5
 
-Controller and catalog-review polish release. Focus rings, overlays, and confirm actions behave more consistently across Settings, Library, and App Catalog.
+App updates, install extras, and Steam Deck / Linux polish. Checking for updates opens an in-window review instead of a broken modal, and catalog installs can ship small companion files like `portable.txt`.
 
-## Gamepad / controller
+## App Updates review
 
-- **Custom bindings** — Rebind Confirm, Cancel, Options, and navigation in Settings; refresh controllers and reset to defaults when needed.
-- **Settings** — Left/Right switch tabs; A toggles checkboxes correctly; focus rings only show on the active control.
-- **Overlays stay trapped** — Display Filter, Create/Edit Entry, and Changelog keep stick input inside the overlay. B / Options dismisses them and returns to the Library.
-- **Changelog** — Opening Show Changelog closes the options menu, adds a Close button, and lets B return to the Library.
-- **Context menus** — Options dismisses an open menu instead of stacking another; library card focus stays visible while a menu is open.
-- **Combo boxes** — Opening a dropdown with A actually opens it for controller selection.
+- **In-window review** — Pending app updates open in the main Library view (like catalog review), not a separate popup. Update, Skip, Versions, and download/executable menus stay on MainWindow so they work with mouse and controller.
+- **Update All** — Runs updates one after another; auto-picks the recommended platform download when it can, otherwise pauses on that app’s download menu until you choose.
+- **Skip all / Back to Library** — Clear the queue or leave review without updating.
+- **Gamepad** — Navigate the update list, row actions (Update / Skip / Versions), and toolbar without the old modal Confirm-closes-everything behavior.
 
-## App Catalog review
+## Files to add
 
-- **Add / row actions** — A on a review row enters the action strip first; a second A confirms Add/Replace/etc. After Add, the next app keeps a clear focus ring (and Add stays ready).
-- **Filter chips** — Left/Right across All / Needs review / New / … shows an orange focus ring and starts on the filter chips (not bulk actions).
-- **Needs review complete** — Back to Library and Back to sources are reachable with the controller and activate with A.
+- **`filesToAdd` in catalogs** — Catalog entries can list small files to create next to an install (for example `portable.txt` for N64 Recomps). Synced on install, edit, and catalog apply; shown in the Create/Edit Entry form and catalog review diffs.
 
-## Fixes
+## Fixes & UX
 
-- Settings tick options no longer ignore A (CheckBox was incorrectly treated as a plain Button).
-- Changelog no longer leaves the context menu stuck on screen with no way back.
-- Review list no longer silently “selects” the next Add with no visible focus after adding an app.
+- **Continue + Close After Launch** — Continue now respects Close After Launch the same way other launch paths do.
+- **Download picker width** — Release download menus no longer crush long asset names (especially on Steam Deck).
+- **Linux on-screen keyboard** — Dismisses text focus before closing after launch so the OSK does not stick around.
+- **Catalog review filters** — Up from filter chips goes to bulk actions, then Top Bar (two-row navigation instead of jumping straight out).

@@ -1,7 +1,7 @@
 {
   "name": "N64 Recomps",
   "description": "N64 recompilation ports",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "apps": [
     {
       "name": "Banjo-Kazooie (Recomp)",
@@ -17,6 +17,9 @@
         "recomp",
         "recompilation",
         "banjo"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -33,6 +36,9 @@
         "recomp",
         "recompilation",
         "bomberman"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -49,6 +55,9 @@
         "recomp",
         "recompilation",
         "bomberman"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -65,6 +74,9 @@
         "recomp",
         "recompilation",
         "castlevania"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -81,6 +93,9 @@
         "recomp",
         "recompilation",
         "chameleon twist"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -97,6 +112,9 @@
         "recomp",
         "recompilation",
         "dinosaur planet"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -113,6 +131,9 @@
         "recomp",
         "recompilation",
         "mario"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -129,6 +150,9 @@
         "recomp",
         "recompilation",
         "duke nukem"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -145,6 +169,9 @@
         "recomp",
         "recompilation",
         "harvest moon"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -161,6 +188,9 @@
         "recomp",
         "recompilation",
         "zelda"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -179,6 +209,9 @@
         "mario",
         "mario kart",
         "racing"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -195,6 +228,9 @@
         "recomp",
         "recompilation",
         "mega man"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -211,6 +247,9 @@
         "recomp",
         "recompilation",
         "goemon"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -227,6 +266,9 @@
         "recomp",
         "recompilation",
         "pokemon"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -243,6 +285,9 @@
         "recomp",
         "recompilation",
         "quest"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -261,6 +306,9 @@
         "snowboarding",
         "sports",
         "snowboard kids"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     },
     {
@@ -277,6 +325,9 @@
         "recomp",
         "recompilation",
         "star fox"
+      ],
+      "filesToAdd": [
+        "portable.txt"
       ]
     }
   ]

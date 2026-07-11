@@ -449,7 +449,8 @@ namespace Quiver.Services
                     a.GameIconUrl ?? "",
                     a.PreferredVersion ?? "",
                     a.SkippedUpdateVersion ?? "",
-                    TagHelper.FormatTagsForDisplay(a.Tags)))
+                    TagHelper.FormatTagsForDisplay(a.Tags),
+                    AppFilesToAddService.FormatForDisplay(a.FilesToAdd)))
                 .OrderBy(e => e, StringComparer.OrdinalIgnoreCase);
 
             var payload = string.Join("\n", entries);
@@ -492,7 +493,8 @@ namespace Quiver.Services
             string.Equals(a.InstallPath ?? "", b.InstallPath ?? "", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.GameIconUrl ?? "", b.GameIconUrl ?? "", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.PreferredVersion ?? "", b.PreferredVersion ?? "", StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(TagHelper.FormatTagsForDisplay(a.Tags), TagHelper.FormatTagsForDisplay(b.Tags), StringComparison.OrdinalIgnoreCase);
+            string.Equals(TagHelper.FormatTagsForDisplay(a.Tags), TagHelper.FormatTagsForDisplay(b.Tags), StringComparison.OrdinalIgnoreCase) &&
+            AppFilesToAddService.AreEquivalent(a.FilesToAdd, b.FilesToAdd);
 
         private async Task ApplyCachedVersionMetadataAsync(AppCatalogSource source)
         {
@@ -678,6 +680,7 @@ namespace Quiver.Services
                         PreferredVersion = appElement.TryGetProperty("preferredVersion", out var preferredVersionElement) ? preferredVersionElement.GetString() : null,
                         SkippedUpdateVersion = appElement.TryGetProperty("skippedUpdateVersion", out var skippedUpdateVersionElement) ? skippedUpdateVersionElement.GetString() : null,
                         Tags = ParseTagsProperty(appElement),
+                        FilesToAdd = ParseFilesToAddProperty(appElement),
                         IsExperimental = false,
                         IsCustom = true,
                         GameManager = gameManager,
@@ -727,34 +730,47 @@ namespace Quiver.Services
             return TagHelper.NormalizeTags(tags);
         }
 
-        private static object SerializeApp(GameInfo app)
+        private static List<string> ParseFilesToAddProperty(JsonElement appElement)
         {
-            var normalizedTags = TagHelper.NormalizeTags(app.Tags);
-            if (normalizedTags.Count == 0)
+            if (!appElement.TryGetProperty("filesToAdd", out var filesElement) || filesElement.ValueKind != JsonValueKind.Array)
+                return [];
+
+            var files = new List<string>();
+            foreach (var fileElement in filesElement.EnumerateArray())
             {
-                return new
+                if (fileElement.ValueKind == JsonValueKind.String)
                 {
-                    name = app.Name,
-                    repository = app.Repository,
-                    folderName = app.FolderName,
-                    installPath = app.InstallPath,
-                    appIconUrl = app.GameIconUrl,
-                    preferredVersion = app.PreferredVersion,
-                    skippedUpdateVersion = app.SkippedUpdateVersion
-                };
+                    var fileName = fileElement.GetString();
+                    if (!string.IsNullOrWhiteSpace(fileName))
+                        files.Add(fileName);
+                }
             }
 
-            return new
+            return AppFilesToAddService.Normalize(files);
+        }
+
+        private static object SerializeApp(GameInfo app)
+        {
+            var payload = new Dictionary<string, object?>
             {
-                name = app.Name,
-                repository = app.Repository,
-                folderName = app.FolderName,
-                installPath = app.InstallPath,
-                appIconUrl = app.GameIconUrl,
-                preferredVersion = app.PreferredVersion,
-                skippedUpdateVersion = app.SkippedUpdateVersion,
-                tags = normalizedTags
+                ["name"] = app.Name,
+                ["repository"] = app.Repository,
+                ["folderName"] = app.FolderName,
+                ["installPath"] = app.InstallPath,
+                ["appIconUrl"] = app.GameIconUrl,
+                ["preferredVersion"] = app.PreferredVersion,
+                ["skippedUpdateVersion"] = app.SkippedUpdateVersion,
             };
+
+            var normalizedTags = TagHelper.NormalizeTags(app.Tags);
+            if (normalizedTags.Count > 0)
+                payload["tags"] = normalizedTags;
+
+            var normalizedFilesToAdd = AppFilesToAddService.Normalize(app.FilesToAdd);
+            if (normalizedFilesToAdd.Count > 0)
+                payload["filesToAdd"] = normalizedFilesToAdd;
+
+            return payload;
         }
     }
 }
