@@ -70,7 +70,7 @@ public class GamepadBindingsTests
     {
         var bindings = GamepadBindingDefaults.Create();
         var defaultHints = GamepadBindingLabels.FormatHints(bindings);
-        defaultHints.Should().Contain("A Select");
+        defaultHints.Should().Contain("A (Select)");
 
         GamepadBindingDefaults.AssignExclusive(
             bindings,
@@ -78,8 +78,8 @@ public class GamepadBindingsTests
             GamepadBinding.Button(SDL.SDL_GameControllerButton.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER));
 
         var updated = GamepadBindingLabels.FormatHints(bindings);
-        updated.Should().Contain("RB Select");
-        updated.Should().NotContain("A Select");
+        updated.Should().Contain("RB (Select)");
+        updated.Should().NotContain("A (Select)");
     }
 
     [Fact]
