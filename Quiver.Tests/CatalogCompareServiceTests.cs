@@ -661,6 +661,23 @@ public class CatalogCompareServiceTests
     }
 
     [Fact]
+    public void SortRows_name_ignore_articles_strips_leading_articles()
+    {
+        var rows = new List<CatalogSyncRowItem>
+        {
+            CreateRow("owner/zelda", "Zelda", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/legend", "The Legend of Zelda", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/hike", "A Short Hike", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/banjo", "Banjo", CatalogSyncStatus.Unchanged),
+        };
+
+        CatalogCompareService.SortRows(rows, "NameIgnoreArticles")
+            .Select(r => r.DisplayName)
+            .Should()
+            .Equal("Banjo", "The Legend of Zelda", "A Short Hike", "Zelda");
+    }
+
+    [Fact]
     public void SortRows_orders_by_repository()
     {
         var rows = new List<CatalogSyncRowItem>

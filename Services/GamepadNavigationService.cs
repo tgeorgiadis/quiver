@@ -490,6 +490,12 @@ public sealed class GamepadNavigationService
 
         {
 
+            if (!allowVerticalWrap)
+
+                return currentIndex;
+
+
+
             var minY = positions.Min(position => position.Y);
 
             return WrapToRow(positions, currentIndex, minY, rowTolerance);
@@ -544,7 +550,19 @@ public sealed class GamepadNavigationService
 
 
 
+        if (direction == NavigationDirection.Right && !allowHorizontalWrap)
+
+            return currentIndex;
+
+
+
         if (direction == NavigationDirection.Up && !allowVerticalWrap)
+
+            return currentIndex;
+
+
+
+        if (direction == NavigationDirection.Down && !allowVerticalWrap)
 
             return currentIndex;
 
@@ -932,10 +950,6 @@ public sealed class GamepadNavigationService
 
         {
 
-            var allowVerticalWrap = direction is NavigationDirection.Down or NavigationDirection.Right;
-
-            var allowHorizontalWrap = direction is NavigationDirection.Down or NavigationDirection.Right;
-
             return SelectSpatialNextIndex(
 
                 currentIndex,
@@ -944,9 +958,9 @@ public sealed class GamepadNavigationService
 
                 positions,
 
-                allowVerticalWrap: allowVerticalWrap,
+                allowVerticalWrap: false,
 
-                allowHorizontalWrap: allowHorizontalWrap) ?? currentIndex;
+                allowHorizontalWrap: false) ?? currentIndex;
 
         }
 
@@ -982,10 +996,6 @@ public sealed class GamepadNavigationService
 
 
 
-        var allowVerticalWrap = direction is NavigationDirection.Down or NavigationDirection.Right;
-
-        var allowHorizontalWrap = direction is NavigationDirection.Down or NavigationDirection.Right;
-
         return SelectSpatialNextIndex(
 
             currentIndex,
@@ -994,9 +1004,9 @@ public sealed class GamepadNavigationService
 
             positions,
 
-            allowVerticalWrap: allowVerticalWrap,
+            allowVerticalWrap: false,
 
-            allowHorizontalWrap: allowHorizontalWrap) ?? currentIndex;
+            allowHorizontalWrap: false) ?? currentIndex;
 
     }
 

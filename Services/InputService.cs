@@ -36,10 +36,9 @@ namespace Quiver.Services
                 .Where(a => a != SDL.SDL_GameControllerAxis.SDL_CONTROLLER_AXIS_INVALID)
                 .ToArray();
 
-        // Input repeat delays
-        private const int MinNavigationInterval = 250;
-        private const int InitialRepeatDelay = 650;
-        private const int RepeatDelay = 350;
+        // Input repeat delays (hold auto-repeat; discrete presses reset on release)
+        private const int InitialRepeatDelay = 500;
+        private const int RepeatDelay = 250;
 
         private DateTime _lastNavigationTime = DateTime.MinValue;
         private int _movesInHold;
@@ -375,15 +374,11 @@ namespace Quiver.Services
                 ? 0
                 : (now - _lastNavigationTime).TotalMilliseconds;
 
-            var hasPriorMove = _lastNavigationTime != DateTime.MinValue;
-
             if (!GamepadNavigationRepeat.ShouldAllowNavigationMove(
                     _movesInHold,
                     timeSinceLastNav,
-                    MinNavigationInterval,
                     InitialRepeatDelay,
-                    RepeatDelay,
-                    hasPriorMove))
+                    RepeatDelay))
             {
                 return;
             }
@@ -438,13 +433,10 @@ namespace Quiver.Services
         public void ResetNavigationHold()
         {
             _movesInHold = 0;
-        }
-
-        public void ResetNavigationState()
-        {
-            _movesInHold = 0;
             _lastNavigationTime = DateTime.MinValue;
         }
+
+        public void ResetNavigationState() => ResetNavigationHold();
 
         public bool TryHandleContextMenuConfirm() => _contextMenuNavigation.TryHandleConfirm();
 

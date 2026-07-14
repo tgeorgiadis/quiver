@@ -32,6 +32,8 @@
 			<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 			<Setter Property="Padding" Value="10,8"/>
 			<Setter Property="CornerRadius" Value="4"/>
+			<Setter Property="BorderThickness" Value="2"/>
+			<Setter Property="BorderBrush" Value="Transparent"/>
 		</Style>
 
 		<Style Selector="MenuItem:selected">
@@ -40,13 +42,13 @@
 
 		<Style Selector="MenuItem:focus">
 			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
-			<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
 			<Setter Property="BorderThickness" Value="2"/>
 		</Style>
 
 		<Style Selector="MenuItem:focus-visible">
 			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
-			<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
 			<Setter Property="BorderThickness" Value="2"/>
 		</Style>
 

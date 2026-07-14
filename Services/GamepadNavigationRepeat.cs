@@ -5,14 +5,12 @@ public static class GamepadNavigationRepeat
     public static bool ShouldAllowNavigationMove(
         int movesInHold,
         double elapsedMs,
-        int minInterval,
         int initialDelay,
-        int repeatDelay,
-        bool hasPriorMove)
+        int repeatDelay)
     {
         return movesInHold switch
         {
-            0 => !hasPriorMove || elapsedMs >= minInterval,
+            0 => true,
             1 => elapsedMs >= initialDelay,
             _ => elapsedMs >= repeatDelay,
         };

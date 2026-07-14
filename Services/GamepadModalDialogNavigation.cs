@@ -291,6 +291,12 @@ public sealed class GamepadModalDialogNavigation
         if (buttons.Count == 0)
             return -1;
 
+        for (var i = 0; i < buttons.Count; i++)
+        {
+            if (buttons[i].IsDefault)
+                return i;
+        }
+
         var preferredLabels = new[]
         {
             "ok",

@@ -729,9 +729,7 @@
 
 		<!-- App updates review card -->
 		<DataTemplate x:Key="AppUpdateReviewCardTemplate">
-			<Border Background="{DynamicResource ThemeBase}"
-					BorderBrush="{DynamicResource ThemeBorder}"
-					BorderThickness="1"
+			<Border Classes="catalog-focus-card"
 					CornerRadius="6"
 					Padding="8,6"
 					Margin="0,0,0,6"
@@ -764,9 +762,7 @@
 
 		<!-- Catalog review app card -->
 		<DataTemplate x:Key="CatalogReviewCardTemplate">
-			<Border Background="{DynamicResource ThemeBase}"
-					BorderBrush="{DynamicResource ThemeBorder}"
-					BorderThickness="1"
+			<Border Classes="catalog-focus-card"
 					CornerRadius="6"
 					Padding="8,6"
 					Margin="0,0,0,6"
@@ -825,9 +821,7 @@
 
 		<!-- Catalog source card -->
 		<DataTemplate x:Key="CatalogSourceCardTemplate">
-			<Border Background="{DynamicResource ThemeBase}"
-					BorderBrush="{DynamicResource ThemeBorder}"
-					BorderThickness="1"
+			<Border Classes="catalog-focus-card"
 					CornerRadius="8"
 					Padding="10"
 					Width="340"
@@ -1474,23 +1468,37 @@
 		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
 		<Setter Property="CornerRadius" Value="14"/>
 		<Setter Property="Margin" Value="0,0,0,12"/>
+		<Setter Property="BorderThickness" Value="3"/>
+		<Setter Property="BorderBrush" Value="Transparent"/>
 	</Style>
 
 	<Style Selector="Border.gamecardgrid">
 		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
 		<Setter Property="CornerRadius" Value="14"/>
 		<Setter Property="Margin" Value="10"/>
+		<Setter Property="BorderThickness" Value="3"/>
+		<Setter Property="BorderBrush" Value="Transparent"/>
 	</Style>
 
 	<Style Selector="Border.gamecardcompact">
 		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
 		<Setter Property="CornerRadius" Value="14"/>
 		<Setter Property="Margin" Value="6"/>
+		<Setter Property="BorderThickness" Value="3"/>
+		<Setter Property="BorderBrush" Value="Transparent"/>
+	</Style>
+
+	<!-- Catalog/review cards: keep BorderBrush/Background in styles so gamepad-focused can override. -->
+	<Style Selector="Border.catalog-focus-card">
+		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
+		<Setter Property="BorderBrush" Value="Transparent"/>
+		<Setter Property="BorderThickness" Value="3"/>
 	</Style>
 
 	<Style Selector="Border.gamecard.gamepad-focused,
 	                 Border.gamecardgrid.gamepad-focused,
 	                 Border.gamecardcompact.gamepad-focused,
+	                 Border.catalog-focus-card.gamepad-focused,
 	                 Border.gamepad-focused">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
@@ -2010,6 +2018,7 @@
 									  SelectionChanged="SortByComboBox_SelectionChanged">
 								<ComboBoxItem Content="Name (A-Z)" Tag="Name"/>
 								<ComboBoxItem Content="Name (Z-A)" Tag="NameDesc"/>
+								<ComboBoxItem Content="Name (ignore The/A/An)" Tag="NameIgnoreArticles"/>
 								<ComboBoxItem Content="Installed First" Tag="Installed"/>
 								<ComboBoxItem Content="Not Installed First" Tag="NotInstalled"/>
 								<ComboBoxItem Content="Last Played" Tag="LastPlayed"/>
@@ -2032,6 +2041,7 @@
 										  SelectionChanged="CatalogReviewSortByComboBox_SelectionChanged">
 									<ComboBoxItem Content="Name (A-Z)" Tag="Name"/>
 									<ComboBoxItem Content="Name (Z-A)" Tag="NameDesc"/>
+									<ComboBoxItem Content="Name (ignore The/A/An)" Tag="NameIgnoreArticles"/>
 									<ComboBoxItem Content="Repository (A-Z)" Tag="Repository"/>
 									<ComboBoxItem Content="Status" Tag="Status"/>
 								</ComboBox>

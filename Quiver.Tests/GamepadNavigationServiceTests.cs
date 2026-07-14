@@ -876,6 +876,66 @@ public class GamepadNavigationServiceTests
 
     [Fact]
 
+    public void MoveLibraryIndex_does_not_wrap_down_from_bottom_row()
+
+    {
+
+        var positions = new List<(double X, double Y)>
+
+        {
+
+            (0, 0),
+
+            (100, 0),
+
+            (0, 100),
+
+            (100, 100),
+
+        };
+
+
+
+        _service.MoveLibraryIndex(2, NavigationDirection.Down, 4, isListLayout: false, positions).Should().Be(2);
+
+        _service.MoveLibraryIndex(3, NavigationDirection.Down, 4, isListLayout: false, positions).Should().Be(3);
+
+    }
+
+
+
+    [Fact]
+
+    public void MoveLibraryIndex_does_not_wrap_right_from_right_edge()
+
+    {
+
+        var positions = new List<(double X, double Y)>
+
+        {
+
+            (0, 0),
+
+            (100, 0),
+
+            (0, 100),
+
+            (100, 100),
+
+        };
+
+
+
+        _service.MoveLibraryIndex(1, NavigationDirection.Right, 4, isListLayout: false, positions).Should().Be(1);
+
+        _service.MoveLibraryIndex(3, NavigationDirection.Right, 4, isListLayout: false, positions).Should().Be(3);
+
+    }
+
+
+
+    [Fact]
+
     public void MoveCatalogIndex_does_not_wrap_up_or_left_at_content_edges()
 
     {
@@ -897,6 +957,40 @@ public class GamepadNavigationServiceTests
         _service.MoveCatalogIndex(0, NavigationDirection.Up, 3, positions).Should().Be(0);
 
         _service.MoveCatalogIndex(0, NavigationDirection.Left, 3, positions).Should().Be(0);
+
+    }
+
+
+
+    [Fact]
+
+    public void MoveCatalogIndex_does_not_wrap_down_or_right_at_content_edges()
+
+    {
+
+        var positions = new List<(double X, double Y)>
+
+        {
+
+            (0, 0),
+
+            (100, 0),
+
+            (0, 100),
+
+            (100, 100),
+
+        };
+
+
+
+        _service.MoveCatalogIndex(2, NavigationDirection.Down, 4, positions).Should().Be(2);
+
+        _service.MoveCatalogIndex(3, NavigationDirection.Down, 4, positions).Should().Be(3);
+
+        _service.MoveCatalogIndex(1, NavigationDirection.Right, 4, positions).Should().Be(1);
+
+        _service.MoveCatalogIndex(3, NavigationDirection.Right, 4, positions).Should().Be(3);
 
     }
 

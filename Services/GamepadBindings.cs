@@ -188,7 +188,7 @@ public static class GamepadBindingLabels
         var options = FormatActionBindings(bindings, GamepadAction.Options);
         var cancel = FormatActionBindings(bindings, GamepadAction.Cancel);
         var nav = FormatNavigationHint(bindings);
-        return $"{confirm} Select · {options} Options · {cancel} Back · {nav} Navigate";
+        return $"{confirm} (Select) · {options} (Options) · {cancel} (Back) · {nav} (Navigate)";
     }
 
     private static string FormatNavigationHint(

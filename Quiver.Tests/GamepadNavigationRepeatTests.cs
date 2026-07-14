@@ -5,45 +5,39 @@ namespace Quiver.Tests;
 
 public class GamepadNavigationRepeatTests
 {
-    private const int MinInterval = 250;
-    private const int InitialDelay = 650;
-    private const int RepeatDelay = 350;
+    private const int InitialDelay = 500;
+    private const int RepeatDelay = 250;
 
     [Fact]
-    public void ShouldAllowNavigationMove_allows_first_move_on_cold_start()
+    public void ShouldAllowNavigationMove_allows_first_move_immediately()
     {
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(0, 0, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: false)
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(0, 0, InitialDelay, RepeatDelay)
             .Should().BeTrue();
-    }
-
-    [Fact]
-    public void ShouldAllowNavigationMove_blocks_new_press_before_min_interval()
-    {
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(0, 249, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: true)
-            .Should().BeFalse();
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(0, 250, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: true)
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(0, 1, InitialDelay, RepeatDelay)
+            .Should().BeTrue();
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(0, 249, InitialDelay, RepeatDelay)
             .Should().BeTrue();
     }
 
     [Fact]
     public void ShouldAllowNavigationMove_blocks_second_move_before_initial_delay()
     {
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(1, 649, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: true)
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(1, 499, InitialDelay, RepeatDelay)
             .Should().BeFalse();
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(1, 650, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: true)
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(1, 500, InitialDelay, RepeatDelay)
             .Should().BeTrue();
     }
 
     [Fact]
     public void ShouldAllowNavigationMove_uses_repeat_delay_for_third_and_later_moves()
     {
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(2, 349, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: true)
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(2, 249, InitialDelay, RepeatDelay)
             .Should().BeFalse();
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(2, 350, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: true)
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(2, 250, InitialDelay, RepeatDelay)
             .Should().BeTrue();
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(5, 349, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: true)
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(5, 249, InitialDelay, RepeatDelay)
             .Should().BeFalse();
-        GamepadNavigationRepeat.ShouldAllowNavigationMove(5, 350, MinInterval, InitialDelay, RepeatDelay, hasPriorMove: true)
+        GamepadNavigationRepeat.ShouldAllowNavigationMove(5, 250, InitialDelay, RepeatDelay)
             .Should().BeTrue();
     }
 }

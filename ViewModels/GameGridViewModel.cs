@@ -13,6 +13,9 @@ public class GameGridViewModel
         return sortMode switch
         {
             "NameDesc" => list.OrderByDescending(g => g.Name ?? string.Empty).ToList(),
+            "NameIgnoreArticles" => list
+                .OrderBy(g => NameSortHelper.GetAlphabeticalSortKey(g.Name), StringComparer.OrdinalIgnoreCase)
+                .ToList(),
             "Installed" => list
                 .OrderByDescending(g => g.IsInstalled)
                 .ThenBy(g => g.Name ?? string.Empty)

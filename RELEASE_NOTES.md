@@ -1,15 +1,25 @@
-# Quiver v2.3.6
+# Quiver v2.3.7
 
-Steam Deck Gaming Mode popup fix and more reliable controller dialogs. Download file pickers stay over Quiver instead of opening as a black fullscreen window, and Yes/No prompts behave correctly when several dialogs appear at startup.
+Faster, more reliable gamepad navigation, a new sort mode that ignores leading articles, and safer app removal. Controller focus no longer gets stuck after emptying a catalog filter, and rapid D-pad taps register correctly.
 
-## Steam Deck / Linux
+## Sorting
 
-- **Download button file menu** — Choosing a download from Install Latest no longer opens as a separate Gamescope fullscreen surface with a black border. Quiver stays visible behind the picker, same as the card options menu path.
-- **In-window popups** — On Linux, ContextMenus and similar popups render inside the main window (`OverlayPopups`) so Gaming Mode does not treat them as their own app window.
-- **Stable menu anchors** — After the release-asset fetch, download and executable menus attach to the options button or card instead of the action button that briefly changes during download status updates.
+- **Name (ignore The/A/An)** — New library and catalog-review sort option. Titles like *The Legend of Zelda* sort under **L** while still displaying their full name. Existing Name A–Z / Z–A stay literal.
 
-## Gamepad dialogs
+## Gamepad navigation
 
-- **Dialog stack** — Nested or back-to-back modal dialogs keep focus on the topmost window instead of losing track of which prompt is active.
-- **Yes / No results** — Confirm and Cancel on question dialogs set the intended result reliably (including Wine download warnings and similar prompts).
-- **Startup prompts** — The Quiver self-update check finishes (or is skipped) before catalog startup prompts, so the two dialogs do not stack on top of each other.
+- **No grid wrap** — On Library and App Catalog card grids, Right on the last column and Down on the last row no longer wrap around; focus stays on the edge (Up/Left still escape to top bar / sidebar).
+- **Rapid D-pad taps** — Discrete presses no longer get dropped by a leftover 250 ms gate after release. Hold-to-scroll is slightly faster (500 ms first repeat, then 250 ms).
+- **Stale orange focus** — Moving from App List review filters (or empty-state Back buttons) into the list clears the previous control’s focus ring.
+- **Empty Disabled filter** — Enabling the last disabled App List no longer leaves Confirm (A) dead. Focus returns to the filter chips.
+- **Dialog defaults** — Modal gamepad focus prefers the dialog’s `IsDefault` button when set.
+- **Hints** — Controller hint text uses clearer `(Select)` / `(Options)` / `(Back)` / `(Navigate)` labels.
+- **Menu focus** — Context menu items show a clearer accent focus border.
+
+## Steam Deck / input
+
+- **On-screen keyboard** — Focusing text fields on Steam Deck can open Steam’s OSK when available.
+
+## App management
+
+- **Recycle Bin / Trash** — Removing an app moves its install folder to the Recycle Bin (Windows), Trash (Linux), or Trash (macOS) instead of permanently deleting it.

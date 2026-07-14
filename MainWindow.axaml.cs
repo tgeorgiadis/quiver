@@ -519,6 +519,9 @@ namespace Quiver
             this.Activated += MainWindow_Activated;
             this.Deactivated += MainWindow_Deactivated;
 
+            // Steam Deck Gaming Mode: Avalonia TextBoxes do not auto-trigger Steam's OSK.
+            AddHandler(InputElement.GotFocusEvent, OnTextBoxGotFocusForSteamOsk, RoutingStrategies.Bubble);
+
             _gameManager.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName is nameof(GameManager.Games) or nameof(GameManager.IsLibraryEmpty))
@@ -2239,7 +2242,8 @@ namespace Quiver
             {
                 _gamepadNavigation.ActiveZone = GamepadNavigationZone.Settings;
                 NotifyGamepadUiChanged();
-                RefreshCatalogSourcesList();
+                ClearCatalogSourcesToolbarGamepadFocus();
+                ClearGamepadFocus();
                 RefreshConnectedGamepadsList();
                 RefreshGamepadBindingsPanel();
                 Dispatcher.UIThread.Post(() =>
@@ -2272,8 +2276,11 @@ namespace Quiver
 
             Dispatcher.UIThread.Post(() =>
             {
-                GitHubTokenTextBox?.BringIntoView();
-                GitHubTokenTextBox?.Focus();
+                if (GitHubTokenTextBox != null)
+                {
+                    GitHubTokenTextBox.BringIntoView();
+                    GamepadControlActivation.ActivateTextBox(GitHubTokenTextBox);
+                }
             }, DispatcherPriority.Loaded);
         }
 
@@ -2879,11 +2886,21 @@ namespace Quiver
         {
             try
             {
+                // Stay on Refresh while the list rebuilds and any Catalog Updates prompt
+                // is shown — SyncCatalogGamepadSelection must not jump to a source card.
+                if (_settings.EnableGamepadInput && RefreshCatalogSourcesButton != null)
+                {
+                    var toolbar = CollectCatalogSourcesToolbarControls();
+                    var refreshIndex = toolbar.FindIndex(c => ReferenceEquals(c, RefreshCatalogSourcesButton));
+                    if (refreshIndex >= 0)
+                        ApplyCatalogSourcesToolbarSelection(refreshIndex);
+                }
+
                 await _gameManager.CatalogService.RefreshAllSourcesAsync(_gameManager.HttpClient, _settings);
                 OnSettingChanged();
                 _settings = AppSettings.Load();
                 _settings.EnsureInitialized();
-                RefreshCatalogSourcesList();
+                await RefreshCatalogSourcesListAsync();
 
                 await TryPromptCatalogReviewAsync();
             }
@@ -2898,8 +2915,12 @@ namespace Quiver
             if (!_settings.AppCatalogSources.Any(s => s.Enabled && s.UpdateAvailable))
                 return false;
 
+            var alreadyInAppCatalog = _mainViewMode == MainViewMode.AppCatalog;
             var openCatalog = await ShowMessageBoxAsync(
-                FormatPendingReviewSourcesMessage(_settings, includeOpenPrompt: true),
+                FormatPendingReviewSourcesMessage(
+                    _settings,
+                    includeOpenPrompt: true,
+                    alreadyInAppCatalog: alreadyInAppCatalog),
                 "Catalog Updates",
                 true);
 
@@ -3047,7 +3068,10 @@ namespace Quiver
             });
         }
 
-        private static string FormatPendingReviewSourcesMessage(AppSettings settings, bool includeOpenPrompt)
+        private static string FormatPendingReviewSourcesMessage(
+            AppSettings settings,
+            bool includeOpenPrompt,
+            bool alreadyInAppCatalog = false)
         {
             var pendingSources = settings.AppCatalogSources
                 .Where(s => s.Enabled && s.PendingReviewCount > 0)
@@ -3057,17 +3081,23 @@ namespace Quiver
 
             if (pendingSources.Count == 0)
             {
-                return includeOpenPrompt
-                    ? "Catalog updates are available. Open App Catalog now to review changes?"
-                    : "Catalog updates are available. Open App Catalog to review and sync apps.";
+                if (!includeOpenPrompt)
+                    return "Catalog updates are available. Open App Catalog to review and sync apps.";
+
+                return alreadyInAppCatalog
+                    ? "Catalog updates are available. Review changes now?"
+                    : "Catalog updates are available. Open App Catalog now to review changes?";
             }
 
             var lines = pendingSources
                 .Select(s => $"• {s.Name} ({s.PendingReviewCount})");
             var body = "Catalog updates are available:\n\n" + string.Join("\n", lines);
-            return includeOpenPrompt
-                ? body + "\n\nOpen App Catalog to review these sources?"
-                : body + "\n\nOpen App Catalog to review and sync apps.";
+            if (!includeOpenPrompt)
+                return body + "\n\nOpen App Catalog to review and sync apps.";
+
+            return alreadyInAppCatalog
+                ? body + "\n\nReview these changes now?"
+                : body + "\n\nOpen App Catalog to review these sources?";
         }
 
         private async Task OpenAppCatalogForReviewAsync()
@@ -3597,8 +3627,14 @@ namespace Quiver
             if (CompactGridViewControl != null)
                 CompactGridViewControl.IsVisible = useGrid && compact;
 
-            if (_settings.EnableGamepadInput && _mainViewMode == MainViewMode.Library)
+            // Don't restore library card focus while Settings is open — App Cards
+            // toggles/presets change layout and would steal the orange focus ring.
+            if (_settings.EnableGamepadInput &&
+                !isSettingsPanelOpen &&
+                _mainViewMode == MainViewMode.Library)
+            {
                 SyncGamepadLibrarySelection();
+            }
         }
 
         private void UseGridViewCheckBox_Checked(object sender, RoutedEventArgs e)
@@ -4131,9 +4167,12 @@ namespace Quiver
             }
 
             var result = await ShowMessageBoxAsync(
-                $"Are you sure you want to delete {game.Name}?\n\nThis will permanently remove all game files and cannot be undone.",
+                $"Are you sure you want to delete {game.Name}?\n\n" +
+                "Game files will be moved to the Recycle Bin / Trash so you can restore them if needed. " +
+                "Portable installs may include save data in the same folder.",
                 "Confirm Deletion",
-                true);
+                isQuestion: true,
+                preferCancelDefault: true);
 
             if (result)
             {
@@ -4152,7 +4191,7 @@ namespace Quiver
                         game.Status = GameStatus.Installing;
                         game.IsLoading = true;
 
-                        await Task.Run(() => Directory.Delete(gamePath, true));
+                        await Task.Run(() => RecycleBinHelper.MoveToRecycleBin(gamePath));
 
                         game.IsLoading = false;
                         await game.CheckStatusAsync(_gameManager.HttpClient, _gameManager.GamesFolder);
@@ -4244,7 +4283,8 @@ namespace Quiver
             string message,
             string title,
             bool isQuestion,
-            Action<bool>? onQuestionResult = null)
+            Action<bool>? onQuestionResult = null,
+            bool preferCancelDefault = false)
         {
             var messageBox = new Window
             {
@@ -4284,6 +4324,17 @@ namespace Quiver
                     Content = "No",
                     MinWidth = 80,
                 };
+
+                if (preferCancelDefault)
+                {
+                    noButton.IsDefault = true;
+                    noButton.IsCancel = true;
+                }
+                else
+                {
+                    yesButton.IsDefault = true;
+                    noButton.IsCancel = true;
+                }
 
                 yesButton.Click += (_, _) =>
                 {
@@ -4990,10 +5041,18 @@ namespace Quiver
             }
 
             GamepadModalDialogNavigation.Attach(dialog);
+            dialog.Opened += (_, _) => GamepadControlActivation.ActivateTextBox(inputBox);
 
             await dialog.ShowDialog(this);
             return result;
         }
+
+        private static void OnTextBoxGotFocusForSteamOsk(object? sender, GotFocusEventArgs e)
+        {
+            if (e.Source is TextBox)
+                SteamOnScreenKeyboard.TryOpen();
+        }
+
         private void SortByComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (e.AddedItems.Count == 0) return;
@@ -5080,7 +5139,11 @@ namespace Quiver
             }
         }
 
-        private async Task<bool> ShowMessageBoxAsync(string message, string title, bool isQuestion = false)
+        private async Task<bool> ShowMessageBoxAsync(
+            string message,
+            string title,
+            bool isQuestion = false,
+            bool preferCancelDefault = false)
         {
             if (!isQuestion)
             {
@@ -5098,7 +5161,8 @@ namespace Quiver
                         message,
                         title,
                         isQuestion: true,
-                        onQuestionResult: value => result = value);
+                        onQuestionResult: value => result = value,
+                        preferCancelDefault: preferCancelDefault);
 
                     await messageBox.ShowDialog(desktop.MainWindow);
                     if (messageBox.Tag is bool tagResult)
@@ -5940,6 +6004,8 @@ namespace Quiver
             TagEditAppNameText.Text = game.Name ?? "Unknown app";
             TagEditTextBox.Text = TagHelper.FormatTagsForDisplay(game.Tags);
             TagEditOverlay.IsVisible = true;
+            if (TagEditTextBox != null)
+                Dispatcher.UIThread.Post(() => GamepadControlActivation.ActivateTextBox(TagEditTextBox), DispatcherPriority.Loaded);
         }
 
         private void CancelTagEdit_Click(object? sender, RoutedEventArgs e)
@@ -6636,6 +6702,8 @@ namespace Quiver
             var control = controls[index];
             if (control is Button button)
                 GamepadControlActivation.ActivateButton(button);
+            else if (control is TextBox textBox)
+                GamepadControlActivation.ActivateTextBox(textBox);
             else
                 control.Focus();
         }
@@ -6695,6 +6763,8 @@ namespace Quiver
                 GamepadControlActivation.ActivateButton(button);
             else if (control is ComboBox comboBox)
                 GamepadComboBoxNavigation.Open(comboBox);
+            else if (control is TextBox textBox)
+                GamepadControlActivation.ActivateTextBox(textBox);
             else
                 control.Focus();
         }
@@ -6753,8 +6823,16 @@ namespace Quiver
                 return true;
             }
 
-            // Content controls: Up/Down (and Left/Right) move within content only.
-            // Up from the first content control returns to the selected tab.
+            // Sliders: Left/Right change the value; Up/Down still move between controls.
+            if (focused is Slider slider &&
+                direction is Services.NavigationDirection.Left or Services.NavigationDirection.Right)
+            {
+                AdjustSettingsSliderValue(slider, direction);
+                return true;
+            }
+
+            // Content controls: navigate by on-screen position so horizontal preset
+            // rows do not steal Up/Down. Up with no neighbor above returns to the tab.
             var contentIndices = CollectSettingsContentIndices(controls);
             var contentPos = contentIndices.IndexOf(_settingsGamepadFocusIndex);
             if (contentPos < 0)
@@ -6763,23 +6841,140 @@ namespace Quiver
                 return true;
             }
 
-            var movePrevious = direction is Services.NavigationDirection.Up or Services.NavigationDirection.Left;
-            if (movePrevious)
+            var nextContentPos = FindNearestSettingsContentIndex(controls, contentIndices, contentPos, direction);
+            if (nextContentPos < 0)
             {
-                if (contentPos == 0)
-                {
+                if (direction == Services.NavigationDirection.Up)
                     ApplySettingsGamepadSelection(GetSelectedSettingsTabControlIndex(tabs));
-                    return true;
-                }
-
-                ApplySettingsGamepadSelection(contentIndices[contentPos - 1]);
                 return true;
             }
 
-            if (contentPos < contentIndices.Count - 1)
-                ApplySettingsGamepadSelection(contentIndices[contentPos + 1]);
-
+            ApplySettingsGamepadSelection(contentIndices[nextContentPos]);
             return true;
+        }
+
+        private static void AdjustSettingsSliderValue(Slider slider, Services.NavigationDirection direction)
+        {
+            var step = slider.TickFrequency > 0
+                ? slider.TickFrequency
+                : slider.SmallChange > 0
+                    ? slider.SmallChange
+                    : 1;
+
+            var delta = direction == Services.NavigationDirection.Right ? step : -step;
+            var next = Math.Clamp(slider.Value + delta, slider.Minimum, slider.Maximum);
+
+            if (slider.TickFrequency > 0)
+            {
+                var ticksFromMin = Math.Round((next - slider.Minimum) / slider.TickFrequency);
+                next = Math.Clamp(
+                    slider.Minimum + (ticksFromMin * slider.TickFrequency),
+                    slider.Minimum,
+                    slider.Maximum);
+            }
+
+            slider.Value = next;
+            // Card layout behind Settings can steal keyboard focus when sizes change;
+            // keep the slider focused for continued Left/Right adjustment.
+            slider.Focus();
+        }
+
+        private int FindNearestSettingsContentIndex(
+            IReadOnlyList<Control> controls,
+            IReadOnlyList<int> contentIndices,
+            int contentPos,
+            Services.NavigationDirection direction)
+        {
+            if (contentPos < 0 || contentPos >= contentIndices.Count)
+                return -1;
+
+            var currentCenter = GetSettingsControlCenter(controls[contentIndices[contentPos]]);
+            if (!currentCenter.HasValue)
+                return -1;
+
+            int? bestPos = null;
+            var bestScore = double.MaxValue;
+
+            for (var i = 0; i < contentIndices.Count; i++)
+            {
+                if (i == contentPos)
+                    continue;
+
+                var candidateCenter = GetSettingsControlCenter(controls[contentIndices[i]]);
+                if (!candidateCenter.HasValue)
+                    continue;
+
+                var score = ScoreSettingsNavigation(currentCenter.Value, candidateCenter.Value, direction);
+                if (!score.HasValue || score.Value >= bestScore)
+                    continue;
+
+                bestScore = score.Value;
+                bestPos = i;
+            }
+
+            return bestPos ?? -1;
+        }
+
+        private Avalonia.Point? GetSettingsControlCenter(Control control)
+        {
+            var origin = SettingsPanel as Visual ?? this;
+            var topLeft = control.TranslatePoint(new Avalonia.Point(0, 0), origin);
+            if (!topLeft.HasValue)
+                return null;
+
+            var bounds = control.Bounds;
+            return new Avalonia.Point(
+                topLeft.Value.X + bounds.Width / 2,
+                topLeft.Value.Y + bounds.Height / 2);
+        }
+
+        private static double? ScoreSettingsNavigation(
+            Avalonia.Point current,
+            Avalonia.Point candidate,
+            Services.NavigationDirection direction)
+        {
+            var dx = candidate.X - current.X;
+            var dy = candidate.Y - current.Y;
+
+            // Up/Down must change rows so left-aligned checkboxes (Fill Cards) are not
+            // skipped in favor of full-width sliders further down, and so preset-row
+            // Left/Right neighbors are not treated as Up/Down targets.
+            const double rowTolerance = 20;
+
+            switch (direction)
+            {
+                case Services.NavigationDirection.Up:
+                    if (dy >= -rowTolerance)
+                        return null;
+                    // Closest row below/above wins; light X tie-break only.
+                    return Math.Abs(dy) + (Math.Abs(dx) * 0.05);
+
+                case Services.NavigationDirection.Down:
+                    if (dy <= rowTolerance)
+                        return null;
+                    return Math.Abs(dy) + (Math.Abs(dx) * 0.05);
+
+                case Services.NavigationDirection.Left:
+                    if (dx >= -1)
+                        return null;
+                    {
+                        var secondary = Math.Abs(dy);
+                        var offAxis = secondary > 10 ? secondary * 2.5 : 0;
+                        return Math.Abs(dx) + (secondary * 0.3) + offAxis;
+                    }
+
+                case Services.NavigationDirection.Right:
+                    if (dx <= 1)
+                        return null;
+                    {
+                        var secondary = Math.Abs(dy);
+                        var offAxis = secondary > 10 ? secondary * 2.5 : 0;
+                        return Math.Abs(dx) + (secondary * 0.3) + offAxis;
+                    }
+
+                default:
+                    return null;
+            }
         }
 
         private void NavigateSettingsTabHeader(Services.NavigationDirection direction)
@@ -6894,12 +7089,25 @@ namespace Quiver
             var controls = new List<Control>();
             controls.AddRange(CollectSettingsTabItems());
 
-            foreach (var control in SettingsPanel.GetVisualDescendants().OfType<Control>())
+            // Close sits outside tab content; include it explicitly.
+            if (CloseSettingsButton is { IsEffectivelyVisible: true, IsEnabled: true, Focusable: true })
+                controls.Add(CloseSettingsButton);
+
+            // Only walk the selected tab page. Walking the whole SettingsPanel also
+            // picks up ScrollViewer/TabControl RepeatButtons above the first option,
+            // which made Up from "Close After Launch" take two presses to reach tabs.
+            var contentRoot = SettingsTabControl?.SelectedItem is TabItem { Content: Control page }
+                ? page
+                : null;
+            if (contentRoot == null)
+                return controls;
+
+            foreach (var control in contentRoot.GetVisualDescendants().OfType<Control>())
             {
-                if (control is TabItem)
+                if (control is RepeatButton)
                     continue;
 
-                if (!control.IsVisible || !control.IsEnabled || !control.Focusable)
+                if (!control.IsEffectivelyVisible || !control.IsEnabled || !control.Focusable)
                     continue;
 
                 if (control is Button or CheckBox or TextBox or Slider or ComboBox)
@@ -6961,11 +7169,22 @@ namespace Quiver
             }
 
             if (control is CheckBox checkBox)
+            {
                 checkBox.IsChecked = !checkBox.IsChecked;
+                // Layout-changing App Cards checkboxes rebuild the library underneath;
+                // re-assert settings focus so keyboard focus does not land on a game card.
+                ApplySettingsGamepadSelection(index);
+            }
             else if (control is Button button)
+            {
                 GamepadControlActivation.ActivateButton(button);
+                if (isSettingsPanelOpen)
+                    ApplySettingsGamepadSelection(index);
+            }
             else if (control is ComboBox comboBox)
                 GamepadComboBoxNavigation.Open(comboBox);
+            else if (control is TextBox textBox)
+                GamepadControlActivation.ActivateTextBox(textBox);
             else
                 control.Focus();
         }
@@ -7044,6 +7263,18 @@ namespace Quiver
                 transition.Zone != GamepadNavigationZone.CatalogReviewRowActions)
             {
                 ClearCatalogReviewRowActionsGamepadFocus();
+            }
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewFilters &&
+                transition.Zone != GamepadNavigationZone.CatalogReviewFilters)
+            {
+                ClearCatalogReviewFilterGamepadFocus();
+            }
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewToolbar &&
+                transition.Zone != GamepadNavigationZone.AppUpdatesReviewToolbar)
+            {
+                ClearAppUpdatesReviewToolbarGamepadFocus();
             }
 
             switch (transition.Zone)
@@ -7318,7 +7549,13 @@ namespace Quiver
         private bool HandleCatalogSourceCardActionsNavigation(Services.NavigationDirection direction)
         {
             if (CatalogSources.Count == 0)
-                return false;
+            {
+                ApplyCatalogSourcesFilterSelection(
+                    _gamepadNavigation.CatalogSourcesFilterIndex < 0
+                        ? 0
+                        : _gamepadNavigation.CatalogSourcesFilterIndex);
+                return true;
+            }
 
             var cardIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSelectedIndex, CatalogSources.Count);
             if (cardIndex < 0 || cardIndex >= CatalogSources.Count)
@@ -7752,8 +7989,12 @@ namespace Quiver
             controls[index].Focus();
         }
 
-        private void ClearAppUpdatesReviewToolbarGamepadFocus() =>
-            ClearStyledControlsGamepadFocusClasses(CollectAppUpdatesReviewToolbarControls());
+        private void ClearAppUpdatesReviewToolbarGamepadFocus()
+        {
+            var controls = CollectAppUpdatesReviewToolbarControls();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            ClearFocusIfOnControls(controls);
+        }
 
         private void ClearAppUpdatesReviewRowActionsGamepadFocus()
         {
@@ -8358,6 +8599,8 @@ namespace Quiver
             _gamepadNavigation.CatalogReviewFilterIndex = index;
             _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogReviewFilters;
 
+            ClearCatalogReviewEmptyActionGamepadFocus();
+            ClearCatalogReviewRowActionsGamepadFocus();
             ClearGamepadFocus();
             ClearStyledControlsGamepadFocusClasses(controls);
             if (index < 0 || index >= controls.Count)
@@ -8394,7 +8637,16 @@ namespace Quiver
 
         private void ClearCatalogReviewFilterGamepadFocus()
         {
-            ClearStyledControlsGamepadFocusClasses(CollectCatalogReviewFilterControls());
+            var controls = CollectCatalogReviewFilterControls();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            ClearFocusIfOnControls(controls);
+        }
+
+        private void ClearCatalogReviewEmptyActionGamepadFocus()
+        {
+            var controls = CollectCatalogReviewEmptyActionControls();
+            ClearStyledControlsGamepadFocusClasses(controls);
+            ClearFocusIfOnControls(controls);
         }
 
         private void ApplyCatalogReviewRowSelection(int index)
@@ -8405,6 +8657,7 @@ namespace Quiver
             _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogReviewList;
 
             ClearCatalogReviewFilterGamepadFocus();
+            ClearCatalogReviewEmptyActionGamepadFocus();
             ClearCatalogReviewRowActionsGamepadFocus();
             ClearGamepadFocus();
             if (index < 0 || index >= rows.Count)
@@ -8428,6 +8681,9 @@ namespace Quiver
 
         private void SelectInitialLibraryGamepadItem()
         {
+            if (isSettingsPanelOpen)
+                return;
+
             if (Games.Count == 0)
             {
                 ClearGamepadFocus();
@@ -8472,8 +8728,12 @@ namespace Quiver
 
         private void SyncGamepadLibrarySelection()
         {
-            if (!_settings.EnableGamepadInput || _mainViewMode != MainViewMode.Library)
+            if (!_settings.EnableGamepadInput ||
+                isSettingsPanelOpen ||
+                _mainViewMode != MainViewMode.Library)
+            {
                 return;
+            }
 
             if (Games.Count == 0)
             {
@@ -8489,6 +8749,7 @@ namespace Quiver
         private void SyncCatalogGamepadSelection()
         {
             if (!_settings.EnableGamepadInput ||
+                isSettingsPanelOpen ||
                 _mainViewMode != MainViewMode.AppCatalog ||
                 _appCatalogSubView != AppCatalogSubView.Sources)
             {
@@ -8497,6 +8758,9 @@ namespace Quiver
 
             if (CatalogSources.Count == 0)
             {
+                _gamepadNavigation.CatalogSelectedIndex = -1;
+                _gamepadNavigation.CatalogSourceCardActionIndex = -1;
+
                 if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesToolbar)
                 {
                     ApplyCatalogSourcesToolbarSelection(
@@ -8506,10 +8770,34 @@ namespace Quiver
                 }
                 else
                 {
-                    ClearGamepadFocus();
-                    _gamepadNavigation.CatalogSelectedIndex = -1;
+                    // Empty filter (e.g. enabled last Disabled source) — re-home to filter chips
+                    // so Confirm is not stuck in CatalogSourceCardActions with nothing to activate.
+                    ApplyCatalogSourcesFilterSelection(
+                        _gamepadNavigation.CatalogSourcesFilterIndex < 0
+                            ? 0
+                            : _gamepadNavigation.CatalogSourcesFilterIndex);
                 }
 
+                return;
+            }
+
+            // Keep toolbar/filter focus after list rebuilds (e.g. Refresh All Sources)
+            // so focus does not jump to a source under a pending Yes/No prompt.
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesToolbar)
+            {
+                ApplyCatalogSourcesToolbarSelection(
+                    _gamepadNavigation.CatalogSourcesToolbarSelectedIndex < 0
+                        ? 0
+                        : _gamepadNavigation.CatalogSourcesToolbarSelectedIndex);
+                return;
+            }
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesFilters)
+            {
+                ApplyCatalogSourcesFilterSelection(
+                    _gamepadNavigation.CatalogSourcesFilterIndex < 0
+                        ? 0
+                        : _gamepadNavigation.CatalogSourcesFilterIndex);
                 return;
             }
 
@@ -8595,6 +8883,10 @@ namespace Quiver
 
         private void ApplyLibraryGamepadSelection(int index)
         {
+            // Settings overlays the library; never paint library focus while it is open.
+            if (isSettingsPanelOpen)
+                return;
+
             var games = Games.ToList();
             index = _gamepadNavigation.ClampIndex(index, games.Count);
             _gamepadNavigation.LibrarySelectedIndex = index;
@@ -8630,6 +8922,7 @@ namespace Quiver
             _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogSources;
 
             ClearSidebarGamepadFocus();
+            ClearCatalogSourcesToolbarGamepadFocus();
             ClearGamepadFocus();
             ClearCatalogSourceCardActionsGamepadFocus();
             if (index < 0 || index >= CatalogSources.Count)
@@ -8684,8 +8977,12 @@ namespace Quiver
 
         private void RestoreLibraryGamepadFocusAfterMenu()
         {
-            if (!_settings.EnableGamepadInput || _mainViewMode != MainViewMode.Library)
+            if (!_settings.EnableGamepadInput ||
+                isSettingsPanelOpen ||
+                _mainViewMode != MainViewMode.Library)
+            {
                 return;
+            }
 
             ClearSidebarGamepadFocus();
             ClearTopBarGamepadFocus();
@@ -9083,9 +9380,11 @@ namespace Quiver
             if (_settings.EnableGamepadInput && _inputService?.TryHandleComboBoxConfirm() == true)
                 return;
 
-            if (isSettingsPanelOpen &&
-                _gamepadNavigation.ActiveZone == GamepadNavigationZone.Settings)
+            // Prefer Settings whenever the panel is open, even if a layout sync
+            // briefly flipped ActiveZone back to Library.
+            if (isSettingsPanelOpen)
             {
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.Settings;
                 ActivateSettingsGamepadSelection();
                 return;
             }
@@ -9177,6 +9476,16 @@ namespace Quiver
             if (_settings.EnableGamepadInput &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourceCardActions)
             {
+                if (CatalogSources.Count == 0)
+                {
+                    ApplyCatalogSourcesFilterSelection(
+                        _gamepadNavigation.CatalogSourcesFilterIndex < 0
+                            ? 0
+                            : _gamepadNavigation.CatalogSourcesFilterIndex);
+                    ActivateCatalogSourcesFilterSelection();
+                    return;
+                }
+
                 ActivateCatalogSourceCardActionSelection();
                 return;
             }
@@ -9276,9 +9585,17 @@ namespace Quiver
             }
 
             if (_settings.EnableGamepadInput &&
-                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourceCardActions &&
-                CatalogSources.Count > 0)
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourceCardActions)
             {
+                if (CatalogSources.Count == 0)
+                {
+                    ApplyCatalogSourcesFilterSelection(
+                        _gamepadNavigation.CatalogSourcesFilterIndex < 0
+                            ? 0
+                            : _gamepadNavigation.CatalogSourcesFilterIndex);
+                    return;
+                }
+
                 ApplyCatalogGamepadSelection(_gamepadNavigation.CatalogSelectedIndex);
                 return;
             }
@@ -9319,6 +9636,10 @@ namespace Quiver
                 case GamepadNavigationZone.CatalogReviewFilters:
                     _gamepadNavigation.CatalogReviewFilterIndex = -1;
                     SelectInitialCatalogReviewGamepadItem();
+                    return true;
+
+                case GamepadNavigationZone.CatalogReviewList:
+                    ShowAppCatalogSourcesView();
                     return true;
 
                 case GamepadNavigationZone.AppUpdatesReviewToolbar:

@@ -20,6 +20,35 @@ public class GameGridViewModelTests
     }
 
     [Fact]
+    public void SortGames_name_mode_keeps_leading_articles_literal()
+    {
+        var games = new[]
+        {
+            new GameInfo { Name = "Zelda" },
+            new GameInfo { Name = "The Legend of Zelda" },
+            new GameInfo { Name = "Banjo" },
+        };
+
+        var sorted = new GameGridViewModel().SortGames(games, "Name", "/apps");
+        sorted.Select(g => g.Name).Should().Equal("Banjo", "The Legend of Zelda", "Zelda");
+    }
+
+    [Fact]
+    public void SortGames_name_ignore_articles_strips_leading_articles()
+    {
+        var games = new[]
+        {
+            new GameInfo { Name = "Zelda" },
+            new GameInfo { Name = "The Legend of Zelda" },
+            new GameInfo { Name = "A Short Hike" },
+            new GameInfo { Name = "Banjo" },
+        };
+
+        var sorted = new GameGridViewModel().SortGames(games, "NameIgnoreArticles", "/apps");
+        sorted.Select(g => g.Name).Should().Equal("Banjo", "The Legend of Zelda", "A Short Hike", "Zelda");
+    }
+
+    [Fact]
     public void GetLastPlayedTime_reads_timestamp_file()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());

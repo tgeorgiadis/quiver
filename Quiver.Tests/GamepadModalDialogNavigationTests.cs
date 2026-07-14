@@ -70,6 +70,16 @@ public class GamepadModalDialogNavigationTests
     }
 
     [AvaloniaFact]
+    public void GetDefaultButtonIndex_prefers_IsDefault_over_yes_label()
+    {
+        var yes = new Button { Content = "Yes" };
+        var no = new Button { Content = "No", IsDefault = true };
+        var buttons = new List<Button> { yes, no };
+
+        GamepadModalDialogNavigation.GetDefaultButtonIndex(buttons).Should().Be(1);
+    }
+
+    [AvaloniaFact]
     public void FindCancelButtonIndex_prefers_cancel_and_no()
     {
         var yesNo = new List<Button>

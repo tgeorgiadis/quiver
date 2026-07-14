@@ -1139,7 +1139,7 @@ rm -- ""$0""
 
                 if (Directory.Exists(gamePath))
                 {
-                    Directory.Delete(gamePath, recursive: true);
+                    RecycleBinHelper.MoveToRecycleBin(gamePath);
                 }
 
                 await game.CheckStatusAsync(_gameManager.HttpClient, _gameManager.GamesFolder, forceUpdateCheck: true);

@@ -494,6 +494,9 @@ namespace Quiver.Services
                 "NameDesc" => list
                     .OrderByDescending(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
+                "NameIgnoreArticles" => list
+                    .OrderBy(r => NameSortHelper.GetAlphabeticalSortKey(r.DisplayName), StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
                 "Repository" => list
                     .OrderBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
                 "Status" => list

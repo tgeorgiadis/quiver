@@ -16,6 +16,18 @@ internal static class GamepadControlActivation
         button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, RoutingStrategies.Bubble) { Source = button });
     }
 
+    /// <summary>
+    /// Focuses a text field and requests Steam's on-screen keyboard when available.
+    /// </summary>
+    public static void ActivateTextBox(TextBox textBox)
+    {
+        if (!textBox.IsEnabled || !textBox.IsVisible)
+            return;
+
+        textBox.Focus();
+        SteamOnScreenKeyboard.TryOpen();
+    }
+
     public static void ActivateDialogButton(Button button, Window? closeFallbackDialog = null)
     {
         if (!button.IsEnabled || !button.IsVisible)
