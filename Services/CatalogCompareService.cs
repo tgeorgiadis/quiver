@@ -485,26 +485,27 @@ namespace Quiver.Services
 
         public static IEnumerable<CatalogSyncRowItem> SortRows(
             IEnumerable<CatalogSyncRowItem> rows,
-            string sortMode)
+            string sortMode,
+            bool ignoreArticlesWhenSorting = true)
         {
             var list = rows as IReadOnlyList<CatalogSyncRowItem> ?? rows.ToList();
+            string NameKey(CatalogSyncRowItem r) => ignoreArticlesWhenSorting
+                ? NameSortHelper.GetAlphabeticalSortKey(r.DisplayName)
+                : (r.DisplayName ?? string.Empty);
 
             return sortMode switch
             {
                 "NameDesc" => list
-                    .OrderByDescending(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
-                "NameIgnoreArticles" => list
-                    .OrderBy(r => NameSortHelper.GetAlphabeticalSortKey(r.DisplayName), StringComparer.OrdinalIgnoreCase)
+                    .OrderByDescending(NameKey, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
                 "Repository" => list
                     .OrderBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
                 "Status" => list
                     .OrderBy(r => GetStatusSortRank(r.Status))
-                    .ThenBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(NameKey, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
                 _ => list
-                    .OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(NameKey, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(r => r.Repository, StringComparer.OrdinalIgnoreCase),
             };
         }

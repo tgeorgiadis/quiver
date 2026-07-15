@@ -57,6 +57,21 @@ namespace Quiver.Models
                 }
             }
         }
+
+        private bool _isManuallyHidden;
+        /// <summary>Runtime flag synced from settings; not persisted on the game entry.</summary>
+        public bool IsManuallyHidden
+        {
+            get => _isManuallyHidden;
+            set
+            {
+                if (_isManuallyHidden != value)
+                {
+                    _isManuallyHidden = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
         private string? _customIconPath { get; set; }
         public string? CustomIconPath
         {

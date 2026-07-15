@@ -36,6 +36,8 @@ public enum GamepadNavigationZone
 
     EntryFormOverlay,
 
+    TagEditOverlay,
+
     ChangelogOverlay,
 
     Settings,
@@ -136,7 +138,7 @@ public sealed class GamepadNavigationService
 
 
 
-    public int MoveListIndex(int currentIndex, NavigationDirection direction, int count)
+    public int MoveListIndex(int currentIndex, NavigationDirection direction, int count, bool wrap = true)
 
     {
 
@@ -154,9 +156,17 @@ public sealed class GamepadNavigationService
 
         {
 
-            NavigationDirection.Up => index <= 0 ? count - 1 : index - 1,
+            NavigationDirection.Up => index <= 0
 
-            NavigationDirection.Down => index >= count - 1 ? 0 : index + 1,
+                ? (wrap ? count - 1 : index)
+
+                : index - 1,
+
+            NavigationDirection.Down => index >= count - 1
+
+                ? (wrap ? 0 : index)
+
+                : index + 1,
 
             NavigationDirection.Left => index,
 

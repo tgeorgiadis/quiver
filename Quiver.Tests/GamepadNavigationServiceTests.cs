@@ -46,6 +46,24 @@ public class GamepadNavigationServiceTests
 
     [Fact]
 
+    public void MoveListIndex_does_not_wrap_when_disabled()
+
+    {
+
+        _service.MoveListIndex(2, NavigationDirection.Down, 3, wrap: false).Should().Be(2);
+
+        _service.MoveListIndex(0, NavigationDirection.Up, 3, wrap: false).Should().Be(0);
+
+        _service.MoveListIndex(1, NavigationDirection.Down, 3, wrap: false).Should().Be(2);
+
+        _service.MoveListIndex(1, NavigationDirection.Up, 3, wrap: false).Should().Be(0);
+
+    }
+
+
+
+    [Fact]
+
     public void MoveHorizontalIndex_moves_right_and_wraps()
 
     {

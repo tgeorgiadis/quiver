@@ -143,6 +143,15 @@ public sealed class GamepadContextMenuNavigation
         }
 
         GamepadControlActivation.ActivateMenuItem(item);
+
+        // Nested submenu items may not close the root menu via Parent alone; ensure it dismisses.
+        if (_activeMenu != null && _activeMenu.IsOpen)
+        {
+            var menu = _activeMenu;
+            CloseAllSubmenus(menu);
+            menu.Close();
+        }
+
         return true;
     }
 

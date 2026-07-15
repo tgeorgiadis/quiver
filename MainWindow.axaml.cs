@@ -62,6 +62,7 @@ namespace Quiver
             _settings.EnableGamepadInput &&
             !isSettingsPanelOpen &&
             !_isEntryFormOpen &&
+            !_isTagEditOpen &&
             !_isChangelogOpen &&
             !IsDisplayFilterOverlayOpen &&
             (_mainViewMode == MainViewMode.Library ||
@@ -416,6 +417,8 @@ namespace Quiver
             }
         }
         private bool _isEntryFormOpen = false;
+        private bool _isTagEditOpen = false;
+        private int _tagEditGamepadFocusIndex = -1;
         private bool _entryFormShowValidation;
         private GameInfo? _editingTagsGame;
         public string InfoTextLength = "*";
@@ -451,6 +454,9 @@ namespace Quiver
         public MainWindow()
         {
             InitializeComponent();
+
+            if (MinimizeButton != null)
+                MinimizeButton.IsVisible = !SteamDeckEnvironment.IsGamingMode();
 
             try
             {
@@ -1264,6 +1270,12 @@ namespace Quiver
             if (_isEntryFormOpen)
             {
                 CloseEntryFormOverlay();
+                return;
+            }
+
+            if (_isTagEditOpen)
+            {
+                CloseTagEditOverlay();
                 return;
             }
 
@@ -2234,6 +2246,8 @@ namespace Quiver
 
             if (_isEntryFormOpen)
                 CloseEntryFormOverlay();
+            if (_isTagEditOpen)
+                CloseTagEditOverlay();
 
             isSettingsPanelOpen = !isSettingsPanelOpen;
             SettingsPanel.IsVisible = isSettingsPanelOpen;
@@ -2266,6 +2280,8 @@ namespace Quiver
 
             if (_isEntryFormOpen)
                 CloseEntryFormOverlay();
+            if (_isTagEditOpen)
+                CloseTagEditOverlay();
 
             isSettingsPanelOpen = true;
             SettingsPanel.IsVisible = true;
@@ -2406,6 +2422,9 @@ namespace Quiver
                 if (CloseAfterLaunchCheckBox != null)
                     CloseAfterLaunchCheckBox.IsChecked = _settings.CloseAfterLaunch;
 
+                if (IgnoreArticlesWhenSortingCheckBox != null)
+                    IgnoreArticlesWhenSortingCheckBox.IsChecked = _settings.IgnoreArticlesWhenSorting;
+
                 RefreshConnectedGamepadsList();
                 RefreshGamepadBindingsPanel();
                 UpdateGamepadHintsBar();
@@ -2459,6 +2478,9 @@ namespace Quiver
             HideNonInstalledButton?.Classes.Set(
                 "selected",
                 _settings.ListScope == AppListScope.InstalledOnly);
+            ShowHiddenGamesButton?.Classes.Set(
+                "selected",
+                _settings.ListScope == AppListScope.HiddenOnly);
         }
 
         private async Task RefreshCatalogSourcesListAsync()
@@ -3176,6 +3198,7 @@ namespace Quiver
             _activeCatalogSyncSource = source;
             _catalogSyncViewModel.ReviewFilter = filter;
             _catalogSyncViewModel.SortBy = _currentCatalogReviewSortBy;
+            _catalogSyncViewModel.IgnoreArticlesWhenSorting = _settings.IgnoreArticlesWhenSorting;
             _catalogSyncViewModel.Refresh(source, localApps, externalApps);
 
             RefreshCatalogReviewFilterButtons(GetCatalogReviewFilterTag(filter));
@@ -3187,6 +3210,7 @@ namespace Quiver
 
         private void ApplyCatalogSyncFilter()
         {
+            _catalogSyncViewModel.IgnoreArticlesWhenSorting = _settings.IgnoreArticlesWhenSorting;
             CatalogSyncRows.Clear();
             var isHiddenFilter = _catalogSyncViewModel.ReviewFilter == CatalogReviewFilter.Hidden;
             foreach (var row in _catalogSyncViewModel.GetFilteredRows())
@@ -4445,6 +4469,23 @@ namespace Quiver
             }
         }
 
+        private void ShowHiddenGamesButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                _settings.ListScope = AppListScope.HiddenOnly;
+                OnSettingChanged();
+                _gameManager.SetListScope(AppListScope.HiddenOnly, _settings);
+                RefreshSidebarFilterSelection();
+                UpdateContinueButtonState();
+                ApplySorting();
+            }
+            catch (Exception ex)
+            {
+                _ = ShowMessageBoxAsync($"Failed to show hidden apps: {ex.Message}", "Error");
+            }
+        }
+
         private void AddDisplayFilter_Click(object? sender, RoutedEventArgs e)
         {
             ShowDisplayFilterOverlay(null);
@@ -5077,6 +5118,7 @@ namespace Quiver
 
             _currentCatalogReviewSortBy = sortMode;
             _catalogSyncViewModel.SortBy = sortMode;
+            _catalogSyncViewModel.IgnoreArticlesWhenSorting = _settings.IgnoreArticlesWhenSorting;
             _settings.CatalogReviewSortBy = sortMode;
             OnSettingChanged();
             ApplyCatalogSyncFilter();
@@ -5086,6 +5128,7 @@ namespace Quiver
         {
             _currentCatalogReviewSortBy = sortMode;
             _catalogSyncViewModel.SortBy = sortMode;
+            _catalogSyncViewModel.IgnoreArticlesWhenSorting = _settings.IgnoreArticlesWhenSorting;
 
             if (CatalogReviewSortByComboBox == null)
                 return;
@@ -5109,7 +5152,11 @@ namespace Quiver
             }
 
             Debug.WriteLine($"ApplySorting: Sorting {_gameManager.Games.Count} apps by {_currentSortBy}");
-            _gameGridViewModel.ApplySort(_gameManager.Games, _currentSortBy, _gameManager.GamesFolder);
+            _gameGridViewModel.ApplySort(
+                _gameManager.Games,
+                _currentSortBy,
+                _gameManager.GamesFolder,
+                _settings.IgnoreArticlesWhenSorting);
             Debug.WriteLine("ApplySorting: Completed sorting");
         }
 
@@ -5129,13 +5176,21 @@ namespace Quiver
 
             try
             {
+                var wasHidden = _gameManager.IsManuallyHidden(game);
                 _gameManager.ToggleUserHide(game);
                 await _gameManager.LoadGamesAsync();
                 ApplySorting();
+
+                if (!wasHidden)
+                {
+                    await ShowMessageBoxAsync(
+                        "App hidden from the library.\n\nYou can find it again under Show → Hidden, then choose Customize → Unhide App.",
+                        "App Hidden");
+                }
             }
             catch (Exception ex)
             {
-                _ = ShowMessageBoxAsync($"Failed to hide app: {ex.Message}", "Error");
+                _ = ShowMessageBoxAsync($"Failed to update app visibility: {ex.Message}", "Error");
             }
         }
 
@@ -5420,6 +5475,33 @@ namespace Quiver
                 _settings.CloseAfterLaunch = false;
                 OnPropertyChanged(nameof(CloseAfterLaunch));
                 OnSettingChanged();
+            }
+        }
+
+        private void IgnoreArticlesWhenSortingCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            SetIgnoreArticlesWhenSorting(true);
+        }
+
+        private void IgnoreArticlesWhenSortingCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            SetIgnoreArticlesWhenSorting(false);
+        }
+
+        private void SetIgnoreArticlesWhenSorting(bool enabled)
+        {
+            if (_settings == null)
+                return;
+
+            _settings.IgnoreArticlesWhenSorting = enabled;
+            OnSettingChanged();
+            ApplySorting();
+
+            if (_mainViewMode == MainViewMode.AppCatalog &&
+                _appCatalogSubView == AppCatalogSubView.Review)
+            {
+                _catalogSyncViewModel.IgnoreArticlesWhenSorting = enabled;
+                ApplyCatalogSyncFilter();
             }
         }
 
@@ -6000,18 +6082,50 @@ namespace Quiver
             if (game == null)
                 return;
 
+            ShowTagEditOverlay(game);
+        }
+
+        private void ShowTagEditOverlay(GameInfo game)
+        {
             _editingTagsGame = game;
             TagEditAppNameText.Text = game.Name ?? "Unknown app";
             TagEditTextBox.Text = TagHelper.FormatTagsForDisplay(game.Tags);
+
+            var gamingMode = SteamDeckEnvironment.IsGamingMode();
+            TagEditOverlayLayout.ApplyDialogPlacement(TagEditDialogPanel, gamingMode);
+
+            _isTagEditOpen = true;
             TagEditOverlay.IsVisible = true;
-            if (TagEditTextBox != null)
-                Dispatcher.UIThread.Post(() => GamepadControlActivation.ActivateTextBox(TagEditTextBox), DispatcherPriority.Loaded);
+            ClearGamepadFocus();
+            ClearSidebarGamepadFocus();
+            ClearTopBarGamepadFocus();
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.TagEditOverlay;
+            OnPropertyChanged(nameof(GamepadHintsVisible));
+            var initialFocus = TagEditOverlayLayout.GetInitialFocusIndex(gamingMode);
+            Dispatcher.UIThread.Post(() => ApplyTagEditGamepadSelection(initialFocus), DispatcherPriority.Loaded);
+        }
+
+        private void CloseTagEditOverlay()
+        {
+            ClearTagEditGamepadFocus();
+            _tagEditGamepadFocusIndex = -1;
+            _isTagEditOpen = false;
+            TagEditOverlay.IsVisible = false;
+            _editingTagsGame = null;
+            TagEditOverlayLayout.ApplyDialogPlacement(TagEditDialogPanel, isGamingMode: false);
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.TagEditOverlay)
+            {
+                _gamepadNavigation.ActiveZone = GetMainContentGamepadZone();
+                SelectInitialGamepadItemForCurrentView();
+            }
+
+            OnPropertyChanged(nameof(GamepadHintsVisible));
         }
 
         private void CancelTagEdit_Click(object? sender, RoutedEventArgs e)
         {
-            TagEditOverlay.IsVisible = false;
-            _editingTagsGame = null;
+            CloseTagEditOverlay();
         }
 
         private async void SaveTagEdit_Click(object? sender, RoutedEventArgs e)
@@ -6023,8 +6137,7 @@ namespace Quiver
             {
                 var tags = TagHelper.ParseCommaSeparatedTags(TagEditTextBox?.Text);
                 await SaveTagsForGameAsync(_editingTagsGame, tags);
-                TagEditOverlay.IsVisible = false;
-                _editingTagsGame = null;
+                CloseTagEditOverlay();
                 await _gameManager.LoadGamesAsync();
                 ApplySorting();
             }
@@ -6517,6 +6630,12 @@ namespace Quiver
                 return HandleEntryFormGamepadNavigation(direction);
             }
 
+            if (_isTagEditOpen)
+            {
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.TagEditOverlay;
+                return HandleTagEditGamepadNavigation(direction);
+            }
+
             if (isSettingsPanelOpen)
             {
                 _gamepadNavigation.ActiveZone = GamepadNavigationZone.Settings;
@@ -6711,6 +6830,78 @@ namespace Quiver
         private void ClearEntryFormGamepadFocus()
         {
             ClearStyledControlsGamepadFocusClasses(CollectEntryFormFocusableControls());
+        }
+
+        private bool HandleTagEditGamepadNavigation(Services.NavigationDirection direction)
+        {
+            var controls = CollectTagEditFocusableControls();
+            if (controls.Count == 0)
+                return true;
+
+            // Keep focus trapped in the overlay — never zone-transition to Library underneath.
+            var nextIndex = direction is Services.NavigationDirection.Up or Services.NavigationDirection.Left
+                ? _gamepadNavigation.MoveListIndex(_tagEditGamepadFocusIndex, Services.NavigationDirection.Up, controls.Count)
+                : _gamepadNavigation.MoveListIndex(_tagEditGamepadFocusIndex, Services.NavigationDirection.Down, controls.Count);
+
+            ApplyTagEditGamepadSelection(nextIndex);
+            return true;
+        }
+
+        private List<Control> CollectTagEditFocusableControls()
+        {
+            var controls = new List<Control>();
+
+            void Add(Control? control)
+            {
+                if (control != null && control.IsVisible && control.IsEnabled && control.Focusable)
+                    controls.Add(control);
+            }
+
+            Add(TagEditTextBox);
+            Add(TagEditCancelButton);
+            Add(TagEditSaveButton);
+            return controls;
+        }
+
+        private void ApplyTagEditGamepadSelection(int index)
+        {
+            var controls = CollectTagEditFocusableControls();
+            index = _gamepadNavigation.ClampIndex(index, controls.Count);
+            _tagEditGamepadFocusIndex = index;
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.TagEditOverlay;
+
+            ClearGamepadFocus();
+            ClearSidebarGamepadFocus();
+            ClearTopBarGamepadFocus();
+            ClearTagEditGamepadFocus();
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            if (controls[index] is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            controls[index].Focus();
+        }
+
+        private void ActivateTagEditGamepadSelection()
+        {
+            var controls = CollectTagEditFocusableControls();
+            var index = _gamepadNavigation.ClampIndex(_tagEditGamepadFocusIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return;
+
+            var control = controls[index];
+            if (control is Button button)
+                GamepadControlActivation.ActivateButton(button);
+            else if (control is TextBox textBox)
+                GamepadControlActivation.ActivateTextBox(textBox);
+            else
+                control.Focus();
+        }
+
+        private void ClearTagEditGamepadFocus()
+        {
+            ClearStyledControlsGamepadFocusClasses(CollectTagEditFocusableControls());
         }
 
         private List<Control> CollectDisplayFilterFocusableControls()
@@ -7617,7 +7808,7 @@ namespace Quiver
             if (_gamepadNavigation.ActiveZone != GamepadNavigationZone.CatalogReviewList)
                 return false;
 
-            var nextIndex = _gamepadNavigation.MoveListIndex(currentIndex, direction, rows.Count);
+            var nextIndex = _gamepadNavigation.MoveListIndex(currentIndex, direction, rows.Count, wrap: false);
             ApplyCatalogReviewRowSelection(nextIndex);
             return true;
         }
@@ -7686,7 +7877,7 @@ namespace Quiver
             if (direction is Services.NavigationDirection.Up or Services.NavigationDirection.Down)
             {
                 ClearCatalogReviewRowActionsGamepadFocus();
-                var nextRow = _gamepadNavigation.MoveListIndex(rowIndex, direction, rows.Count);
+                var nextRow = _gamepadNavigation.MoveListIndex(rowIndex, direction, rows.Count, wrap: false);
                 ApplyCatalogReviewRowSelection(nextRow);
                 return true;
             }
@@ -7814,7 +8005,7 @@ namespace Quiver
                 return true;
             }
 
-            var nextIndex = _gamepadNavigation.MoveListIndex(currentIndex, direction, rows.Count);
+            var nextIndex = _gamepadNavigation.MoveListIndex(currentIndex, direction, rows.Count, wrap: false);
             ApplyAppUpdatesReviewRowSelection(nextIndex);
             return true;
         }
@@ -7871,7 +8062,7 @@ namespace Quiver
             if (direction is Services.NavigationDirection.Up or Services.NavigationDirection.Down)
             {
                 ClearAppUpdatesReviewRowActionsGamepadFocus();
-                var nextRow = _gamepadNavigation.MoveListIndex(rowIndex, direction, rows.Count);
+                var nextRow = _gamepadNavigation.MoveListIndex(rowIndex, direction, rows.Count, wrap: false);
                 ApplyAppUpdatesReviewRowSelection(nextRow);
                 return true;
             }
@@ -8150,6 +8341,7 @@ namespace Quiver
             {
                 Add(UnhideAllGamesButton);
                 Add(HideNonInstalledButton);
+                Add(ShowHiddenGamesButton);
 
                 if (TagDisplayFiltersItemsControl != null)
                 {
@@ -8979,6 +9171,8 @@ namespace Quiver
         {
             if (!_settings.EnableGamepadInput ||
                 isSettingsPanelOpen ||
+                _isTagEditOpen ||
+                _isEntryFormOpen ||
                 _mainViewMode != MainViewMode.Library)
             {
                 return;
@@ -9403,6 +9597,13 @@ namespace Quiver
                 return;
             }
 
+            if (_isTagEditOpen &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.TagEditOverlay)
+            {
+                ActivateTagEditGamepadSelection();
+                return;
+            }
+
             if (_settings.EnableGamepadInput &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.Sidebar)
             {
@@ -9581,6 +9782,12 @@ namespace Quiver
             if (_isEntryFormOpen)
             {
                 CloseEntryFormOverlay();
+                return;
+            }
+
+            if (_isTagEditOpen)
+            {
+                CloseTagEditOverlay();
                 return;
             }
 

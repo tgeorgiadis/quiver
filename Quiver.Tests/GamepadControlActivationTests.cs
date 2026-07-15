@@ -57,4 +57,45 @@ public class GamepadControlActivationTests
 
         clickCount.Should().Be(1);
     }
+
+    [AvaloniaFact]
+    public void ActivateMenuItem_closes_root_context_menu_for_nested_item()
+    {
+        var editTags = new MenuItem
+        {
+            Header = "Edit Tags",
+            IsEnabled = true,
+            IsVisible = true,
+        };
+        var catalog = new MenuItem
+        {
+            Header = "Catalog",
+            Items = { editTags },
+        };
+        var button = new Button { Content = "Options" };
+        var menu = new ContextMenu { Items = { catalog } };
+        var window = new Window
+        {
+            Content = button,
+            Width = 240,
+            Height = 180,
+        };
+
+        try
+        {
+            window.Show();
+            menu.Open(button);
+            menu.IsOpen.Should().BeTrue();
+
+            GamepadControlActivation.ActivateMenuItem(editTags);
+
+            menu.IsOpen.Should().BeFalse();
+        }
+        finally
+        {
+            if (menu.IsOpen)
+                menu.Close();
+            window.Close();
+        }
+    }
 }

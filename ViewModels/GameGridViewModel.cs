@@ -6,38 +6,50 @@ namespace Quiver.ViewModels;
 
 public class GameGridViewModel
 {
-    public IReadOnlyList<GameInfo> SortGames(IEnumerable<GameInfo> games, string sortMode, string gamesFolder)
+    public IReadOnlyList<GameInfo> SortGames(
+        IEnumerable<GameInfo> games,
+        string sortMode,
+        string gamesFolder,
+        bool ignoreArticlesWhenSorting = true)
     {
         var list = games.Where(g => g != null).Cast<GameInfo>().ToList();
+        string NameKey(GameInfo g) => ignoreArticlesWhenSorting
+            ? NameSortHelper.GetAlphabeticalSortKey(g.Name)
+            : (g.Name ?? string.Empty);
 
         return sortMode switch
         {
-            "NameDesc" => list.OrderByDescending(g => g.Name ?? string.Empty).ToList(),
-            "NameIgnoreArticles" => list
-                .OrderBy(g => NameSortHelper.GetAlphabeticalSortKey(g.Name), StringComparer.OrdinalIgnoreCase)
+            "NameDesc" => list
+                .OrderByDescending(NameKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             "Installed" => list
                 .OrderByDescending(g => g.IsInstalled)
-                .ThenBy(g => g.Name ?? string.Empty)
+                .ThenBy(NameKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             "NotInstalled" => list
                 .OrderBy(g => g.IsInstalled)
-                .ThenBy(g => g.Name ?? string.Empty)
+                .ThenBy(NameKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             "LastPlayed" => list
                 .OrderByDescending(g => GetLastPlayedTime(g, gamesFolder))
-                .ThenBy(g => g.Name ?? string.Empty)
+                .ThenBy(NameKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            _ => list.OrderBy(g => g.Name ?? string.Empty).ToList(),
+            _ => list
+                .OrderBy(NameKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
         };
     }
 
-    public void ApplySort(ObservableCollection<GameInfo> games, string sortMode, string gamesFolder)
+    public void ApplySort(
+        ObservableCollection<GameInfo> games,
+        string sortMode,
+        string gamesFolder,
+        bool ignoreArticlesWhenSorting = true)
     {
         if (games.Count == 0)
             return;
 
-        var sorted = SortGames(games, sortMode, gamesFolder);
+        var sorted = SortGames(games, sortMode, gamesFolder, ignoreArticlesWhenSorting);
         games.Clear();
         foreach (var game in sorted)
             games.Add(game);

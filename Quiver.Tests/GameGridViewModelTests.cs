@@ -15,12 +15,12 @@ public class GameGridViewModelTests
             new GameInfo { Name = "Banjo" },
         };
 
-        var sorted = new GameGridViewModel().SortGames(games, "Name", "/apps");
+        var sorted = new GameGridViewModel().SortGames(games, "Name", "/apps", ignoreArticlesWhenSorting: false);
         sorted.Select(g => g.Name).Should().Equal("Banjo", "Zelda");
     }
 
     [Fact]
-    public void SortGames_name_mode_keeps_leading_articles_literal()
+    public void SortGames_name_mode_keeps_leading_articles_when_disabled()
     {
         var games = new[]
         {
@@ -29,12 +29,12 @@ public class GameGridViewModelTests
             new GameInfo { Name = "Banjo" },
         };
 
-        var sorted = new GameGridViewModel().SortGames(games, "Name", "/apps");
+        var sorted = new GameGridViewModel().SortGames(games, "Name", "/apps", ignoreArticlesWhenSorting: false);
         sorted.Select(g => g.Name).Should().Equal("Banjo", "The Legend of Zelda", "Zelda");
     }
 
     [Fact]
-    public void SortGames_name_ignore_articles_strips_leading_articles()
+    public void SortGames_name_mode_strips_leading_articles_when_enabled()
     {
         var games = new[]
         {
@@ -44,7 +44,7 @@ public class GameGridViewModelTests
             new GameInfo { Name = "Banjo" },
         };
 
-        var sorted = new GameGridViewModel().SortGames(games, "NameIgnoreArticles", "/apps");
+        var sorted = new GameGridViewModel().SortGames(games, "Name", "/apps", ignoreArticlesWhenSorting: true);
         sorted.Select(g => g.Name).Should().Equal("Banjo", "The Legend of Zelda", "A Short Hike", "Zelda");
     }
 

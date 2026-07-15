@@ -661,7 +661,7 @@ public class CatalogCompareServiceTests
     }
 
     [Fact]
-    public void SortRows_name_ignore_articles_strips_leading_articles()
+    public void SortRows_name_strips_leading_articles_when_enabled()
     {
         var rows = new List<CatalogSyncRowItem>
         {
@@ -671,10 +671,26 @@ public class CatalogCompareServiceTests
             CreateRow("owner/banjo", "Banjo", CatalogSyncStatus.Unchanged),
         };
 
-        CatalogCompareService.SortRows(rows, "NameIgnoreArticles")
+        CatalogCompareService.SortRows(rows, "Name", ignoreArticlesWhenSorting: true)
             .Select(r => r.DisplayName)
             .Should()
             .Equal("Banjo", "The Legend of Zelda", "A Short Hike", "Zelda");
+    }
+
+    [Fact]
+    public void SortRows_name_keeps_leading_articles_when_disabled()
+    {
+        var rows = new List<CatalogSyncRowItem>
+        {
+            CreateRow("owner/zelda", "Zelda", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/legend", "The Legend of Zelda", CatalogSyncStatus.Unchanged),
+            CreateRow("owner/banjo", "Banjo", CatalogSyncStatus.Unchanged),
+        };
+
+        CatalogCompareService.SortRows(rows, "Name", ignoreArticlesWhenSorting: false)
+            .Select(r => r.DisplayName)
+            .Should()
+            .Equal("Banjo", "The Legend of Zelda", "Zelda");
     }
 
     [Fact]

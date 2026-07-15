@@ -426,12 +426,9 @@ namespace Quiver.Services
         private async Task RebuildVisibleGamesAsync(AppSettings settings)
         {
             settings.EnsureInitialized();
+            SyncManuallyHiddenFlags(settings);
 
-            _allGames = _catalogApps
-                .Where(app => app != null && !IsGameManuallyHidden(settings, app))
-                .Where(app => settings.ListScope != AppListScope.InstalledOnly
-                    || app.Status != GameStatus.NotInstalled)
-                .ToList();
+            _allGames = FilterCatalogByListScope(_catalogApps, settings);
 
             await ApplyTagDisplayFilterAsync(settings);
 
@@ -441,15 +438,37 @@ namespace Quiver.Services
         private void RebuildVisibleGames(AppSettings settings)
         {
             settings.EnsureInitialized();
+            SyncManuallyHiddenFlags(settings);
 
-            _allGames = _catalogApps
-                .Where(app => app != null && !IsGameManuallyHidden(settings, app))
-                .Where(app => settings.ListScope != AppListScope.InstalledOnly
-                    || app.Status != GameStatus.NotInstalled)
-                .ToList();
+            _allGames = FilterCatalogByListScope(_catalogApps, settings);
 
             ApplyTagDisplayFilter(settings);
             OnPropertyChanged(nameof(IsLibraryEmpty));
+        }
+
+        private static List<GameInfo> FilterCatalogByListScope(IEnumerable<GameInfo> catalogApps, AppSettings settings)
+        {
+            var showHiddenOnly = settings.ListScope == AppListScope.HiddenOnly;
+
+            return catalogApps
+                .Where(app => app != null)
+                .Where(app =>
+                {
+                    var isHidden = IsGameManuallyHidden(settings, app);
+                    return showHiddenOnly ? isHidden : !isHidden;
+                })
+                .Where(app => settings.ListScope != AppListScope.InstalledOnly
+                    || app.Status != GameStatus.NotInstalled)
+                .ToList();
+        }
+
+        private void SyncManuallyHiddenFlags(AppSettings settings)
+        {
+            foreach (var app in _catalogApps)
+            {
+                if (app != null)
+                    app.IsManuallyHidden = IsGameManuallyHidden(settings, app);
+            }
         }
 
         public bool IsLibraryEmpty => _catalogApps.Count == 0;

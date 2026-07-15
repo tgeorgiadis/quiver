@@ -10,6 +10,7 @@ public class CatalogSyncViewModel
     public bool ShowUpToDateApps { get; set; }
     public CatalogReviewFilter ReviewFilter { get; set; } = CatalogReviewFilter.All;
     public string SortBy { get; set; } = "Name";
+    public bool IgnoreArticlesWhenSorting { get; set; } = true;
 
     public int ExternalOnlyCount => AllRows.Count(r =>
         r.Status == CatalogSyncStatus.InExternalOnly &&
@@ -113,7 +114,8 @@ public class CatalogSyncViewModel
 
         return CatalogCompareService.SortRows(
             CatalogCompareService.FilterVisibleRows(AllRows, Source, ShowUpToDateApps),
-            SortBy);
+            SortBy,
+            IgnoreArticlesWhenSorting);
     }
 
     public IEnumerable<CatalogSyncRowItem> GetFilteredRows()
@@ -123,6 +125,7 @@ public class CatalogSyncViewModel
 
         return CatalogCompareService.SortRows(
             CatalogCompareService.FilterByReviewFilter(AllRows, Source, ReviewFilter),
-            SortBy);
+            SortBy,
+            IgnoreArticlesWhenSorting);
     }
 }

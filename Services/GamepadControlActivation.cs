@@ -94,10 +94,19 @@ internal static class GamepadControlActivation
 
     private static void CloseParentMenuIfOpen(MenuItem item)
     {
-        var menu = item.Parent as ContextMenu
-            ?? item.GetVisualAncestors().OfType<ContextMenu>().FirstOrDefault();
+        // Nested items (e.g. Catalog → Edit Tags) have a MenuItem parent, not ContextMenu.
+        for (Control? current = item.Parent as Control; current != null; current = current.Parent as Control)
+        {
+            if (current is ContextMenu menu)
+            {
+                if (menu.IsOpen)
+                    menu.Close();
+                return;
+            }
+        }
 
-        if (menu != null && menu.IsOpen)
-            menu.Close();
+        var visualMenu = item.GetVisualAncestors().OfType<ContextMenu>().FirstOrDefault();
+        if (visualMenu != null && visualMenu.IsOpen)
+            visualMenu.Close();
     }
 }

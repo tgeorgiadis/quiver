@@ -123,7 +123,7 @@ public class GameManagerFilterTests
     }
 
     [Fact]
-    public void Manually_hidden_app_stays_hidden_in_all_scopes()
+    public void Manually_hidden_app_stays_hidden_in_all_and_installed_scopes()
     {
         var (manager, store, tempDir) = CreateManager();
         var settings = store.Current;
@@ -133,12 +133,81 @@ public class GameManagerFilterTests
         manager.SetCatalogAppsAndFilter([game, CreateGame("Visible", "visible", GameStatus.Installed)], settings);
 
         manager.Games.Should().ContainSingle(g => g.FolderName == "visible");
+        game.IsManuallyHidden.Should().BeTrue();
 
         settings.ListScope = AppListScope.InstalledOnly;
         manager.SetCatalogAppsAndFilter(
         [
             game,
             CreateGame("Visible", "visible", GameStatus.Installed),
+        ],
+        settings);
+
+        manager.Games.Should().ContainSingle(g => g.FolderName == "visible");
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void HiddenOnly_scope_lists_only_manually_hidden_apps()
+    {
+        var (manager, store, tempDir) = CreateManager();
+        var settings = store.Current;
+        var hiddenInstalled = CreateGame("Hidden Installed", "hidden-installed", GameStatus.Installed);
+        var hiddenMissing = CreateGame("Hidden Missing", "hidden-missing", GameStatus.NotInstalled);
+        var visible = CreateGame("Visible", "visible", GameStatus.Installed);
+        settings.ManuallyHiddenApps.Add("folder:hidden-installed");
+        settings.ManuallyHiddenApps.Add("folder:hidden-missing");
+        settings.ListScope = AppListScope.HiddenOnly;
+
+        manager.SetCatalogAppsAndFilter([hiddenInstalled, hiddenMissing, visible], settings);
+
+        manager.Games.Select(g => g.FolderName).Should().BeEquivalentTo("hidden-installed", "hidden-missing");
+        manager.Games.Should().OnlyContain(g => g.IsManuallyHidden);
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void ToggleUserHide_unhide_removes_from_HiddenOnly_and_returns_under_AllApps()
+    {
+        var (manager, store, tempDir) = CreateManager();
+        var settings = store.Current;
+        var game = CreateGame("Hidden", "hidden", GameStatus.Installed);
+        var other = CreateGame("Visible", "visible", GameStatus.Installed);
+        settings.ManuallyHiddenApps.Add("folder:hidden");
+        settings.ListScope = AppListScope.HiddenOnly;
+
+        manager.SetCatalogAppsAndFilter([game, other], settings);
+        manager.Games.Should().ContainSingle(g => g.FolderName == "hidden");
+
+        manager.ToggleUserHide(game);
+        settings = store.Current;
+        settings.ListScope = AppListScope.HiddenOnly;
+        manager.SetCatalogAppsAndFilter([game, other], settings);
+        manager.Games.Should().BeEmpty();
+
+        settings.ListScope = AppListScope.AllApps;
+        manager.SetCatalogAppsAndFilter([game, other], settings);
+        manager.Games.Select(g => g.FolderName).Should().BeEquivalentTo("hidden", "visible");
+        game.IsManuallyHidden.Should().BeFalse();
+
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void InstalledOnly_still_excludes_manually_hidden_apps()
+    {
+        var (manager, store, tempDir) = CreateManager();
+        var settings = store.Current;
+        settings.ListScope = AppListScope.InstalledOnly;
+        settings.ManuallyHiddenApps.Add("folder:hidden");
+
+        manager.SetCatalogAppsAndFilter(
+        [
+            CreateGame("Hidden", "hidden", GameStatus.Installed),
+            CreateGame("Visible", "visible", GameStatus.Installed),
+            CreateGame("Missing", "missing", GameStatus.NotInstalled),
         ],
         settings);
 

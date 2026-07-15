@@ -11,6 +11,7 @@ namespace Quiver
     {
         AllApps,
         InstalledOnly,
+        HiddenOnly,
     }
 
     public enum TagFilterMatchMode
@@ -87,6 +88,7 @@ namespace Quiver
         public string GitHubApiToken { get; set; } = string.Empty;
         public string SortBy { get; set; } = "LastPlayed";
         public string CatalogReviewSortBy { get; set; } = "Name";
+        public bool IgnoreArticlesWhenSorting { get; set; } = true;
         public bool StartFullscreen { get; set; } = false;
         public bool CloseAfterLaunch {  get; set; } = false;
         public string BackgroundImagePath { get; set; } = string.Empty;
@@ -125,6 +127,12 @@ namespace Quiver
                 ListScope = AppListScope.InstalledOnly;
                 HiddenApps.Clear();
             }
+
+            // Legacy sort mode removed in favor of IgnoreArticlesWhenSorting.
+            if (string.Equals(SortBy, "NameIgnoreArticles", StringComparison.OrdinalIgnoreCase))
+                SortBy = "Name";
+            if (string.Equals(CatalogReviewSortBy, "NameIgnoreArticles", StringComparison.OrdinalIgnoreCase))
+                CatalogReviewSortBy = "Name";
         }
 
         public static AppSettings Load() => SettingsStoreProvider.Default.Load();

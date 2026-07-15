@@ -190,4 +190,48 @@ public class GamepadContextMenuNavigationTests
             GamepadContextMenuNavigation.Instance.UnregisterContextMenu(menu);
         }
     }
+
+    [AvaloniaFact]
+    public void TryHandleConfirm_on_nested_leaf_closes_root_context_menu()
+    {
+        var editTagsClicked = false;
+        var editTags = new MenuItem { Header = "Edit Tags" };
+        editTags.Click += (_, _) => editTagsClicked = true;
+        var catalog = new MenuItem
+        {
+            Header = "Catalog",
+            Items = { editTags },
+        };
+        var button = new Button { Content = "Options" };
+        var menu = new ContextMenu { Items = { catalog } };
+        var window = new Window
+        {
+            Content = button,
+            Width = 240,
+            Height = 180,
+        };
+
+        try
+        {
+            window.Show();
+            GamepadContextMenuNavigation.Attach(menu);
+            menu.Open(button);
+            menu.IsOpen.Should().BeTrue();
+
+            GamepadContextMenuNavigation.Instance.TryHandleConfirm().Should().BeTrue();
+            catalog.IsSubMenuOpen.Should().BeTrue();
+
+            GamepadContextMenuNavigation.Instance.TryHandleConfirm().Should().BeTrue();
+            editTagsClicked.Should().BeTrue();
+            menu.IsOpen.Should().BeFalse();
+            GamepadContextMenuNavigation.Instance.HasActiveContextMenu.Should().BeFalse();
+        }
+        finally
+        {
+            GamepadContextMenuNavigation.Instance.UnregisterContextMenu(menu);
+            if (menu.IsOpen)
+                menu.Close();
+            window.Close();
+        }
+    }
 }
