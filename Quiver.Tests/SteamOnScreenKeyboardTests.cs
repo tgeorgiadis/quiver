@@ -92,4 +92,33 @@ public class SteamOnScreenKeyboardTests
 
         act.Should().NotThrow();
     }
+
+    [AvaloniaFact]
+    public void ActivateTextBox_moves_caret_to_end()
+    {
+        var box = new TextBox
+        {
+            IsEnabled = true,
+            IsVisible = true,
+            Text = "n64, recomp",
+            CaretIndex = 0,
+        };
+
+        GamepadControlActivation.ActivateTextBox(box);
+
+        box.CaretIndex.Should().Be(box.Text!.Length);
+        box.SelectionStart.Should().Be(box.Text.Length);
+        box.SelectionEnd.Should().Be(box.Text.Length);
+    }
+
+    [AvaloniaFact]
+    public void MoveCaretToEnd_sets_caret_after_existing_text()
+    {
+        var box = new TextBox { Text = "hello" };
+        box.CaretIndex = 0;
+
+        GamepadControlActivation.MoveCaretToEnd(box);
+
+        box.CaretIndex.Should().Be(5);
+    }
 }

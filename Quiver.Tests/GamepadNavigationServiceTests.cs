@@ -424,6 +424,34 @@ public class GamepadNavigationServiceTests
 
     [Fact]
 
+    public void TryGetZoneTransition_does_not_leave_top_bar_on_up()
+
+    {
+
+        var transition = _service.TryGetZoneTransition(
+
+            NavigationDirection.Up,
+
+            GamepadNavigationZone.TopBar,
+
+            GamepadNavigationZone.Library,
+
+            isListLayout: true,
+
+            positions: null,
+
+            currentIndex: 3);
+
+
+
+        transition.Should().BeNull();
+
+    }
+
+
+
+    [Fact]
+
     public void TryGetZoneTransition_moves_left_from_catalog_sources_to_sidebar()
 
     {

@@ -3485,10 +3485,16 @@ namespace Quiver
                 Watermark = "URL or file path to apps.json",
                 Margin = new Thickness(0, 0, 0, 8),
             };
+            locationBox.GotFocus += (_, _) =>
+            {
+                GamepadControlActivation.MoveCaretToEnd(locationBox);
+                SteamOnScreenKeyboard.TryOpen();
+            };
 
             var browseButton = new Button
             {
                 Content = "Browse…",
+                Classes = { "options" },
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Margin = new Thickness(0, 0, 0, 12),
             };
@@ -3507,8 +3513,8 @@ namespace Quiver
             };
 
             string? result = null;
-            var addButton = new Button { Content = "Add", MinWidth = 80 };
-            var cancelButton = new Button { Content = "Cancel", MinWidth = 80 };
+            var addButton = new Button { Content = "Add", MinWidth = 80, Classes = { "options" } };
+            var cancelButton = new Button { Content = "Cancel", MinWidth = 80, Classes = { "options" } };
 
             var dialog = new Window
             {
@@ -4192,7 +4198,7 @@ namespace Quiver
 
             var result = await ShowMessageBoxAsync(
                 $"Are you sure you want to delete {game.Name}?\n\n" +
-                "Game files will be moved to the Recycle Bin / Trash so you can restore them if needed. " +
+                "Quiver will attempt to move game files to your system's Recycle Bin / Trash so you can restore them if needed. " +
                 "Portable installs may include save data in the same folder.",
                 "Confirm Deletion",
                 isQuestion: true,
@@ -5090,8 +5096,12 @@ namespace Quiver
 
         private static void OnTextBoxGotFocusForSteamOsk(object? sender, GotFocusEventArgs e)
         {
-            if (e.Source is TextBox)
-                SteamOnScreenKeyboard.TryOpen();
+            if (e.Source is not TextBox textBox || !SteamOnScreenKeyboard.ShouldOffer())
+                return;
+
+            // Place caret at end before OSK opens so typing appends instead of inserting at index 0.
+            GamepadControlActivation.MoveCaretToEnd(textBox);
+            SteamOnScreenKeyboard.TryOpen();
         }
 
         private void SortByComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -5864,7 +5874,14 @@ namespace Quiver
             EntryFormOverlay.IsVisible = true;
             _gamepadNavigation.ActiveZone = GamepadNavigationZone.EntryFormOverlay;
             OnPropertyChanged(nameof(GamepadHintsVisible));
-            Dispatcher.UIThread.Post(() => ApplyEntryFormGamepadSelection(0), DispatcherPriority.Loaded);
+            Dispatcher.UIThread.Post(() =>
+            {
+                ApplyEntryFormGamepadSelection(0);
+                // Steam Deck: open OSK on Name when the form appears; D-pad to other
+                // fields still uses highlight-only until Confirm (A).
+                if (SteamOnScreenKeyboard.ShouldOffer())
+                    ActivateEntryFormGamepadSelection();
+            }, DispatcherPriority.Loaded);
         }
 
         private void CloseEntryFormOverlay()
@@ -6807,7 +6824,7 @@ namespace Quiver
             if (controls[index] is StyledElement styled)
                 styled.Classes.Set("gamepad-focused", true);
 
-            controls[index].Focus();
+            GamepadControlActivation.ApplyGamepadHighlightFocus(controls[index]);
             Dispatcher.UIThread.Post(() => controls[index].BringIntoView(), DispatcherPriority.Loaded);
         }
 
@@ -6880,7 +6897,7 @@ namespace Quiver
             if (controls[index] is StyledElement styled)
                 styled.Classes.Set("gamepad-focused", true);
 
-            controls[index].Focus();
+            GamepadControlActivation.ApplyGamepadHighlightFocus(controls[index]);
         }
 
         private void ActivateTagEditGamepadSelection()
@@ -6938,7 +6955,7 @@ namespace Quiver
             if (controls[index] is StyledElement styled)
                 styled.Classes.Set("gamepad-focused", true);
 
-            controls[index].Focus();
+            GamepadControlActivation.ApplyGamepadHighlightFocus(controls[index]);
             Dispatcher.UIThread.Post(() => controls[index].BringIntoView(), DispatcherPriority.Loaded);
         }
 
@@ -7330,7 +7347,7 @@ namespace Quiver
             if (controls[index] is StyledElement styled)
                 styled.Classes.Set("gamepad-focused", true);
 
-            controls[index].Focus();
+            GamepadControlActivation.ApplyGamepadHighlightFocus(controls[index]);
             Dispatcher.UIThread.Post(() => controls[index].BringIntoView(), DispatcherPriority.Loaded);
         }
 
@@ -8311,15 +8328,20 @@ namespace Quiver
             if (zoneTransition.HasValue)
                 return TryApplyGamepadZoneTransition(zoneTransition.Value);
 
-            if (direction is not (Services.NavigationDirection.Left or Services.NavigationDirection.Right))
-                return false;
+            if (direction is Services.NavigationDirection.Left or Services.NavigationDirection.Right)
+            {
+                var nextIndex = _gamepadNavigation.MoveHorizontalIndex(
+                    _gamepadNavigation.TopBarSelectedIndex,
+                    direction,
+                    controls.Count);
 
-            var nextIndex = _gamepadNavigation.MoveHorizontalIndex(
-                _gamepadNavigation.TopBarSelectedIndex,
-                direction,
-                controls.Count);
+                ApplyTopBarGamepadSelection(nextIndex);
+                return true;
+            }
 
-            ApplyTopBarGamepadSelection(nextIndex);
+            // Consume Up (and any other non-transition direction) so InputService's
+            // Avalonia focus walk does not move keyboard focus onto Sort By while
+            // the gamepad selection ring stays on Check for Updates / Settings / etc.
             return true;
         }
 
@@ -8873,8 +8895,13 @@ namespace Quiver
 
         private void SelectInitialLibraryGamepadItem()
         {
-            if (isSettingsPanelOpen)
+            if (isSettingsPanelOpen ||
+                _isEntryFormOpen ||
+                _isTagEditOpen ||
+                IsDisplayFilterOverlayOpen)
+            {
                 return;
+            }
 
             if (Games.Count == 0)
             {
@@ -9075,9 +9102,14 @@ namespace Quiver
 
         private void ApplyLibraryGamepadSelection(int index)
         {
-            // Settings overlays the library; never paint library focus while it is open.
-            if (isSettingsPanelOpen)
+            // Overlays sit above the library; never steal zone/focus while they are open.
+            if (isSettingsPanelOpen ||
+                _isEntryFormOpen ||
+                _isTagEditOpen ||
+                IsDisplayFilterOverlayOpen)
+            {
                 return;
+            }
 
             var games = Games.ToList();
             index = _gamepadNavigation.ClampIndex(index, games.Count);
@@ -9574,8 +9606,7 @@ namespace Quiver
             if (_settings.EnableGamepadInput && _inputService?.TryHandleComboBoxConfirm() == true)
                 return;
 
-            // Prefer Settings whenever the panel is open, even if a layout sync
-            // briefly flipped ActiveZone back to Library.
+            // Prefer overlays whenever open, even if a layout sync briefly flipped ActiveZone.
             if (isSettingsPanelOpen)
             {
                 _gamepadNavigation.ActiveZone = GamepadNavigationZone.Settings;
@@ -9583,23 +9614,23 @@ namespace Quiver
                 return;
             }
 
-            if (IsDisplayFilterOverlayOpen &&
-                _gamepadNavigation.ActiveZone == GamepadNavigationZone.DisplayFilterOverlay)
+            if (IsDisplayFilterOverlayOpen)
             {
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.DisplayFilterOverlay;
                 ActivateDisplayFilterGamepadSelection();
                 return;
             }
 
-            if (_isEntryFormOpen &&
-                _gamepadNavigation.ActiveZone == GamepadNavigationZone.EntryFormOverlay)
+            if (_isEntryFormOpen)
             {
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.EntryFormOverlay;
                 ActivateEntryFormGamepadSelection();
                 return;
             }
 
-            if (_isTagEditOpen &&
-                _gamepadNavigation.ActiveZone == GamepadNavigationZone.TagEditOverlay)
+            if (_isTagEditOpen)
             {
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.TagEditOverlay;
                 ActivateTagEditGamepadSelection();
                 return;
             }
@@ -9772,6 +9803,14 @@ namespace Quiver
 
             if (_settings.EnableGamepadInput && _inputService?.TryHandleComboBoxCancel() == true)
                 return;
+
+            // First B leaves text edit / dismisses Steam OSK; second B closes the overlay.
+            if (_settings.EnableGamepadInput &&
+                TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox)
+            {
+                DismissTextInputFocus();
+                return;
+            }
 
             if (IsDisplayFilterOverlayOpen)
             {

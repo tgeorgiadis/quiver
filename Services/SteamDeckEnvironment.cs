@@ -5,6 +5,11 @@ namespace Quiver.Services;
 /// Distinct from <see cref="SteamOnScreenKeyboard.ShouldOffer"/>, which also
 /// matches Desktop Mode where <c>SteamDeck=1</c> is set.
 /// </summary>
+/// <remarks>
+/// Do not treat <c>SteamOS</c> or <c>SteamGamepadUI</c> alone as Gaming Mode —
+/// those can be set in Desktop Mode (KDE) as well. Rely on Gamescope session
+/// markers only.
+/// </remarks>
 internal static class SteamDeckEnvironment
 {
     public static bool IsGamingMode() =>
@@ -15,13 +20,16 @@ internal static class SteamDeckEnvironment
         if (!isLinux)
             return false;
 
-        if (!string.IsNullOrWhiteSpace(getEnvironmentVariable("SteamGamepadUI")) ||
-            !string.IsNullOrWhiteSpace(getEnvironmentVariable("SteamOS")))
+        if (LooksLikeGamescopeDesktop(getEnvironmentVariable("XDG_CURRENT_DESKTOP")) ||
+            LooksLikeGamescopeDesktop(getEnvironmentVariable("XDG_SESSION_DESKTOP")))
         {
             return true;
         }
 
-        var desktop = getEnvironmentVariable("XDG_CURRENT_DESKTOP");
-        return string.Equals(desktop, "gamescope", StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrWhiteSpace(getEnvironmentVariable("GAMESCOPE_WAYLAND_DISPLAY"));
     }
+
+    private static bool LooksLikeGamescopeDesktop(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Contains("gamescope", StringComparison.OrdinalIgnoreCase);
 }

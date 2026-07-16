@@ -58,6 +58,60 @@ public class GamepadControlActivationTests
         clickCount.Should().Be(1);
     }
 
+    [Fact]
+    public void ShouldKeyboardFocusOnGamepadHighlight_false_for_textbox()
+    {
+        GamepadControlActivation.ShouldKeyboardFocusOnGamepadHighlight(new TextBox())
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldKeyboardFocusOnGamepadHighlight_true_for_button()
+    {
+        GamepadControlActivation.ShouldKeyboardFocusOnGamepadHighlight(new Button())
+            .Should().BeTrue();
+    }
+
+    [AvaloniaFact]
+    public void ApplyGamepadHighlightFocus_does_not_focus_textbox()
+    {
+        var textBox = new TextBox { IsEnabled = true, IsVisible = true, Focusable = true };
+        var window = new Window { Content = textBox, Width = 240, Height = 120 };
+
+        try
+        {
+            window.Show();
+            textBox.Focus();
+            textBox.IsFocused.Should().BeTrue();
+
+            GamepadControlActivation.ApplyGamepadHighlightFocus(textBox);
+
+            textBox.IsFocused.Should().BeFalse();
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ApplyGamepadHighlightFocus_focuses_button()
+    {
+        var button = new Button { Content = "Save", IsEnabled = true, IsVisible = true, Focusable = true };
+        var window = new Window { Content = button, Width = 240, Height = 120 };
+
+        try
+        {
+            window.Show();
+            GamepadControlActivation.ApplyGamepadHighlightFocus(button);
+            button.IsFocused.Should().BeTrue();
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void ActivateMenuItem_closes_root_context_menu_for_nested_item()
     {

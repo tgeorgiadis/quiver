@@ -11,8 +11,8 @@ public sealed class GamepadModalDialogNavigation
 
     private readonly List<Window> _dialogStack = [];
     private readonly Dictionary<Window, Action<bool>> _questionResultCallbacks = new();
-    private List<Button> _dialogButtons = [];
-    private int _focusedButtonIndex;
+    private List<Control> _dialogControls = [];
+    private int _focusedControlIndex;
 
     public static GamepadModalDialogNavigation Instance => _instance ??= new GamepadModalDialogNavigation();
 
@@ -88,10 +88,10 @@ public sealed class GamepadModalDialogNavigation
         if (activeDialog == null)
             return;
 
-        _dialogButtons = CollectDialogButtons(activeDialog);
-        _focusedButtonIndex = GetDefaultButtonIndex(_dialogButtons);
+        _dialogControls = CollectDialogFocusableControls(activeDialog);
+        _focusedControlIndex = GetDefaultFocusIndex(_dialogControls);
 
-        Dispatcher.UIThread.Post(FocusCurrentButton, DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(FocusCurrentControl, DispatcherPriority.Loaded);
     }
 
     public void UnregisterModalDialog(Window dialog)
@@ -104,8 +104,9 @@ public sealed class GamepadModalDialogNavigation
 
         if (_dialogStack.Count == 0)
         {
-            _dialogButtons = [];
-            _focusedButtonIndex = 0;
+            ClearGamepadFocusClasses(_dialogControls);
+            _dialogControls = [];
+            _focusedControlIndex = 0;
             return;
         }
 
@@ -126,16 +127,16 @@ public sealed class GamepadModalDialogNavigation
         if (ActiveDialog == null)
             return false;
 
-        EnsureDialogButtons();
-        if (_dialogButtons.Count == 0)
+        EnsureDialogControls();
+        if (_dialogControls.Count == 0)
             return true;
 
-        if (_dialogButtons.Count == 1)
+        if (_dialogControls.Count == 1)
             return true;
 
-        var positions = GetButtonPositions(_dialogButtons, GetButtonCenter);
-        _focusedButtonIndex = MoveButtonIndex(_focusedButtonIndex, direction, positions);
-        FocusCurrentButton();
+        var positions = GetControlPositions(_dialogControls, GetControlCenter);
+        _focusedControlIndex = MoveFocusIndex(_focusedControlIndex, direction, positions);
+        FocusCurrentControl();
         return true;
     }
 
@@ -145,16 +146,25 @@ public sealed class GamepadModalDialogNavigation
         if (activeDialog == null)
             return false;
 
-        EnsureDialogButtons();
-        if (_dialogButtons.Count == 0)
+        EnsureDialogControls();
+        if (_dialogControls.Count == 0)
         {
             InvokeQuestionResult(activeDialog, false);
             CloseDialogIfStillOpen();
             return true;
         }
 
-        var button = GetFocusedButton();
-        if (button == null)
+        var control = GetFocusedControl();
+        if (control == null)
+            return false;
+
+        if (control is TextBox textBox)
+        {
+            GamepadControlActivation.ActivateTextBox(textBox);
+            return true;
+        }
+
+        if (control is not Button button)
             return false;
 
         var accepted = IsAffirmativeDialogButtonLabel(GetButtonLabel(button));
@@ -170,23 +180,23 @@ public sealed class GamepadModalDialogNavigation
         if (activeDialog == null)
             return false;
 
-        EnsureDialogButtons();
+        EnsureDialogControls();
 
-        if (_dialogButtons.Count == 0)
+        if (_dialogControls.Count == 0)
         {
             InvokeQuestionResult(activeDialog, false);
             CloseDialogIfStillOpen();
             return true;
         }
 
-        var cancelIndex = FindCancelButtonIndex(_dialogButtons);
-        var button = cancelIndex >= 0
-            ? _dialogButtons[cancelIndex]
-            : _dialogButtons.Count == 1
-                ? _dialogButtons[0]
-                : GetFocusedButton();
+        var cancelIndex = FindCancelControlIndex(_dialogControls);
+        Control? control = cancelIndex >= 0
+            ? _dialogControls[cancelIndex]
+            : _dialogControls.Count == 1
+                ? _dialogControls[0]
+                : GetFocusedControl();
 
-        if (button == null)
+        if (control is not Button button)
         {
             InvokeQuestionResult(activeDialog, false);
             CloseDialogIfStillOpen();
@@ -266,67 +276,85 @@ public sealed class GamepadModalDialogNavigation
             activeDialog.Close();
     }
 
-    private void EnsureDialogButtons()
+    private void EnsureDialogControls()
     {
         var activeDialog = ActiveDialog;
-        if (activeDialog == null || _dialogButtons.Count > 0)
+        if (activeDialog == null || _dialogControls.Count > 0)
             return;
 
-        _dialogButtons = CollectDialogButtons(activeDialog);
-        _focusedButtonIndex = GetDefaultButtonIndex(_dialogButtons);
+        _dialogControls = CollectDialogFocusableControls(activeDialog);
+        _focusedControlIndex = GetDefaultFocusIndex(_dialogControls);
     }
 
-    public static List<Button> CollectDialogButtons(Control root)
+    public static List<Button> CollectDialogButtons(Control root) =>
+        CollectDialogFocusableControls(root).OfType<Button>().ToList();
+
+    public static List<Control> CollectDialogFocusableControls(Control root)
     {
         return root.GetVisualDescendants()
-            .OfType<Button>()
-            .Where(button => button.IsVisible && button.IsEnabled)
-            .OrderBy(button => GetApproximateCenter(button)?.Y ?? 0)
-            .ThenBy(button => GetApproximateCenter(button)?.X ?? 0)
+            .OfType<Control>()
+            .Where(control =>
+                control.IsVisible &&
+                control.IsEnabled &&
+                control.Focusable &&
+                (control is Button or TextBox))
+            .OrderBy(control => GetApproximateCenter(control)?.Y ?? 0)
+            .ThenBy(control => GetApproximateCenter(control)?.X ?? 0)
             .ToList();
     }
 
-    public static int GetDefaultButtonIndex(IReadOnlyList<Button> buttons)
+    public static int GetDefaultButtonIndex(IReadOnlyList<Button> buttons) =>
+        GetDefaultFocusIndex(buttons.Cast<Control>().ToList());
+
+    public static int GetDefaultFocusIndex(IReadOnlyList<Control> controls)
     {
-        if (buttons.Count == 0)
+        if (controls.Count == 0)
             return -1;
 
-        for (var i = 0; i < buttons.Count; i++)
+        for (var i = 0; i < controls.Count; i++)
         {
-            if (buttons[i].IsDefault)
+            if (controls[i] is Button { IsDefault: true })
                 return i;
         }
 
-        var preferredLabels = new[]
+        for (var i = 0; i < controls.Count; i++)
         {
-            "ok",
-            "yes",
-            "add",
-            "download anyway",
-            "open settings",
-            "update quiver",
-            "update apps",
-        };
+            if (controls[i] is not Button button)
+                continue;
 
-        for (var i = 0; i < buttons.Count; i++)
+            var label = GetButtonLabel(button);
+            if (AffirmativeDialogLabels.Any(preferred =>
+                    string.Equals(label, preferred, StringComparison.OrdinalIgnoreCase)))
+            {
+                return i;
+            }
+        }
+
+        for (var i = 0; i < controls.Count; i++)
         {
-            var label = GetButtonLabel(buttons[i]);
-            if (preferredLabels.Any(preferred => string.Equals(label, preferred, StringComparison.OrdinalIgnoreCase)))
+            if (controls[i] is TextBox)
                 return i;
         }
 
         return 0;
     }
 
-    public static int FindCancelButtonIndex(IReadOnlyList<Button> buttons)
-    {
-        var cancelLabels = new[] { "cancel", "no", "close", "not now" };
+    public static int FindCancelButtonIndex(IReadOnlyList<Button> buttons) =>
+        FindCancelControlIndex(buttons.Cast<Control>().ToList());
 
-        for (var i = 0; i < buttons.Count; i++)
+    public static int FindCancelControlIndex(IReadOnlyList<Control> controls)
+    {
+        for (var i = 0; i < controls.Count; i++)
         {
-            var label = GetButtonLabel(buttons[i]);
-            if (cancelLabels.Any(cancel => string.Equals(label, cancel, StringComparison.OrdinalIgnoreCase)))
+            if (controls[i] is not Button button)
+                continue;
+
+            var label = GetButtonLabel(button);
+            if (DismissDialogLabels.Any(cancel =>
+                    string.Equals(label, cancel, StringComparison.OrdinalIgnoreCase)))
+            {
                 return i;
+            }
         }
 
         return -1;
@@ -334,18 +362,32 @@ public sealed class GamepadModalDialogNavigation
 
     public static List<(double X, double Y)> GetButtonPositions(
         IReadOnlyList<Button> buttons,
-        Func<Button, (double X, double Y)?> getCenter)
+        Func<Button, (double X, double Y)?> getCenter) =>
+        GetControlPositions(buttons, getCenter);
+
+    public static List<(double X, double Y)> GetControlPositions<T>(
+        IReadOnlyList<T> controls,
+        Func<T, (double X, double Y)?> getCenter)
+        where T : Control
     {
         var positions = new List<(double X, double Y)>();
-        foreach (var button in buttons)
-        {
-            positions.Add(getCenter(button) ?? (0, positions.Count * 40));
-        }
+        foreach (var control in controls)
+            positions.Add(getCenter(control) ?? (0, positions.Count * 40));
 
         return positions;
     }
 
+    /// <summary>
+    /// Spatial move among dialog controls. Stays put at edges (no wrap).
+    /// </summary>
     public static int MoveButtonIndex(
+        int currentIndex,
+        NavigationDirection direction,
+        IReadOnlyList<(double X, double Y)> positions,
+        double rowTolerance = 24) =>
+        MoveFocusIndex(currentIndex, direction, positions, rowTolerance);
+
+    public static int MoveFocusIndex(
         int currentIndex,
         NavigationDirection direction,
         IReadOnlyList<(double X, double Y)> positions,
@@ -377,36 +419,52 @@ public sealed class GamepadModalDialogNavigation
             bestIndex = i;
         }
 
-        if (bestIndex.HasValue)
-            return bestIndex.Value;
-
-        return WrapButtonIndex(currentIndex, direction, positions, rowTolerance);
+        return bestIndex ?? currentIndex;
     }
 
-    private void FocusCurrentButton()
+    private void FocusCurrentControl()
     {
-        GetFocusedButton()?.Focus();
+        ClearGamepadFocusClasses(_dialogControls);
+
+        var control = GetFocusedControl();
+        if (control == null)
+            return;
+
+        if (control is StyledElement styled)
+            styled.Classes.Set("gamepad-focused", true);
+
+        // TextBoxes: visual highlight only — Confirm (A) calls ActivateTextBox / OSK.
+        GamepadControlActivation.ApplyGamepadHighlightFocus(control);
     }
 
-    private Button? GetFocusedButton()
+    private static void ClearGamepadFocusClasses(IReadOnlyList<Control> controls)
     {
-        if (_focusedButtonIndex < 0 || _focusedButtonIndex >= _dialogButtons.Count)
+        foreach (var control in controls)
+        {
+            if (control is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", false);
+        }
+    }
+
+    private Control? GetFocusedControl()
+    {
+        if (_focusedControlIndex < 0 || _focusedControlIndex >= _dialogControls.Count)
             return null;
 
-        return _dialogButtons[_focusedButtonIndex];
+        return _dialogControls[_focusedControlIndex];
     }
 
-    private (double X, double Y)? GetButtonCenter(Button button)
+    private (double X, double Y)? GetControlCenter(Control control)
     {
         var activeDialog = ActiveDialog;
         if (activeDialog == null)
-            return GetApproximateCenter(button);
+            return GetApproximateCenter(control);
 
-        var topLeft = button.TranslatePoint(new Avalonia.Point(0, 0), activeDialog);
+        var topLeft = control.TranslatePoint(new Avalonia.Point(0, 0), activeDialog);
         if (!topLeft.HasValue)
             return null;
 
-        var bounds = button.Bounds;
+        var bounds = control.Bounds;
         return (topLeft.Value.X + bounds.Width / 2, topLeft.Value.Y + bounds.Height / 2);
     }
 
@@ -422,68 +480,6 @@ public sealed class GamepadModalDialogNavigation
     private static string GetButtonLabel(Button button)
     {
         return button.Content?.ToString()?.Trim() ?? string.Empty;
-    }
-
-    private static int WrapButtonIndex(
-        int currentIndex,
-        NavigationDirection direction,
-        IReadOnlyList<(double X, double Y)> positions,
-        double rowTolerance)
-    {
-        if (direction is NavigationDirection.Up or NavigationDirection.Down)
-        {
-            if (direction == NavigationDirection.Up && IsTopRow(positions, currentIndex, rowTolerance))
-            {
-                var maxY = positions.Max(position => position.Y);
-                return WrapToRow(positions, currentIndex, maxY, rowTolerance);
-            }
-
-            if (direction == NavigationDirection.Down && IsBottomRow(positions, currentIndex, rowTolerance))
-            {
-                var minY = positions.Min(position => position.Y);
-                return WrapToRow(positions, currentIndex, minY, rowTolerance);
-            }
-        }
-
-        return (currentIndex + 1) % positions.Count;
-    }
-
-    private static bool IsTopRow(IReadOnlyList<(double X, double Y)> positions, int index, double rowTolerance)
-    {
-        var minY = positions.Min(position => position.Y);
-        return positions[index].Y <= minY + rowTolerance;
-    }
-
-    private static bool IsBottomRow(IReadOnlyList<(double X, double Y)> positions, int index, double rowTolerance)
-    {
-        var maxY = positions.Max(position => position.Y);
-        return positions[index].Y >= maxY - rowTolerance;
-    }
-
-    private static int WrapToRow(
-        IReadOnlyList<(double X, double Y)> positions,
-        int index,
-        double targetRowY,
-        double rowTolerance)
-    {
-        var currentX = positions[index].X;
-        var bestIndex = index;
-        var bestScore = double.MaxValue;
-
-        for (var i = 0; i < positions.Count; i++)
-        {
-            if (Math.Abs(positions[i].Y - targetRowY) > rowTolerance)
-                continue;
-
-            var score = Math.Abs(positions[i].X - currentX);
-            if (score < bestScore)
-            {
-                bestScore = score;
-                bestIndex = i;
-            }
-        }
-
-        return bestIndex;
     }
 
     private static double? CalculateNavigationScore(

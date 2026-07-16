@@ -1,19 +1,19 @@
-# Quiver v2.3.8
+# Quiver v2.3.9
 
-Hidden apps are easy to find again, Edit Tags works better with a controller (especially on Steam Deck), and ignoring “The/A/An” when sorting is now a Settings toggle instead of a separate sort mode.
-
-## Library
-
-- **Show → Hidden** — Manually hidden apps appear under a new sidebar filter. Customize → **Unhide App** restores them; hiding an app shows a short tip pointing here.
-- **Ignore The/A/An when sorting** — Moved from a dedicated sort option into Settings (General). Applies to Name sorts in the library and catalog review. Legacy `NameIgnoreArticles` settings migrate to Name automatically.
-
-## Gamepad
-
-- **Edit Tags overlay** — Opening Edit Tags traps controller focus on the prompt (textbox / Cancel / Save) instead of leaving the library ring active underneath.
-- **Nested menus close** — Choosing Catalog → Edit Tags (and similar nested items) dismisses the whole context menu.
-- **Review lists don’t wrap** — Down on the last Catalog Review / App Updates review row no longer jumps to the top.
+Steam Deck Gaming Mode detection is corrected, text fields are easier to navigate with a controller, and Add New Entry opens the on-screen keyboard again. Linux app removal also prefers the system Trash more reliably.
 
 ## Steam Deck
 
-- **Hide Minimize in Gaming Mode** — The minimize button is hidden under Gamescope / SteamOS gaming sessions where it isn’t useful (Desktop Mode unchanged).
-- **Edit Tags + OSK** — In Gaming Mode the Edit Tags card pins to the top and starts on Cancel so Steam’s keyboard doesn’t cover Save/Cancel when the dialog opens.
+- **Gaming Mode detection** — Minimize is hidden only under Gamescope (`XDG_*` / `GAMESCOPE_WAYLAND_DISPLAY`). Bare `SteamOS` / `SteamGamepadUI` no longer count, so Desktop Mode (KDE) keeps the minimize button.
+- **Press A to edit** — D-pad highlights text fields without opening Steam’s keyboard. Press A (Confirm) to focus the field and open the OSK. First B leaves edit mode; second B closes the overlay.
+- **Add New Entry / Edit Entry + OSK** — Opening the create/edit form on Steam/Deck focuses Name and opens the keyboard. Moving between fields stays highlight-until-A.
+- **Overlay Confirm** — While Entry Form, Edit Tags, or Display Filter is open, A always activates the highlighted control even if gamepad focus briefly drifted underneath.
+
+## Gamepad
+
+- **Add Catalog Source** — Modal navigation includes the URL field, no odd edge wrapping, proper `gamepad-focused` rings, and OSK on Confirm for the text box.
+- **Top bar Up** — Up from the top bar is consumed so Sort By no longer falsely highlights underneath.
+
+## Linux
+
+- **Trash on remove** — Prefer `gio trash` when available, with a FreeDesktop Trash fallback (`XDG_DATA_HOME`, volume trash, copy across filesystems) so removals land in Trash more often instead of hard-deleting.

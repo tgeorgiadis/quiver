@@ -17,7 +17,7 @@ internal static class GamepadControlActivation
     }
 
     /// <summary>
-    /// Focuses a text field and requests Steam's on-screen keyboard when available.
+    /// Focuses a text field, places the caret at the end, and requests Steam's OSK when available.
     /// </summary>
     public static void ActivateTextBox(TextBox textBox)
     {
@@ -25,7 +25,40 @@ internal static class GamepadControlActivation
             return;
 
         textBox.Focus();
+        MoveCaretToEnd(textBox);
         SteamOnScreenKeyboard.TryOpen();
+    }
+
+    /// <summary>
+    /// Applies keyboard focus for gamepad highlight navigation.
+    /// TextBoxes are highlighted visually only — press Confirm (A) to enter edit mode / open OSK.
+    /// </summary>
+    public static void ApplyGamepadHighlightFocus(Control control)
+    {
+        if (control is TextBox)
+        {
+            var focusManager = TopLevel.GetTopLevel(control)?.FocusManager;
+            if (focusManager?.GetFocusedElement() is TextBox)
+                focusManager.ClearFocus();
+            return;
+        }
+
+        control.Focus();
+    }
+
+    /// <summary>
+    /// True when gamepad highlight should move Avalonia keyboard focus onto the control.
+    /// TextBoxes stay unfocused until <see cref="ActivateTextBox"/>.
+    /// </summary>
+    public static bool ShouldKeyboardFocusOnGamepadHighlight(Control control) =>
+        control is not TextBox;
+
+    public static void MoveCaretToEnd(TextBox textBox)
+    {
+        var length = textBox.Text?.Length ?? 0;
+        textBox.CaretIndex = length;
+        textBox.SelectionStart = length;
+        textBox.SelectionEnd = length;
     }
 
     public static void ActivateDialogButton(Button button, Window? closeFallbackDialog = null)
