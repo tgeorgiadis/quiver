@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 
@@ -13,6 +14,8 @@ public sealed class GamepadModalDialogNavigation
     private readonly Dictionary<Window, Action<bool>> _questionResultCallbacks = new();
     private List<Control> _dialogControls = [];
     private int _focusedControlIndex;
+    private InputService? _inputService;
+    private readonly EventHandler<PointerEventArgs> _dialogControlPointerEntered;
 
     public static GamepadModalDialogNavigation Instance => _instance ??= new GamepadModalDialogNavigation();
 
@@ -23,8 +26,25 @@ public sealed class GamepadModalDialogNavigation
 
     public int DialogStackCount => _dialogStack.Count;
 
+    private bool HasConnectedGamepad => _inputService?.HasConnectedGamepad == true;
+
+    public GamepadModalDialogNavigation()
+    {
+        _dialogControlPointerEntered = OnDialogControlPointerEntered;
+    }
+
     public void Configure(InputService inputService)
     {
+        _inputService = inputService;
+    }
+
+    /// <summary>
+    /// Syncs <c>gamepad-chrome</c> on all open modal dialog windows.
+    /// </summary>
+    public void SyncChromeClass(bool active)
+    {
+        foreach (var dialog in _dialogStack)
+            GamepadFocusChrome.ApplyToWindow(dialog, active);
     }
 
     public static void Attach(Window dialog) =>
@@ -50,6 +70,7 @@ public sealed class GamepadModalDialogNavigation
         }
 
         _dialogStack.Add(dialog);
+        GamepadFocusChrome.ApplyToWindow(dialog, GamepadFocusChrome.IsActive);
         RefreshDialogButtons();
 
         void OnDialogOpened(object? sender, EventArgs e)
@@ -88,10 +109,18 @@ public sealed class GamepadModalDialogNavigation
         if (activeDialog == null)
             return;
 
+        GamepadFocusChrome.ApplyToWindow(activeDialog, GamepadFocusChrome.IsActive);
+
+        DetachDialogControlHoverHandlers(_dialogControls);
         _dialogControls = CollectDialogFocusableControls(activeDialog);
+        AttachDialogControlHoverHandlers(_dialogControls);
         _focusedControlIndex = GetDefaultFocusIndex(_dialogControls);
 
-        Dispatcher.UIThread.Post(FocusCurrentControl, DispatcherPriority.Loaded);
+        // With a gamepad: paint default focus. Without: wait for mouse hover / D-pad.
+        if (HasConnectedGamepad && GamepadFocusChrome.IsActive)
+            Dispatcher.UIThread.Post(FocusCurrentControl, DispatcherPriority.Loaded);
+        else
+            ClearGamepadFocusClasses(_dialogControls);
     }
 
     public void UnregisterModalDialog(Window dialog)
@@ -102,8 +131,11 @@ public sealed class GamepadModalDialogNavigation
         if (!_dialogStack.Remove(dialog))
             return;
 
+        GamepadFocusChrome.ApplyToWindow(dialog, false);
+
         if (_dialogStack.Count == 0)
         {
+            DetachDialogControlHoverHandlers(_dialogControls);
             ClearGamepadFocusClasses(_dialogControls);
             _dialogControls = [];
             _focusedControlIndex = 0;
@@ -431,10 +463,47 @@ public sealed class GamepadModalDialogNavigation
             return;
 
         if (control is StyledElement styled)
-            styled.Classes.Set("gamepad-focused", true);
+            GamepadFocusChrome.SetFocused(styled, true);
 
         // TextBoxes: visual highlight only — Confirm (A) calls ActivateTextBox / OSK.
-        GamepadControlActivation.ApplyGamepadHighlightFocus(control);
+        // With a gamepad, also move keyboard focus; hover-only selection skips Focus.
+        if (HasConnectedGamepad && GamepadFocusChrome.IsActive)
+            GamepadControlActivation.ApplyGamepadHighlightFocus(control);
+    }
+
+    private void AttachDialogControlHoverHandlers(IReadOnlyList<Control> controls)
+    {
+        foreach (var control in controls)
+            control.PointerEntered += _dialogControlPointerEntered;
+    }
+
+    private void DetachDialogControlHoverHandlers(IReadOnlyList<Control> controls)
+    {
+        foreach (var control in controls)
+            control.PointerEntered -= _dialogControlPointerEntered;
+    }
+
+    private void OnDialogControlPointerEntered(object? sender, PointerEventArgs e)
+    {
+        if (ActiveDialog == null || sender is not Control hovered)
+            return;
+
+        var index = _dialogControls.FindIndex(c =>
+            ReferenceEquals(c, hovered) ||
+            (c is Visual parent && hovered is Visual child && parent.IsVisualAncestorOf(child)));
+
+        if (index < 0)
+            return;
+
+        if (_focusedControlIndex == index &&
+            GetFocusedControl() is StyledElement styled &&
+            styled.Classes.Contains("gamepad-focused"))
+        {
+            return;
+        }
+
+        _focusedControlIndex = index;
+        FocusCurrentControl();
     }
 
     private static void ClearGamepadFocusClasses(IReadOnlyList<Control> controls)

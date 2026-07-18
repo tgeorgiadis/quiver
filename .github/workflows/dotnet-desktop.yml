@@ -204,9 +204,9 @@ jobs:
             <key>CFBundleName</key>
             <string>${{ env.App_Name }}</string>
             <key>CFBundleVersion</key>
-            <string>2.3.9</string>
+            <string>2.3.10</string>
             <key>CFBundleShortVersionString</key>
-            <string>2.3.9</string>
+            <string>2.3.10</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>LSMinimumSystemVersion</key>
@@ -244,6 +244,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
     - name: Download release archives
       uses: actions/download-artifact@v4
       with:
@@ -254,4 +257,5 @@ jobs:
     - name: Upload to GitHub Release
       uses: softprops/action-gh-release@v2
       with:
+        body_path: RELEASE_NOTES.md
         files: release-assets/*

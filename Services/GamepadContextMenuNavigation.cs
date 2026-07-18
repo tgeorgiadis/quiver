@@ -11,10 +11,18 @@ public sealed class GamepadContextMenuNavigation
     private readonly Stack<MenuItem> _submenuStack = new();
     private List<MenuItem> _menuItems = [];
     private int _focusedItemIndex;
+    private InputService? _inputService;
 
     public static GamepadContextMenuNavigation Instance => _instance ??= new GamepadContextMenuNavigation();
 
     public bool HasActiveContextMenu => _activeMenu != null;
+
+    private bool HasConnectedGamepad => _inputService?.HasConnectedGamepad == true;
+
+    public void Configure(InputService inputService)
+    {
+        _inputService = inputService;
+    }
 
     public static void Attach(ContextMenu menu)
     {
@@ -70,7 +78,9 @@ public sealed class GamepadContextMenuNavigation
         _menuItems = CollectNavigableMenuItems(menu);
         _focusedItemIndex = _menuItems.Count > 0 ? 0 : -1;
 
-        Dispatcher.UIThread.Post(FocusCurrentItem, DispatcherPriority.Loaded);
+        // Only auto-focus the first item when a gamepad is connected.
+        if (HasConnectedGamepad)
+            Dispatcher.UIThread.Post(FocusCurrentItem, DispatcherPriority.Loaded);
     }
 
     public void UnregisterContextMenu(ContextMenu menu)

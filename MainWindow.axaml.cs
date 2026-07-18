@@ -398,6 +398,11 @@ namespace Quiver
         private int _changelogGamepadFocusIndex = -1;
         private bool _isProcessingInput = false;
         private bool _handlingGamepadConfirm = false;
+        /// <summary>
+        /// After Space/Enter confirm, suppress the matching KeyUp so a newly focused CheckBox
+        /// (e.g. catalog Enabled) does not also toggle.
+        /// </summary>
+        private bool _suppressConfirmKeyUp;
         private bool _hasInitializedFocus = false;
 
         private bool _isChangelogOpen = false;
@@ -510,6 +515,8 @@ namespace Quiver
             _inputService.OnConfirm += HandleConfirmAction;
             _inputService.OnCancel += HandleCancelAction;
             _inputService.OnOptions += HandleOptionsAction;
+            _inputService.OnGamepadConnectionChanged += HandleGamepadConnectionChanged;
+            UpdateGamepadChromeClass();
             UpdateGamepadHintsBar();
             RefreshGamepadBindingsPanel();
             RefreshConnectedGamepadsList();
@@ -519,8 +526,10 @@ namespace Quiver
             GamepadComboBoxNavigation.Attach(DisplayFilterMatchModeComboBox);
             GamepadComboBoxNavigation.Attach(DisplayFilterExcludeMatchModeComboBox);
 
-            this.KeyDown += MainWindow_KeyDown;
-            this.KeyUp += MainWindow_KeyUp;
+            // Tunnel: handle arrows/confirm before Avalonia focus walker or CheckBox Space toggle.
+            AddHandler(InputElement.KeyDownEvent, MainWindow_KeyDown, RoutingStrategies.Tunnel);
+            AddHandler(InputElement.KeyUpEvent, MainWindow_KeyUp, RoutingStrategies.Tunnel);
+            AddHandler(InputElement.PointerPressedEvent, MainWindow_PointerPressedForChrome, RoutingStrategies.Tunnel);
 
             this.Activated += MainWindow_Activated;
             this.Deactivated += MainWindow_Deactivated;
@@ -1210,12 +1219,79 @@ namespace Quiver
             }
         }
 
+        private bool IsGamepadFocusActive =>
+            GamepadFocusChrome.ShouldShowGamepadChrome(
+                _settings.EnableGamepadInput,
+                _inputService?.HasConnectedGamepad == true,
+                GamepadFocusChrome.KeyboardNavigationActive);
+
+        private void UpdateGamepadChromeClass()
+        {
+            var active = IsGamepadFocusActive;
+            GamepadFocusChrome.SetActive(active, this);
+            GamepadModalDialogNavigation.Instance.SyncChromeClass(active);
+        }
+
+        private void ActivateKeyboardNavChrome()
+        {
+            if (!_settings.EnableGamepadInput)
+                return;
+
+            GamepadFocusChrome.SetKeyboardNavigationActive(true);
+            UpdateGamepadChromeClass();
+        }
+
+        private void MainWindow_PointerPressedForChrome(object? sender, PointerPressedEventArgs e)
+        {
+            if (e.Pointer.Type != PointerType.Mouse)
+                return;
+
+            if (_inputService?.HasConnectedGamepad == true)
+                return;
+
+            if (!GamepadFocusChrome.KeyboardNavigationActive)
+                return;
+
+            GamepadFocusChrome.SetKeyboardNavigationActive(false);
+            UpdateGamepadChromeClass();
+            ClearGamepadFocus();
+        }
+
+        private void HandleGamepadConnectionChanged(bool hasConnected)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                UpdateGamepadChromeClass();
+
+                if (!_settings.EnableGamepadInput)
+                {
+                    ClearGamepadFocus();
+                    RefreshConnectedGamepadsList();
+                    return;
+                }
+
+                if (hasConnected)
+                {
+                    if (isSettingsPanelOpen)
+                        ApplySettingsGamepadSelection(_settingsGamepadFocusIndex < 0 ? 0 : _settingsGamepadFocusIndex);
+                    else
+                        SelectInitialGamepadItemForCurrentView();
+                }
+                else
+                {
+                    ClearGamepadFocus();
+                }
+
+                RefreshConnectedGamepadsList();
+            });
+        }
+
         private void SetInitialFocus()
         {
             // Small delay to ensure UI is fully rendered
             Dispatcher.UIThread.Post(() =>
             {
-                if (_settings.EnableGamepadInput &&
+                if (IsGamepadFocusActive &&
                     _mainViewMode == MainViewMode.Library &&
                     Games.Count > 0)
                 {
@@ -1223,7 +1299,7 @@ namespace Quiver
                     return;
                 }
 
-                if (_settings.EnableGamepadInput &&
+                if (IsGamepadFocusActive &&
                     _mainViewMode == MainViewMode.AppCatalog &&
                     _appCatalogSubView == AppCatalogSubView.Sources &&
                     CatalogSources.Count > 0)
@@ -2262,7 +2338,10 @@ namespace Quiver
                 RefreshGamepadBindingsPanel();
                 Dispatcher.UIThread.Post(() =>
                 {
-                    ApplySettingsGamepadSelection(0);
+                    if (IsGamepadFocusActive)
+                        ApplySettingsGamepadSelection(0);
+                    else
+                        ClearSettingsGamepadFocusClasses(CollectSettingsFocusableControls());
                 }, DispatcherPriority.Loaded);
             }
             else
@@ -2583,8 +2662,10 @@ namespace Quiver
             _isAppUpdatesReviewOpen = false;
             ResetGamepadNavigationIndices();
             UpdateMainViewUi();
-            if (_settings.EnableGamepadInput)
+            if (IsGamepadFocusActive)
                 SelectInitialLibraryGamepadItem();
+            else
+                ClearGamepadFocus();
         }
 
         private void ShowAppCatalogSourcesView()
@@ -2596,8 +2677,10 @@ namespace Quiver
             CatalogSyncRows.Clear();
             ResetGamepadNavigationIndices();
             UpdateMainViewUi();
-            if (_settings.EnableGamepadInput)
+            if (IsGamepadFocusActive)
                 SelectInitialCatalogGamepadItem();
+            else
+                ClearGamepadFocus();
         }
 
         private void ShowAppCatalogReviewView(AppCatalogSource source)
@@ -2612,8 +2695,10 @@ namespace Quiver
             if (this.FindControl<TextBlock>("HeaderTitleText") is TextBlock headerTitle)
                 headerTitle.Text = $"Review: {source.Name}";
 
-            if (_settings.EnableGamepadInput)
+            if (IsGamepadFocusActive)
                 SelectInitialCatalogReviewGamepadItem();
+            else
+                ClearGamepadFocus();
         }
 
         private void OpenAppUpdatesReview()
@@ -2625,8 +2710,10 @@ namespace Quiver
             ResetGamepadNavigationIndices();
             UpdateMainViewUi();
 
-            if (_settings.EnableGamepadInput)
+            if (IsGamepadFocusActive)
                 SelectInitialAppUpdatesReviewGamepadItem();
+            else
+                ClearGamepadFocus();
         }
 
         private void RefreshAppUpdateReviewRows()
@@ -4849,7 +4936,17 @@ namespace Quiver
             DisplayFilterOverlay.IsVisible = true;
             _gamepadNavigation.ActiveZone = GamepadNavigationZone.DisplayFilterOverlay;
             OnPropertyChanged(nameof(GamepadHintsVisible));
-            Dispatcher.UIThread.Post(() => ApplyDisplayFilterGamepadSelection(0), DispatcherPriority.Loaded);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!IsGamepadFocusActive)
+                {
+                    ClearDisplayFilterGamepadFocus();
+                    DismissTextInputFocus();
+                    return;
+                }
+
+                ApplyDisplayFilterGamepadSelection(0);
+            }, DispatcherPriority.Loaded);
         }
 
         private bool IsDisplayFilterOverlayOpen => DisplayFilterOverlay?.IsVisible == true;
@@ -5243,6 +5340,7 @@ namespace Quiver
             {
                 _settings.EnableGamepadInput = true;
                 _inputService?.SetGamepadEnabled(true);
+                UpdateGamepadChromeClass();
                 SelectInitialGamepadItemForCurrentView();
                 NotifyGamepadUiChanged();
                 UpdateGamepadHintsBar();
@@ -5257,6 +5355,8 @@ namespace Quiver
                 _settings.EnableGamepadInput = false;
                 CancelGamepadRebindListen();
                 _inputService?.SetGamepadEnabled(false);
+                GamepadFocusChrome.SetKeyboardNavigationActive(false);
+                UpdateGamepadChromeClass();
                 ClearGamepadFocus();
                 NotifyGamepadUiChanged();
                 UpdateGamepadHintsBar();
@@ -5876,6 +5976,13 @@ namespace Quiver
             OnPropertyChanged(nameof(GamepadHintsVisible));
             Dispatcher.UIThread.Post(() =>
             {
+                if (!IsGamepadFocusActive)
+                {
+                    ClearEntryFormGamepadFocus();
+                    DismissTextInputFocus();
+                    return;
+                }
+
                 ApplyEntryFormGamepadSelection(0);
                 // Steam Deck: open OSK on Name when the form appears; D-pad to other
                 // fields still uses highlight-only until Confirm (A).
@@ -6119,7 +6226,17 @@ namespace Quiver
             _gamepadNavigation.ActiveZone = GamepadNavigationZone.TagEditOverlay;
             OnPropertyChanged(nameof(GamepadHintsVisible));
             var initialFocus = TagEditOverlayLayout.GetInitialFocusIndex(gamingMode);
-            Dispatcher.UIThread.Post(() => ApplyTagEditGamepadSelection(initialFocus), DispatcherPriority.Loaded);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!IsGamepadFocusActive)
+                {
+                    ClearTagEditGamepadFocus();
+                    DismissTextInputFocus();
+                    return;
+                }
+
+                ApplyTagEditGamepadSelection(initialFocus);
+            }, DispatcherPriority.Loaded);
         }
 
         private void CloseTagEditOverlay()
@@ -6565,18 +6682,15 @@ namespace Quiver
                 switch (e.Key)
                 {
                     case Key.Space:
-                        // Check if a text input control has focus
+                    case Key.Enter:
+                        // TextBox: let Space/Enter pass through for typing / multiline.
                         var focusedElement = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
                         if (focusedElement is TextBox)
-                        {
-                            // Let space pass through to text input controls
-                        }
-                        else
-                        {
-                            // Handle space as confirm action for other controls
-                            HandleConfirmAction();
-                            e.Handled = true;
-                        }
+                            break;
+
+                        HandleConfirmAction();
+                        _suppressConfirmKeyUp = true;
+                        e.Handled = true;
                         break;
 
                     case Key.LeftShift:
@@ -6590,21 +6704,25 @@ namespace Quiver
                         break;
 
                     case Key.Up:
+                        ActivateKeyboardNavChrome();
                         _inputService?.HandleNavigation(Services.NavigationDirection.Up);
                         e.Handled = true;
                         break;
 
                     case Key.Down:
+                        ActivateKeyboardNavChrome();
                         _inputService?.HandleNavigation(Services.NavigationDirection.Down);
                         e.Handled = true;
                         break;
 
                     case Key.Left:
+                        ActivateKeyboardNavChrome();
                         _inputService?.HandleNavigation(Services.NavigationDirection.Left);
                         e.Handled = true;
                         break;
 
                     case Key.Right:
+                        ActivateKeyboardNavChrome();
                         _inputService?.HandleNavigation(Services.NavigationDirection.Right);
                         e.Handled = true;
                         break;
@@ -6618,6 +6736,13 @@ namespace Quiver
 
         private void MainWindow_KeyUp(object? sender, KeyEventArgs e)
         {
+            if (_suppressConfirmKeyUp && e.Key is Key.Space or Key.Enter)
+            {
+                _suppressConfirmKeyUp = false;
+                e.Handled = true;
+                return;
+            }
+
             if (e.Key == Key.Up || e.Key == Key.Down || e.Key == Key.Left || e.Key == Key.Right)
             {
                 _inputService?.ResetNavigationTimer();
@@ -7888,7 +8013,9 @@ namespace Quiver
             if (controls.Count == 0)
                 return false;
 
-            var currentIndex = _gamepadNavigation.CatalogReviewRowActionIndex;
+            var currentIndex = _gamepadNavigation.ClampIndex(
+                _gamepadNavigation.CatalogReviewRowActionIndex,
+                controls.Count);
 
             // Leave the action strip back to the row list.
             if (direction is Services.NavigationDirection.Up or Services.NavigationDirection.Down)
@@ -7896,6 +8023,14 @@ namespace Quiver
                 ClearCatalogReviewRowActionsGamepadFocus();
                 var nextRow = _gamepadNavigation.MoveListIndex(rowIndex, direction, rows.Count, wrap: false);
                 ApplyCatalogReviewRowSelection(nextRow);
+                return true;
+            }
+
+            // Left from the first action returns to the row (do not wrap to the far-right button).
+            if (direction == Services.NavigationDirection.Left && currentIndex <= 0)
+            {
+                ClearCatalogReviewRowActionsGamepadFocus();
+                ApplyCatalogReviewRowSelection(rowIndex);
                 return true;
             }
 
@@ -8230,6 +8365,12 @@ namespace Quiver
 
         private void SelectInitialAppUpdatesReviewGamepadItem()
         {
+            if (!IsGamepadFocusActive)
+            {
+                ClearGamepadFocus();
+                return;
+            }
+
             if (AppUpdateReviewRows.Count == 0)
             {
                 ApplyAppUpdatesReviewToolbarSelection(0);
@@ -8543,6 +8684,22 @@ namespace Quiver
             return controls;
         }
 
+        /// <summary>
+        /// Confirm on a source card drills into actions on the first Button (Review), not Enabled.
+        /// Enabled remains reachable via Left/Right within card actions.
+        /// Note: Avalonia CheckBox inherits Button, so exclude ToggleButton.
+        /// </summary>
+        internal static int GetDefaultCatalogSourceCardActionIndex(IReadOnlyList<Control> controls)
+        {
+            for (var i = 0; i < controls.Count; i++)
+            {
+                if (controls[i] is Button and not ToggleButton)
+                    return i;
+            }
+
+            return controls.Count > 0 ? 0 : -1;
+        }
+
         private List<Control> CollectCatalogReviewRowActionControls(CatalogSyncRowItem row)
         {
             var controls = new List<Control>();
@@ -8692,11 +8849,13 @@ namespace Quiver
 
             var controls = CollectCatalogReviewRowActionControls(rows[rowIndex]);
             index = _gamepadNavigation.ClampIndex(index, controls.Count);
-            _gamepadNavigation.CatalogReviewRowActionIndex = index;
             _gamepadNavigation.ActiveZone = GamepadNavigationZone.CatalogReviewRowActions;
 
+            // ClearGamepadFocus → ClearCatalogReviewRowActionsGamepadFocus resets action index to -1.
+            // Assign the new index after that clear, or Left wraps as if index were 0 → last button forever.
             ClearGamepadFocus();
             ClearStyledControlsGamepadFocusClasses(controls);
+            _gamepadNavigation.CatalogReviewRowActionIndex = index;
             if (index < 0 || index >= controls.Count)
                 return;
 
@@ -8883,6 +9042,12 @@ namespace Quiver
 
         private void SelectInitialGamepadItemForCurrentView()
         {
+            if (!IsGamepadFocusActive)
+            {
+                ClearGamepadFocus();
+                return;
+            }
+
             if (_mainViewMode == MainViewMode.Library && _isAppUpdatesReviewOpen)
                 SelectInitialAppUpdatesReviewGamepadItem();
             else if (_mainViewMode == MainViewMode.Library)
@@ -8895,11 +9060,14 @@ namespace Quiver
 
         private void SelectInitialLibraryGamepadItem()
         {
-            if (isSettingsPanelOpen ||
+            if (!IsGamepadFocusActive ||
+                isSettingsPanelOpen ||
                 _isEntryFormOpen ||
                 _isTagEditOpen ||
                 IsDisplayFilterOverlayOpen)
             {
+                if (!IsGamepadFocusActive)
+                    ClearGamepadFocus();
                 return;
             }
 
@@ -8915,6 +9083,12 @@ namespace Quiver
 
         private void SelectInitialCatalogGamepadItem()
         {
+            if (!IsGamepadFocusActive)
+            {
+                ClearGamepadFocus();
+                return;
+            }
+
             if (CatalogSources.Count == 0)
             {
                 ApplyCatalogSourcesToolbarSelection(0);
@@ -8926,6 +9100,12 @@ namespace Quiver
 
         private void SelectInitialCatalogReviewGamepadItem()
         {
+            if (!IsGamepadFocusActive)
+            {
+                ClearGamepadFocus();
+                return;
+            }
+
             if (CatalogSyncRows.Count == 0)
             {
                 var emptyActions = CollectCatalogReviewEmptyActionControls();
@@ -8947,12 +9127,14 @@ namespace Quiver
 
         private void SyncGamepadLibrarySelection()
         {
-            if (!_settings.EnableGamepadInput ||
-                isSettingsPanelOpen ||
-                _mainViewMode != MainViewMode.Library)
+            if (!IsGamepadFocusActive)
             {
+                ClearGamepadFocus();
                 return;
             }
+
+            if (isSettingsPanelOpen || _mainViewMode != MainViewMode.Library)
+                return;
 
             if (Games.Count == 0)
             {
@@ -8967,8 +9149,13 @@ namespace Quiver
 
         private void SyncCatalogGamepadSelection()
         {
-            if (!_settings.EnableGamepadInput ||
-                isSettingsPanelOpen ||
+            if (!IsGamepadFocusActive)
+            {
+                ClearGamepadFocus();
+                return;
+            }
+
+            if (isSettingsPanelOpen ||
                 _mainViewMode != MainViewMode.AppCatalog ||
                 _appCatalogSubView != AppCatalogSubView.Sources)
             {
@@ -9026,8 +9213,13 @@ namespace Quiver
 
         private void SyncCatalogReviewGamepadSelection()
         {
-            if (!_settings.EnableGamepadInput ||
-                _mainViewMode != MainViewMode.AppCatalog ||
+            if (!IsGamepadFocusActive)
+            {
+                ClearGamepadFocus();
+                return;
+            }
+
+            if (_mainViewMode != MainViewMode.AppCatalog ||
                 _appCatalogSubView != AppCatalogSubView.Review)
             {
                 return;
@@ -9123,6 +9315,8 @@ namespace Quiver
             _gamepadNavigation.TopBarSelectedIndex = -1;
 
             ClearGamepadFocus();
+            // Cards use IsGamepadFocused only — clear Avalonia focus so Continue/:focus cannot dual-highlight.
+            DismissTextInputFocus();
             if (index < 0 || index >= games.Count)
                 return;
 
@@ -9149,6 +9343,7 @@ namespace Quiver
             ClearCatalogSourcesToolbarGamepadFocus();
             ClearGamepadFocus();
             ClearCatalogSourceCardActionsGamepadFocus();
+            DismissTextInputFocus();
             if (index < 0 || index >= CatalogSources.Count)
                 return;
 
@@ -9169,6 +9364,15 @@ namespace Quiver
 
             ClearTopBarGamepadFocusClasses(CollectTopBarControls());
             ClearSidebarGamepadFocusClasses(CollectSidebarFocusableControls());
+            ClearCatalogSourcesToolbarGamepadFocus();
+            ClearCatalogSourcesFiltersGamepadFocus();
+            ClearCatalogSourceCardActionsGamepadFocus();
+            ClearCatalogReviewRowActionsGamepadFocus();
+            ClearCatalogReviewEmptyActionGamepadFocus();
+            ClearAppUpdatesReviewToolbarGamepadFocus();
+            ClearAppUpdatesReviewRowActionsGamepadFocus();
+            ClearAppUpdatesReviewRowFocus();
+            ClearSettingsGamepadFocusClasses(CollectSettingsFocusableControls());
         }
 
         /// <summary>
@@ -9177,8 +9381,11 @@ namespace Quiver
         /// </summary>
         private void PreserveLibraryGamepadFocusWhileOpeningMenu()
         {
-            if (!_settings.EnableGamepadInput || _mainViewMode != MainViewMode.Library)
+            if (!IsGamepadFocusActive || _mainViewMode != MainViewMode.Library)
+            {
+                ClearGamepadFocus();
                 return;
+            }
 
             ClearSidebarGamepadFocus();
             ClearTopBarGamepadFocus();
@@ -9201,12 +9408,14 @@ namespace Quiver
 
         private void RestoreLibraryGamepadFocusAfterMenu()
         {
-            if (!_settings.EnableGamepadInput ||
+            if (!IsGamepadFocusActive ||
                 isSettingsPanelOpen ||
                 _isTagEditOpen ||
                 _isEntryFormOpen ||
                 _mainViewMode != MainViewMode.Library)
             {
+                if (!IsGamepadFocusActive)
+                    ClearGamepadFocus();
                 return;
             }
 
@@ -9742,7 +9951,10 @@ namespace Quiver
                 var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.CatalogSelectedIndex, CatalogSources.Count);
                 if (index >= 0 && index < CatalogSources.Count)
                 {
-                    ApplyCatalogSourceCardActionSelection(0);
+                    var actions = CollectCatalogSourceCardActionControls(CatalogSources[index]);
+                    var actionIndex = GetDefaultCatalogSourceCardActionIndex(actions);
+                    if (actionIndex >= 0)
+                        ApplyCatalogSourceCardActionSelection(actionIndex);
                     return;
                 }
             }
@@ -9934,6 +10146,7 @@ namespace Quiver
                 _inputService.OnConfirm -= HandleConfirmAction;
                 _inputService.OnCancel -= HandleCancelAction;
                 _inputService.OnOptions -= HandleOptionsAction;
+                _inputService.OnGamepadConnectionChanged -= HandleGamepadConnectionChanged;
                 _inputService.Dispose();
             }
         }
@@ -10181,7 +10394,8 @@ namespace Quiver
                     changelogContent.ItemsSource = new[] { loadingPanel };
                 }
 
-                Dispatcher.UIThread.Post(() => ApplyChangelogGamepadSelection(0), DispatcherPriority.Loaded);
+                if (IsGamepadFocusActive)
+                    Dispatcher.UIThread.Post(() => ApplyChangelogGamepadSelection(0), DispatcherPriority.Loaded);
 
                 string changelogText = await FetchChangelogAsync(game.Repository);
 
@@ -10193,7 +10407,10 @@ namespace Quiver
                     changelogContent.ItemsSource = ParseMarkdown(changelogText);
                 }
 
-                ApplyChangelogGamepadSelection(0);
+                if (IsGamepadFocusActive)
+                    ApplyChangelogGamepadSelection(0);
+                else
+                    ClearChangelogGamepadFocus();
             }
             catch (Exception ex)
             {

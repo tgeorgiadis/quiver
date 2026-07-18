@@ -190,7 +190,8 @@ public sealed class GamepadNavigationService
 
 
 
-        var index = currentIndex < 0 ? 0 : currentIndex;
+        // Clamp both ends so a stale -1 / past-the-end index cannot snap Left to the last item.
+        var index = currentIndex < 0 ? 0 : (currentIndex >= count ? count - 1 : currentIndex);
 
 
 

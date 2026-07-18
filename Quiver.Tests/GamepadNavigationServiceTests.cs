@@ -92,6 +92,19 @@ public class GamepadNavigationServiceTests
 
     [Fact]
 
+    public void MoveHorizontalIndex_clamps_stale_high_index_before_moving_left()
+
+    {
+
+        // Past-the-end index must move to count-2, not wrap as if from 0.
+        _service.MoveHorizontalIndex(99, NavigationDirection.Left, 4).Should().Be(2);
+
+    }
+
+
+
+    [Fact]
+
     public void ClampIndex_clamps_when_collection_shrinks()
 
     {

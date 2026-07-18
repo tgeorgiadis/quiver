@@ -14,6 +14,7 @@
 		<SolidColorBrush x:Key="ThemeWarning" Color="#f59e0b"/>
 		<SolidColorBrush x:Key="ThemeError" Color="#ef4444"/>
 		<SolidColorBrush x:Key="ThemeAccent" Color="#f59e0b"/>
+		<SolidColorBrush x:Key="ThemeFocusRing" Color="#f59e0b"/>
 	</Application.Resources>
 
 	<Application.Styles>
@@ -40,7 +41,8 @@
 			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		</Style>
 
-		<Style Selector="MenuItem:focus">
+		<!-- Orange :focus rings only under nav chrome; :focus-visible stays for Tab. -->
+		<Style Selector="Window.gamepad-chrome MenuItem:focus">
 			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 			<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
 			<Setter Property="BorderThickness" Value="2"/>
@@ -52,13 +54,29 @@
 			<Setter Property="BorderThickness" Value="2"/>
 		</Style>
 
-		<Style Selector="Window Button:focus">
+		<Style Selector="Window.gamepad-chrome Button:focus">
 			<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
 			<Setter Property="BorderThickness" Value="2"/>
 		</Style>
 
 		<Style Selector="Window Button:focus-visible">
 			<Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
+
+		<!-- Orange gamepad/keyboard rings when Window has class gamepad-chrome. -->
+		<Style Selector="Window.gamepad-chrome Button.gamepad-focused /template/ Border">
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
+
+		<Style Selector="Window.gamepad-chrome TextBox.gamepad-focused /template/ Border#PART_BorderElement">
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
+
+		<Style Selector="Window.gamepad-chrome CheckBox.gamepad-focused /template/ Border#NormalRectangle">
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 			<Setter Property="BorderThickness" Value="2"/>
 		</Style>
 	</Application.Styles>

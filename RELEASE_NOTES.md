@@ -1,19 +1,19 @@
-# Quiver v2.3.9
+# Quiver v2.3.10
 
-Steam Deck Gaming Mode detection is corrected, text fields are easier to navigate with a controller, and Add New Entry opens the on-screen keyboard again. Linux app removal also prefers the system Trash more reliably.
+Gamepad and keyboard focus are cleaner: orange rings only appear when a controller is connected or you are arrow-navigating, mouse clicks no longer leave stuck rings on the top bar, and catalog/library keyboard confirm is consistent.
 
-## Steam Deck
+## Focus chrome
 
-- **Gaming Mode detection** — Minimize is hidden only under Gamescope (`XDG_*` / `GAMESCOPE_WAYLAND_DISPLAY`). Bare `SteamOS` / `SteamGamepadUI` no longer count, so Desktop Mode (KDE) keeps the minimize button.
-- **Press A to edit** — D-pad highlights text fields without opening Steam’s keyboard. Press A (Confirm) to focus the field and open the OSK. First B leaves edit mode; second B closes the overlay.
-- **Add New Entry / Edit Entry + OSK** — Opening the create/edit form on Steam/Deck focuses Name and opens the keyboard. Moving between fields stays highlight-until-A.
-- **Overlay Confirm** — While Entry Form, Edit Tags, or Display Filter is open, A always activates the highlighted control even if gamepad focus briefly drifted underneath.
+- **No pad, no orange rings** — Gamepad focus styles only paint when the window has `gamepad-chrome` (Enable Gamepad + a connected controller). Modal dialogs share the same gate.
+- **Keyboard arrows still show rings** — Arrow-key navigation turns chrome on without a controller so library/sidebar/top-bar selection stays visible. A mouse click clears keyboard chrome when no pad is plugged in.
+- **Top bar / buttons** — Plain `:focus` orange rings are gated under chrome; `:focus-visible` remains for Tab. Mouse clicks on Add New Entry, Settings, and window controls no longer leave a stuck ring.
 
-## Gamepad
+## Keyboard confirm
 
-- **Add Catalog Source** — Modal navigation includes the URL field, no odd edge wrapping, proper `gamepad-focused` rings, and OSK on Confirm for the text box.
-- **Top bar Up** — Up from the top bar is consumed so Sort By no longer falsely highlights underneath.
+- **Space and Enter** — Both confirm the highlighted control everywhere (except inside a TextBox). Matching KeyUp is suppressed so a newly focused CheckBox does not also toggle.
+- **Catalog App List** — Confirm on a source card drills into Review (first button), not the Enabled checkbox, so Space no longer disables the list by accident. Enabled is still reachable with Left/Right in the action strip.
 
-## Linux
+## Navigation fixes
 
-- **Trash on remove** — Prefer `gio trash` when available, with a FreeDesktop Trash fallback (`XDG_DATA_HOME`, volume trash, copy across filesystems) so removals land in Trash more often instead of hard-deleting.
+- **Library + Continue** — Arrowing between library cards no longer dual-highlights the sidebar Continue button (Avalonia focus is cleared; arrows handled on Tunnel; no FocusFirstElement fallback while the gamepad interceptor is active).
+- **Catalog review actions** — Moving across Hide / Remove from Library (and other row actions) no longer traps focus on the far-right button; Left moves back, and Left from the first action returns to the row.

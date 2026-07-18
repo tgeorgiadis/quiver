@@ -954,8 +954,13 @@
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
 	</Style>
 
-	<Style Selector="ComboBox:focus /template/ Border#Background,
-	                 ComboBox.gamepad-focused /template/ Border#Background">
+	<Style Selector="ComboBox:focus /template/ Border#Background">
+		<Setter Property="Background" Value="{DynamicResource ThemeDarker}"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="Window.gamepad-chrome ComboBox.gamepad-focused /template/ Border#Background">
 		<Setter Property="Background" Value="{DynamicResource ThemeDarker}"/>
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
@@ -1233,7 +1238,7 @@
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 	</Style>
 
-	<Style Selector="Button.catalog-filter.gamepad-focused">
+	<Style Selector="Window.gamepad-chrome Button.catalog-filter.gamepad-focused">
 		<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
@@ -1451,14 +1456,14 @@
 		<Setter Property="Opacity" Value="0.95"/>
 	</Style>
 
-	<Style Selector="Button.scope-filter.gamepad-focused">
+	<Style Selector="Window.gamepad-chrome Button.scope-filter.gamepad-focused">
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 	</Style>
 
-	<Style Selector="Button.scope-filter.selected.gamepad-focused">
+	<Style Selector="Window.gamepad-chrome Button.scope-filter.selected.gamepad-focused">
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
@@ -1510,40 +1515,35 @@
 		<Setter Property="BorderThickness" Value="3"/>
 	</Style>
 
-	<Style Selector="Border.gamecard.gamepad-focused,
-	                 Border.gamecardgrid.gamepad-focused,
-	                 Border.gamecardcompact.gamepad-focused,
-	                 Border.catalog-focus-card.gamepad-focused,
-	                 Border.gamepad-focused">
+	<!-- Orange gamepad rings require Window.gamepad-chrome (controller connected). -->
+	<Style Selector="Window.gamepad-chrome Border.gamecard.gamepad-focused,
+	                 Window.gamepad-chrome Border.gamecardgrid.gamepad-focused,
+	                 Window.gamepad-chrome Border.gamecardcompact.gamepad-focused,
+	                 Window.gamepad-chrome Border.catalog-focus-card.gamepad-focused,
+	                 Window.gamepad-chrome Border.gamepad-focused">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 	</Style>
 
-	<!-- Focus Visual Styles -->
-	<Style Selector="Button:focus">
+	<!-- Focus Visual Styles: orange :focus only under nav chrome; :focus-visible for Tab. -->
+	<Style Selector="Window.gamepad-chrome Button:focus">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
-	<Style Selector="Button:focus /template/ Border">
+	<Style Selector="Window.gamepad-chrome Button:focus /template/ Border">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
-	<!-- Modal dialogs / unstyled buttons: gamepad ring without requiring options/settings classes -->
-	<Style Selector="Button.gamepad-focused /template/ Border">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
-		<Setter Property="BorderThickness" Value="2"/>
-	</Style>
-
-	<Style Selector="Button.modern:focus /template/ Border">
+	<Style Selector="Window.gamepad-chrome Button.modern:focus /template/ Border">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 		<Setter Property="Margin" Value="-1"/>
 	</Style>
 
-	<Style Selector="Button.modern-icon:focus /template/ Border">
+	<Style Selector="Window.gamepad-chrome Button.modern-icon:focus /template/ Border">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 		<Setter Property="Margin" Value="-1"/>
@@ -1555,18 +1555,18 @@
 		<Setter Property="Margin" Value="-1"/>
 	</Style>
 
-	<Style Selector="Button.modern-icon.gamepad-focused /template/ Border">
+	<Style Selector="Window.gamepad-chrome Button.modern-icon.gamepad-focused /template/ Border">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 		<Setter Property="Margin" Value="-1"/>
 	</Style>
 
-	<Style Selector="Button.options:focus /template/ Border">
+	<Style Selector="Window.gamepad-chrome Button.options:focus /template/ Border">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
-	<Style Selector="Button.options.gamepad-focused /template/ Border">
+	<Style Selector="Window.gamepad-chrome Button.options.gamepad-focused /template/ Border">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
@@ -1594,19 +1594,19 @@
 		<Setter Property="BorderThickness" Value="0"/>
 	</Style>
 
-	<Style Selector="Button.settings.gamepad-focused">
+	<Style Selector="Window.gamepad-chrome Button.settings.gamepad-focused">
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 	</Style>
 
-	<Style Selector="Button.settings.gamepad-focused /template/ Border">
+	<Style Selector="Window.gamepad-chrome Button.settings.gamepad-focused /template/ Border">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
-	<Style Selector="Button.iconbutton:focus">
+	<Style Selector="Window.gamepad-chrome Button.iconbutton:focus">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
@@ -1616,26 +1616,16 @@
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
-	<Style Selector="CheckBox.gamepad-focused /template/ Border#NormalRectangle">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
-		<Setter Property="BorderThickness" Value="2"/>
-	</Style>
-
-	<Style Selector="CheckBox.gamepad-focused">
+	<Style Selector="Window.gamepad-chrome CheckBox.gamepad-focused">
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 	</Style>
 
-	<Style Selector="TextBox.gamepad-focused /template/ Border#PART_BorderElement">
-		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
-		<Setter Property="BorderThickness" Value="2"/>
-	</Style>
-
-	<Style Selector="Slider.gamepad-focused /template/ Thumb">
+	<Style Selector="Window.gamepad-chrome Slider.gamepad-focused /template/ Thumb">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="3"/>
 	</Style>
 
-	<Style Selector="ComboBox.gamepad-focused">
+	<Style Selector="Window.gamepad-chrome ComboBox.gamepad-focused">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
@@ -1694,14 +1684,14 @@
 		<Setter Property="BorderThickness" Value="0"/>
 	</Style>
 
-	<Style Selector="TabItem.gamepad-focused">
+	<Style Selector="Window.gamepad-chrome TabItem.gamepad-focused">
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
 
-	<Style Selector="TabItem:selected.gamepad-focused">
+	<Style Selector="Window.gamepad-chrome TabItem:selected.gamepad-focused">
 		<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>

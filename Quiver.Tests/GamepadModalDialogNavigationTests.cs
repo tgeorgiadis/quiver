@@ -82,6 +82,7 @@ public class GamepadModalDialogNavigationTests
 
         try
         {
+            GamepadFocusChrome.SetActive(true, dialog);
             dialog.Show();
             GamepadModalDialogNavigation.Attach(dialog);
             nav.RefreshDialogButtons();
@@ -90,11 +91,13 @@ public class GamepadModalDialogNavigationTests
             nav.TryHandleNavigation(NavigationDirection.Up).Should().BeTrue();
 
             locationBox.Classes.Contains("gamepad-focused").Should().BeTrue();
+            dialog.Classes.Contains(GamepadFocusChrome.WindowClassName).Should().BeTrue();
             locationBox.IsFocused.Should().BeFalse();
         }
         finally
         {
             nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetActive(false);
             if (dialog.IsVisible)
                 dialog.Close();
         }
@@ -127,6 +130,7 @@ public class GamepadModalDialogNavigationTests
 
         try
         {
+            GamepadFocusChrome.SetActive(true, dialog);
             dialog.Show();
             GamepadModalDialogNavigation.Attach(dialog);
             nav.RefreshDialogButtons();
@@ -143,6 +147,7 @@ public class GamepadModalDialogNavigationTests
         finally
         {
             nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetActive(false);
             if (dialog.IsVisible)
                 dialog.Close();
         }

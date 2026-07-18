@@ -53,6 +53,8 @@ namespace Quiver.Services
         public event Action? OnCancel;
         public event Action? OnOptions;
         public event Action<GamepadBinding>? OnRawInput;
+        /// <summary>Raised when connected gamepad count crosses between zero and nonzero.</summary>
+        public event Action<bool>? OnGamepadConnectionChanged;
 
         public Func<NavigationDirection, bool>? NavigationInterceptor { get; set; }
 
@@ -73,6 +75,7 @@ namespace Quiver.Services
         {
             _mainWindow = mainWindow;
             _modalDialogNavigation.Configure(this);
+            _contextMenuNavigation.Configure(this);
             ApplyBindings(appSettings.GamepadBindings);
             InitializeSDL();
 
@@ -97,6 +100,22 @@ namespace Quiver.Services
                 ResetNavigationState();
         }
 
+        public bool HasConnectedGamepad => _gameControllers.Count > 0;
+
+        /// <summary>
+        /// Returns whether a connection-changed event should fire, and the new
+        /// <c>hasConnected</c> value when it should. Null means no transition.
+        /// </summary>
+        public static bool? GetConnectionChangedSignal(int previousCount, int nextCount)
+        {
+            var hadConnected = previousCount > 0;
+            var hasConnected = nextCount > 0;
+            if (hadConnected == hasConnected)
+                return null;
+
+            return hasConnected;
+        }
+
         public IReadOnlyList<ConnectedGamepadInfo> GetConnectedGamepads()
         {
             RefreshConnectedControllers();
@@ -117,6 +136,7 @@ namespace Quiver.Services
 
         public void RefreshConnectedControllers()
         {
+            var previousCount = _gameControllers.Count;
             int numJoysticks = SDL.SDL_NumJoysticks();
             var seen = new HashSet<int>();
 
@@ -145,6 +165,10 @@ namespace Quiver.Services
                 _gameControllers.Remove(index);
                 _gamepadStates.Remove(index);
             }
+
+            var signal = GetConnectionChangedSignal(previousCount, _gameControllers.Count);
+            if (signal.HasValue)
+                OnGamepadConnectionChanged?.Invoke(signal.Value);
         }
 
         private void InitializeSDL()
@@ -184,6 +208,8 @@ namespace Quiver.Services
         private void GamepadTimer_Tick(object? sender, EventArgs e)
         {
             CheckSDLWindowFocus();
+            SDL.SDL_GameControllerUpdate();
+            RefreshConnectedControllers();
 
             var overlayActive = IsGamepadOverlayActive;
 
@@ -194,8 +220,6 @@ namespace Quiver.Services
                 _lastCancelTime = DateTime.MinValue;
                 return;
             }
-
-            SDL.SDL_GameControllerUpdate();
 
             NavigationDirection? heldDirection = null;
 
@@ -404,9 +428,12 @@ namespace Quiver.Services
                 return;
             }
 
-            if (NavigationInterceptor?.Invoke(direction) == true)
+            // When MainWindow owns zone navigation, never fall through to FocusFirstElement
+            // (that would re-focus Continue while a library card still has IsGamepadFocused).
+            if (NavigationInterceptor != null)
             {
-                OnNavigate?.Invoke(direction);
+                if (NavigationInterceptor.Invoke(direction))
+                    OnNavigate?.Invoke(direction);
                 return;
             }
 
