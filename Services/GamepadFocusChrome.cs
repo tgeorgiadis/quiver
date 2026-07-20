@@ -20,7 +20,7 @@ internal static class GamepadFocusChrome
         bool enableGamepadInput,
         bool hasConnectedGamepad,
         bool keyboardNavActive = false) =>
-        enableGamepadInput && (hasConnectedGamepad || keyboardNavActive);
+        (enableGamepadInput && hasConnectedGamepad) || keyboardNavActive;
 
     public static void SetKeyboardNavigationActive(bool active) =>
         KeyboardNavigationActive = active;

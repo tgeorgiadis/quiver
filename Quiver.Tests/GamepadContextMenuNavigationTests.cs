@@ -1,7 +1,9 @@
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using FluentAssertions;
 using Quiver.Services;
+using NavigationDirection = Quiver.Services.NavigationDirection;
 
 namespace Quiver.Tests;
 
@@ -233,5 +235,33 @@ public class GamepadContextMenuNavigationTests
                 menu.Close();
             window.Close();
         }
+    }
+
+    [Fact]
+    public void ResolveKeyboardCancel_invokes_cancel_for_bound_back_key()
+    {
+        var bindings = KeyboardBindingDefaults.Create();
+        GamepadAction? Resolve(Key key, KeyModifiers modifiers) =>
+            KeyboardBindingDefaults.FindAction(bindings, key, modifiers);
+
+        GamepadContextMenuNavigation.ResolveKeyboardCancel(Key.Escape, KeyModifiers.None, Resolve)
+            .Should().Be(ContextMenuKeyboardCancelResult.InvokeCancel);
+
+        KeyboardBindingDefaults.AssignExclusive(
+            bindings,
+            GamepadAction.Cancel,
+            KeyboardBinding.Of(Key.Back));
+
+        GamepadContextMenuNavigation.ResolveKeyboardCancel(Key.Back, KeyModifiers.None, Resolve)
+            .Should().Be(ContextMenuKeyboardCancelResult.InvokeCancel);
+        GamepadContextMenuNavigation.ResolveKeyboardCancel(Key.Escape, KeyModifiers.None, Resolve)
+            .Should().Be(ContextMenuKeyboardCancelResult.SwallowEscape);
+    }
+
+    [Fact]
+    public void ResolveKeyboardCancel_none_when_resolver_missing()
+    {
+        GamepadContextMenuNavigation.ResolveKeyboardCancel(Key.Escape, KeyModifiers.None, null)
+            .Should().Be(ContextMenuKeyboardCancelResult.None);
     }
 }

@@ -59,7 +59,6 @@ namespace Quiver
         public bool CatalogReviewBadgeVisible => CatalogReviewBadgeCount > 0;
 
         public bool GamepadHintsVisible =>
-            _settings.EnableGamepadInput &&
             !isSettingsPanelOpen &&
             !_isEntryFormOpen &&
             !_isTagEditOpen &&
@@ -69,6 +68,13 @@ namespace Quiver
              (_mainViewMode == MainViewMode.AppCatalog &&
               (_appCatalogSubView == AppCatalogSubView.Sources ||
                _appCatalogSubView == AppCatalogSubView.Review)));
+
+        /// <summary>
+        /// Gamepad chrome actions (zones, overlays, library confirm) when pad input is enabled,
+        /// or after keyboard navigation/actions have activated keyboard chrome.
+        /// </summary>
+        private bool AllowChromeActions =>
+            _settings.EnableGamepadInput || GamepadFocusChrome.KeyboardNavigationActive;
 
         private readonly LauncherUpdateService _launcherUpdateService = new();
         private bool _isCheckingUpdates;
@@ -390,6 +396,7 @@ namespace Quiver
 
         private InputService? _inputService;
         private GamepadAction? _rebindListeningAction;
+        private GamepadAction? _keyboardRebindListeningAction;
         private Action<GamepadBinding>? _rawInputHandler;
         private readonly GamepadNavigationService _gamepadNavigation = new();
         private int _settingsGamepadFocusIndex = -1;
@@ -516,6 +523,11 @@ namespace Quiver
             _inputService.OnCancel += HandleCancelAction;
             _inputService.OnOptions += HandleOptionsAction;
             _inputService.OnGamepadConnectionChanged += HandleGamepadConnectionChanged;
+            GamepadContextMenuNavigation.Instance.ResolveKeyboardAction = (key, modifiers) =>
+            {
+                _settings.EnsureInitialized();
+                return KeyboardBindingDefaults.FindAction(_settings.KeyboardBindings, key, modifiers);
+            };
             UpdateGamepadChromeClass();
             UpdateGamepadHintsBar();
             RefreshGamepadBindingsPanel();
@@ -1234,9 +1246,6 @@ namespace Quiver
 
         private void ActivateKeyboardNavChrome()
         {
-            if (!_settings.EnableGamepadInput)
-                return;
-
             GamepadFocusChrome.SetKeyboardNavigationActive(true);
             UpdateGamepadChromeClass();
         }
@@ -5372,7 +5381,9 @@ namespace Quiver
         private void ResetGamepadBindings_Click(object? sender, RoutedEventArgs e)
         {
             CancelGamepadRebindListen();
+            CancelKeyboardRebindListen();
             _settings.GamepadBindings = GamepadBindingDefaults.Create();
+            _settings.KeyboardBindings = KeyboardBindingDefaults.Create();
             _inputService?.ApplyBindings(_settings.GamepadBindings);
             RefreshGamepadBindingsPanel();
             UpdateGamepadHintsBar();
@@ -5402,7 +5413,11 @@ namespace Quiver
                 return;
 
             _settings.EnsureInitialized();
-            GamepadHintsBar.Text = GamepadBindingLabels.FormatHints(_settings.GamepadBindings);
+            var padHints = GamepadBindingLabels.FormatHints(_settings.GamepadBindings);
+            var keyHints = KeyboardBindingLabels.FormatHints(_settings.KeyboardBindings);
+            GamepadHintsBar.Text = _settings.EnableGamepadInput
+                ? $"{padHints}  |  {keyHints}"
+                : keyHints;
         }
 
         private static string GetGamepadActionDisplayName(GamepadAction action) => action switch
@@ -5425,52 +5440,47 @@ namespace Quiver
             _settings.EnsureInitialized();
             GamepadBindingsPanel.Children.Clear();
 
+            var themeText = (IBrush?)Application.Current?.FindResource("ThemeText") ?? Brushes.White;
+            var themeSecondary = (IBrush?)Application.Current?.FindResource("ThemeTextSecondary") ?? Brushes.Gray;
+            var anyListening = _rebindListeningAction.HasValue || _keyboardRebindListeningAction.HasValue;
+
             foreach (var action in Enum.GetValues<GamepadAction>())
             {
-                var row = new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-                };
+                var block = new StackPanel { Spacing = 4 };
 
-                var labels = new StackPanel { Spacing = 2 };
-                labels.Children.Add(new TextBlock
+                block.Children.Add(new TextBlock
                 {
                     Text = GetGamepadActionDisplayName(action),
                     FontSize = 13,
                     FontWeight = FontWeight.SemiBold,
-                    Foreground = (IBrush?)Application.Current?.FindResource("ThemeText")
-                        ?? Brushes.White,
+                    Foreground = themeText,
                 });
 
-                var bindingText = new TextBlock
-                {
-                    Text = _rebindListeningAction == action
+                block.Children.Add(CreateBindingDeviceRow(
+                    action,
+                    deviceLabel: "Gamepad",
+                    bindingLabel: _rebindListeningAction == action
                         ? "Press a control…"
                         : GamepadBindingLabels.FormatActionBindings(_settings.GamepadBindings, action),
-                    FontSize = 11,
-                    Foreground = (IBrush?)Application.Current?.FindResource("ThemeTextSecondary")
-                        ?? Brushes.Gray,
-                    TextWrapping = TextWrapping.Wrap,
-                };
-                labels.Children.Add(bindingText);
-                Grid.SetColumn(labels, 0);
-                row.Children.Add(labels);
+                    rebindContent: _rebindListeningAction == action ? "Listening…" : "Rebind",
+                    listeningThis: _rebindListeningAction == action,
+                    anyListening: anyListening,
+                    themeSecondary,
+                    GamepadRebindButton_Click));
 
-                var rebindButton = new Button
-                {
-                    Content = _rebindListeningAction == action ? "Listening…" : "Rebind",
-                    Classes = { "options" },
-                    FontSize = 12,
-                    MinWidth = 88,
-                    Margin = new Thickness(8, 0, 0, 0),
-                    Tag = action,
-                    IsEnabled = _rebindListeningAction == null || _rebindListeningAction == action,
-                };
-                rebindButton.Click += GamepadRebindButton_Click;
-                Grid.SetColumn(rebindButton, 1);
-                row.Children.Add(rebindButton);
+                block.Children.Add(CreateBindingDeviceRow(
+                    action,
+                    deviceLabel: "Keyboard",
+                    bindingLabel: _keyboardRebindListeningAction == action
+                        ? "Press a key…"
+                        : KeyboardBindingLabels.FormatActionBindings(_settings.KeyboardBindings, action),
+                    rebindContent: _keyboardRebindListeningAction == action ? "Listening…" : "Rebind",
+                    listeningThis: _keyboardRebindListeningAction == action,
+                    anyListening: anyListening,
+                    themeSecondary,
+                    KeyboardRebindButton_Click));
 
-                GamepadBindingsPanel.Children.Add(row);
+                GamepadBindingsPanel.Children.Add(block);
             }
 
             if (GamepadRebindStatusText != null)
@@ -5479,7 +5489,13 @@ namespace Quiver
                 {
                     GamepadRebindStatusText.IsVisible = true;
                     GamepadRebindStatusText.Text =
-                        $"Listening for {GetGamepadActionDisplayName(_rebindListeningAction.Value)}. Press a control, or Esc to cancel.";
+                        $"Listening for {GetGamepadActionDisplayName(_rebindListeningAction.Value)} (gamepad). Press a control, or Esc to cancel.";
+                }
+                else if (_keyboardRebindListeningAction.HasValue)
+                {
+                    GamepadRebindStatusText.IsVisible = true;
+                    GamepadRebindStatusText.Text =
+                        $"Listening for {GetGamepadActionDisplayName(_keyboardRebindListeningAction.Value)} (keyboard). Press a key, or Esc to cancel.";
                 }
                 else
                 {
@@ -5487,6 +5503,56 @@ namespace Quiver
                     GamepadRebindStatusText.Text = string.Empty;
                 }
             }
+        }
+
+        private static Grid CreateBindingDeviceRow(
+            GamepadAction action,
+            string deviceLabel,
+            string bindingLabel,
+            string rebindContent,
+            bool listeningThis,
+            bool anyListening,
+            IBrush themeSecondary,
+            EventHandler<RoutedEventArgs> onRebindClick)
+        {
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            };
+
+            var labels = new StackPanel { Spacing = 1 };
+            labels.Children.Add(new TextBlock
+            {
+                Text = deviceLabel,
+                FontSize = 10,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = themeSecondary,
+            });
+            labels.Children.Add(new TextBlock
+            {
+                Text = bindingLabel,
+                FontSize = 11,
+                Foreground = themeSecondary,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            Grid.SetColumn(labels, 0);
+            row.Children.Add(labels);
+
+            var rebindButton = new Button
+            {
+                Content = rebindContent,
+                Classes = { "options" },
+                FontSize = 12,
+                MinWidth = 88,
+                Margin = new Thickness(8, 0, 0, 0),
+                Tag = action,
+                IsEnabled = !anyListening || listeningThis,
+            };
+            rebindButton.Click += onRebindClick;
+            Grid.SetColumn(rebindButton, 1);
+            row.Children.Add(rebindButton);
+
+            return row;
         }
 
         private void GamepadRebindButton_Click(object? sender, RoutedEventArgs e)
@@ -5503,6 +5569,20 @@ namespace Quiver
             StartGamepadRebindListen(action);
         }
 
+        private void KeyboardRebindButton_Click(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button || button.Tag is not GamepadAction action)
+                return;
+
+            if (_keyboardRebindListeningAction == action)
+            {
+                CancelKeyboardRebindListen();
+                return;
+            }
+
+            StartKeyboardRebindListen(action);
+        }
+
         private void StartGamepadRebindListen(GamepadAction action)
         {
             if (_inputService == null || _settings == null)
@@ -5511,11 +5591,12 @@ namespace Quiver
             if (!_settings.EnableGamepadInput)
             {
                 _ = ShowMessageBoxAsync(
-                    "Enable Gamepad Input before rebinding controls.",
+                    "Enable Gamepad Input before rebinding gamepad controls.",
                     "Controls");
                 return;
             }
 
+            CancelKeyboardRebindListen();
             CancelGamepadRebindListen();
 
             _rebindListeningAction = action;
@@ -5532,6 +5613,18 @@ namespace Quiver
             RefreshGamepadBindingsPanel();
         }
 
+        private void StartKeyboardRebindListen(GamepadAction action)
+        {
+            if (_settings == null)
+                return;
+
+            CancelGamepadRebindListen();
+            CancelKeyboardRebindListen();
+
+            _keyboardRebindListeningAction = action;
+            RefreshGamepadBindingsPanel();
+        }
+
         private void ApplyCapturedGamepadBinding(GamepadBinding binding)
         {
             if (_settings == null || !_rebindListeningAction.HasValue)
@@ -5543,6 +5636,21 @@ namespace Quiver
             _settings.EnsureInitialized();
             GamepadBindingDefaults.AssignExclusive(_settings.GamepadBindings, action, binding);
             _inputService?.ApplyBindings(_settings.GamepadBindings);
+            RefreshGamepadBindingsPanel();
+            UpdateGamepadHintsBar();
+            OnSettingChanged();
+        }
+
+        private void ApplyCapturedKeyboardBinding(KeyboardBinding binding)
+        {
+            if (_settings == null || !_keyboardRebindListeningAction.HasValue)
+                return;
+
+            var action = _keyboardRebindListeningAction.Value;
+            CancelKeyboardRebindListen();
+
+            _settings.EnsureInitialized();
+            KeyboardBindingDefaults.AssignExclusive(_settings.KeyboardBindings, action, binding);
             RefreshGamepadBindingsPanel();
             UpdateGamepadHintsBar();
             OnSettingChanged();
@@ -5564,6 +5672,14 @@ namespace Quiver
 
             var wasListening = _rebindListeningAction.HasValue;
             _rebindListeningAction = null;
+            if (wasListening)
+                RefreshGamepadBindingsPanel();
+        }
+
+        private void CancelKeyboardRebindListen()
+        {
+            var wasListening = _keyboardRebindListeningAction.HasValue;
+            _keyboardRebindListeningAction = null;
             if (wasListening)
                 RefreshGamepadBindingsPanel();
         }
@@ -6679,49 +6795,94 @@ namespace Quiver
 
             try
             {
-                switch (e.Key)
+                if (_keyboardRebindListeningAction.HasValue)
                 {
-                    case Key.Space:
-                    case Key.Enter:
-                        // TextBox: let Space/Enter pass through for typing / multiline.
-                        var focusedElement = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
-                        if (focusedElement is TextBox)
-                            break;
+                    if (e.Key == Key.Escape)
+                    {
+                        CancelKeyboardRebindListen();
+                        e.Handled = true;
+                        return;
+                    }
 
+                    if (KeyboardBindingDefaults.IsModifierOnlyKey(e.Key))
+                        return;
+
+                    ApplyCapturedKeyboardBinding(new KeyboardBinding(e.Key, e.KeyModifiers));
+                    e.Handled = true;
+                    return;
+                }
+
+                // Esc cancels gamepad rebind listen (same as B / Cancel).
+                if (_rebindListeningAction.HasValue && e.Key == Key.Escape)
+                {
+                    CancelGamepadRebindListen();
+                    e.Handled = true;
+                    return;
+                }
+
+                _settings.EnsureInitialized();
+                var action = KeyboardBindingDefaults.FindAction(
+                    _settings.KeyboardBindings,
+                    e.Key,
+                    e.KeyModifiers);
+                if (action == null)
+                    return;
+
+                // While editing a TextBox, let typing through (including Backspace). Escape still
+                // dismisses focus / runs cancel even when Cancel is bound to another key.
+                var editingText = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox;
+                if (editingText)
+                {
+                    if (e.Key == Key.Escape)
+                    {
+                        ActivateKeyboardNavChrome();
+                        HandleCancelAction();
+                        e.Handled = true;
+                    }
+
+                    return;
+                }
+
+                switch (action)
+                {
+                    case GamepadAction.Confirm:
+                        ActivateKeyboardNavChrome();
                         HandleConfirmAction();
                         _suppressConfirmKeyUp = true;
                         e.Handled = true;
                         break;
 
-                    case Key.LeftShift:
+                    case GamepadAction.Cancel:
+                        ActivateKeyboardNavChrome();
                         HandleCancelAction();
                         e.Handled = true;
                         break;
 
-                    case Key.Escape:
-                        HandleCancelAction();
+                    case GamepadAction.Options:
+                        ActivateKeyboardNavChrome();
+                        HandleOptionsAction();
                         e.Handled = true;
                         break;
 
-                    case Key.Up:
+                    case GamepadAction.NavUp:
                         ActivateKeyboardNavChrome();
                         _inputService?.HandleNavigation(Services.NavigationDirection.Up);
                         e.Handled = true;
                         break;
 
-                    case Key.Down:
+                    case GamepadAction.NavDown:
                         ActivateKeyboardNavChrome();
                         _inputService?.HandleNavigation(Services.NavigationDirection.Down);
                         e.Handled = true;
                         break;
 
-                    case Key.Left:
+                    case GamepadAction.NavLeft:
                         ActivateKeyboardNavChrome();
                         _inputService?.HandleNavigation(Services.NavigationDirection.Left);
                         e.Handled = true;
                         break;
 
-                    case Key.Right:
+                    case GamepadAction.NavRight:
                         ActivateKeyboardNavChrome();
                         _inputService?.HandleNavigation(Services.NavigationDirection.Right);
                         e.Handled = true;
@@ -6736,22 +6897,53 @@ namespace Quiver
 
         private void MainWindow_KeyUp(object? sender, KeyEventArgs e)
         {
-            if (_suppressConfirmKeyUp && e.Key is Key.Space or Key.Enter)
+            if (_suppressConfirmKeyUp && IsKeyboardConfirmBoundKey(e.Key))
             {
                 _suppressConfirmKeyUp = false;
                 e.Handled = true;
                 return;
             }
 
-            if (e.Key == Key.Up || e.Key == Key.Down || e.Key == Key.Left || e.Key == Key.Right)
-            {
+            if (IsKeyboardNavBoundKey(e.Key))
                 _inputService?.ResetNavigationTimer();
+        }
+
+        private bool IsKeyboardConfirmBoundKey(Key key)
+        {
+            _settings.EnsureInitialized();
+            return _settings.KeyboardBindings.TryGetValue(GamepadAction.Confirm, out var list) &&
+                   list != null &&
+                   list.Any(b => b.Key == key);
+        }
+
+        private bool IsKeyboardNavBoundKey(Key key)
+        {
+            _settings.EnsureInitialized();
+            foreach (var action in new[]
+                     {
+                         GamepadAction.NavUp,
+                         GamepadAction.NavDown,
+                         GamepadAction.NavLeft,
+                         GamepadAction.NavRight,
+                     })
+            {
+                if (_settings.KeyboardBindings.TryGetValue(action, out var list) &&
+                    list != null &&
+                    list.Any(b => b.Key == key))
+                {
+                    return true;
+                }
             }
+
+            return false;
         }
 
         private bool HandleGamepadNavigation(Services.NavigationDirection direction)
         {
-            if (!_settings.EnableGamepadInput || _launchedGameOwnsInput)
+            if (_launchedGameOwnsInput)
+                return false;
+
+            if (!_settings.EnableGamepadInput && !GamepadFocusChrome.KeyboardNavigationActive)
                 return false;
 
             if (IsDisplayFilterOverlayOpen)
@@ -9748,7 +9940,7 @@ namespace Quiver
 
         private void HandleOptionsAction()
         {
-            if (!_settings.EnableGamepadInput)
+            if (!AllowChromeActions)
                 return;
 
             if (_isChangelogOpen)
@@ -9806,13 +9998,13 @@ namespace Quiver
                 return;
             }
 
-            if (_settings.EnableGamepadInput && _inputService?.TryHandleContextMenuConfirm() == true)
+            if (AllowChromeActions && _inputService?.TryHandleContextMenuConfirm() == true)
                 return;
 
-            if (_settings.EnableGamepadInput && _inputService?.TryHandleModalConfirm() == true)
+            if (AllowChromeActions && _inputService?.TryHandleModalConfirm() == true)
                 return;
 
-            if (_settings.EnableGamepadInput && _inputService?.TryHandleComboBoxConfirm() == true)
+            if (AllowChromeActions && _inputService?.TryHandleComboBoxConfirm() == true)
                 return;
 
             // Prefer overlays whenever open, even if a layout sync briefly flipped ActiveZone.
@@ -9844,77 +10036,77 @@ namespace Quiver
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.Sidebar)
             {
                 ActivateSidebarSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.TopBar)
             {
                 ActivateTopBarSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewFilters)
             {
                 ActivateReviewFilterSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewList)
             {
                 ActivateReviewRowSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewRowActions)
             {
                 ActivateCatalogReviewRowActionSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewToolbar)
             {
                 ActivateAppUpdatesReviewToolbarSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewList)
             {
                 ActivateAppUpdatesReviewRowSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.AppUpdatesReviewRowActions)
             {
                 ActivateAppUpdatesReviewRowActionSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesToolbar)
             {
                 ActivateCatalogSourcesToolbarSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesFilters)
             {
                 ActivateCatalogSourcesFilterSelection();
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourceCardActions)
             {
                 if (CatalogSources.Count == 0)
@@ -9931,7 +10123,7 @@ namespace Quiver
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.Library &&
                 _gamepadNavigation.LibrarySelectedIndex >= 0)
             {
@@ -9944,7 +10136,7 @@ namespace Quiver
                 }
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSources &&
                 _gamepadNavigation.CatalogSelectedIndex >= 0)
             {
@@ -9999,6 +10191,12 @@ namespace Quiver
                 return;
             }
 
+            if (_keyboardRebindListeningAction.HasValue)
+            {
+                CancelKeyboardRebindListen();
+                return;
+            }
+
             // Changelog takes priority over a leftover context menu underneath it.
             if (_isChangelogOpen)
             {
@@ -10007,17 +10205,17 @@ namespace Quiver
                 return;
             }
 
-            if (_settings.EnableGamepadInput && _inputService?.TryHandleContextMenuCancel() == true)
+            if (AllowChromeActions && _inputService?.TryHandleContextMenuCancel() == true)
                 return;
 
-            if (_settings.EnableGamepadInput && _inputService?.TryHandleModalCancel() == true)
+            if (AllowChromeActions && _inputService?.TryHandleModalCancel() == true)
                 return;
 
-            if (_settings.EnableGamepadInput && _inputService?.TryHandleComboBoxCancel() == true)
+            if (AllowChromeActions && _inputService?.TryHandleComboBoxCancel() == true)
                 return;
 
-            // First B leaves text edit / dismisses Steam OSK; second B closes the overlay.
-            if (_settings.EnableGamepadInput &&
+            // First Cancel leaves text edit / dismisses Steam OSK; second closes the overlay.
+            if (AllowChromeActions &&
                 TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox)
             {
                 DismissTextInputFocus();
@@ -10042,7 +10240,7 @@ namespace Quiver
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourceCardActions)
             {
                 if (CatalogSources.Count == 0)
@@ -10058,7 +10256,7 @@ namespace Quiver
                 return;
             }
 
-            if (_settings.EnableGamepadInput &&
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewRowActions)
             {
                 ApplyCatalogReviewRowSelection(_gamepadNavigation.CatalogReviewSelectedIndex);
@@ -10069,7 +10267,7 @@ namespace Quiver
             if (CloseSettingsPanel())
                 return;
 
-            if (_settings.EnableGamepadInput && TryNavigateGamepadZoneBack())
+            if (AllowChromeActions && TryNavigateGamepadZoneBack())
                 return;
         }
 

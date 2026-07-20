@@ -98,6 +98,8 @@ namespace Quiver
         public bool EnableGamepadInput { get; set; } = true;
         public Dictionary<GamepadAction, List<GamepadBinding>> GamepadBindings { get; set; } =
             GamepadBindingDefaults.Create();
+        public Dictionary<GamepadAction, List<KeyboardBinding>> KeyboardBindings { get; set; } =
+            KeyboardBindingDefaults.Create();
         public string LinuxWindowsLaunchCommand { get; set; } = string.Empty;
         public List<AppCatalogSource> AppCatalogSources { get; set; } = new List<AppCatalogSource>();
         public bool LocalFirstCatalogMigrationComplete { get; set; }
@@ -115,6 +117,8 @@ namespace Quiver
             UserAppTags ??= new Dictionary<string, List<string>>();
             GamepadBindings ??= GamepadBindingDefaults.Create();
             GamepadBindingDefaults.EnsureComplete(GamepadBindings);
+            KeyboardBindings ??= KeyboardBindingDefaults.Create();
+            KeyboardBindingDefaults.EnsureComplete(KeyboardBindings);
 
             foreach (var source in AppCatalogSources)
             {

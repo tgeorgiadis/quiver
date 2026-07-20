@@ -1,7 +1,16 @@
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 
 namespace Quiver.Services;
+
+public enum ContextMenuKeyboardCancelResult
+{
+    None,
+    InvokeCancel,
+    SwallowEscape,
+}
 
 public sealed class GamepadContextMenuNavigation
 {
@@ -12,12 +21,23 @@ public sealed class GamepadContextMenuNavigation
     private List<MenuItem> _menuItems = [];
     private int _focusedItemIndex;
     private InputService? _inputService;
+    private readonly EventHandler<KeyEventArgs> _contextMenuKeyDownHandler;
 
     public static GamepadContextMenuNavigation Instance => _instance ??= new GamepadContextMenuNavigation();
 
     public bool HasActiveContextMenu => _activeMenu != null;
 
+    /// <summary>
+    /// Resolves a key press to a <see cref="GamepadAction"/> using the app's keyboard bindings.
+    /// </summary>
+    public Func<Key, KeyModifiers, GamepadAction?>? ResolveKeyboardAction { get; set; }
+
     private bool HasConnectedGamepad => _inputService?.HasConnectedGamepad == true;
+
+    public GamepadContextMenuNavigation()
+    {
+        _contextMenuKeyDownHandler = OnContextMenuKeyDown;
+    }
 
     public void Configure(InputService inputService)
     {
@@ -27,6 +47,28 @@ public sealed class GamepadContextMenuNavigation
     public static void Attach(ContextMenu menu)
     {
         Instance.PrepareMenu(menu);
+    }
+
+    /// <summary>
+    /// Decides how a context-menu key press should interact with Cancel / Avalonia Escape dismiss.
+    /// </summary>
+    public static ContextMenuKeyboardCancelResult ResolveKeyboardCancel(
+        Key key,
+        KeyModifiers modifiers,
+        Func<Key, KeyModifiers, GamepadAction?>? resolveAction)
+    {
+        if (resolveAction == null)
+            return ContextMenuKeyboardCancelResult.None;
+
+        var action = resolveAction(key, modifiers);
+        if (action == GamepadAction.Cancel)
+            return ContextMenuKeyboardCancelResult.InvokeCancel;
+
+        // Block Avalonia's hardcoded Escape dismiss when Escape is not the Cancel binding.
+        if (key == Key.Escape)
+            return ContextMenuKeyboardCancelResult.SwallowEscape;
+
+        return ContextMenuKeyboardCancelResult.None;
     }
 
     public void PrepareMenu(ContextMenu menu)
@@ -46,6 +88,7 @@ public sealed class GamepadContextMenuNavigation
         }
 
         RegisterContextMenu(menu);
+        AttachKeyboardCancelHandler(menu);
 
         menu.Opened += OnMenuOpened;
         menu.Closed += OnMenuClosed;
@@ -59,7 +102,34 @@ public sealed class GamepadContextMenuNavigation
         {
             menu.Opened -= OnMenuOpened;
             menu.Closed -= OnMenuClosed;
+            DetachKeyboardCancelHandler(menu);
             UnregisterContextMenu(menu);
+        }
+    }
+
+    private void AttachKeyboardCancelHandler(ContextMenu menu)
+    {
+        menu.RemoveHandler(InputElement.KeyDownEvent, _contextMenuKeyDownHandler);
+        menu.AddHandler(InputElement.KeyDownEvent, _contextMenuKeyDownHandler, RoutingStrategies.Tunnel);
+    }
+
+    private void DetachKeyboardCancelHandler(ContextMenu menu)
+    {
+        menu.RemoveHandler(InputElement.KeyDownEvent, _contextMenuKeyDownHandler);
+    }
+
+    private void OnContextMenuKeyDown(object? sender, KeyEventArgs e)
+    {
+        switch (ResolveKeyboardCancel(e.Key, e.KeyModifiers, ResolveKeyboardAction))
+        {
+            case ContextMenuKeyboardCancelResult.InvokeCancel:
+                if (TryHandleCancel())
+                    e.Handled = true;
+                break;
+
+            case ContextMenuKeyboardCancelResult.SwallowEscape:
+                e.Handled = true;
+                break;
         }
     }
 
@@ -88,6 +158,7 @@ public sealed class GamepadContextMenuNavigation
         if (!ReferenceEquals(_activeMenu, menu))
             return;
 
+        DetachKeyboardCancelHandler(menu);
         CloseAllSubmenus(menu);
         _submenuStack.Clear();
         _activeMenu = null;

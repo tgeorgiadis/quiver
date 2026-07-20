@@ -1,19 +1,20 @@
-# Quiver v2.3.10
+# Quiver v2.3.11
 
-Gamepad and keyboard focus are cleaner: orange rings only appear when a controller is connected or you are arrow-navigating, mouse clicks no longer leave stuck rings on the top bar, and catalog/library keyboard confirm is consistent.
+Keyboard controls are now rebindable alongside gamepad bindings in Settings → Controls, with sensible defaults (Enter Select, Escape Back, O Options) and context menus that respect your Back key.
 
-## Focus chrome
+## Rebindable keyboard controls
 
-- **No pad, no orange rings** — Gamepad focus styles only paint when the window has `gamepad-chrome` (Enable Gamepad + a connected controller). Modal dialogs share the same gate.
-- **Keyboard arrows still show rings** — Arrow-key navigation turns chrome on without a controller so library/sidebar/top-bar selection stays visible. A mouse click clears keyboard chrome when no pad is plugged in.
-- **Top bar / buttons** — Plain `:focus` orange rings are gated under chrome; `:focus-visible` remains for Tab. Mouse clicks on Add New Entry, Settings, and window controls no longer leave a stuck ring.
+- **Settings → Controls** — Each action shows Gamepad and Keyboard rows with separate Rebind. Reset restores both maps to defaults.
+- **Defaults** — Select = Enter, Back = Escape, Options = O, arrows for navigation.
+- **Runtime** — Confirm, Cancel, Options, and navigation use stored keyboard bindings (no more hardcoded Left Shift cancel). Keyboard works even when Enable Gamepad Input is off.
+- **Hints bar** — Shows keyboard bindings (and gamepad glyphs when gamepad input is enabled).
 
-## Keyboard confirm
+## Context menu Back
 
-- **Space and Enter** — Both confirm the highlighted control everywhere (except inside a TextBox). Matching KeyUp is suppressed so a newly focused CheckBox does not also toggle.
-- **Catalog App List** — Confirm on a source card drills into Review (first button), not the Enabled checkbox, so Space no longer disables the list by accident. Enabled is still reachable with Left/Right in the action strip.
+- Closing an open context menu uses the bound **Back** key, not Avalonia’s hardcoded Escape alone.
+- If you rebind Back away from Escape, Escape no longer dismisses the menu; your bound key does.
 
-## Navigation fixes
+## Other
 
-- **Library + Continue** — Arrowing between library cards no longer dual-highlights the sidebar Continue button (Avalonia focus is cleared; arrows handled on Tunnel; no FocusFirstElement fallback while the gamepad interceptor is active).
-- **Catalog review actions** — Moving across Hide / Remove from Library (and other row actions) no longer traps focus on the far-right button; Left moves back, and Left from the first action returns to the row.
+- Text boxes still allow normal typing (including Backspace); Escape still leaves text edit when focused.
+- Esc cancels a rebind listen session without assigning Escape as the new binding.

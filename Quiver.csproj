@@ -7,9 +7,9 @@
 		<RootNamespace>Quiver</RootNamespace>
 		<AssemblyTitle>Quiver</AssemblyTitle>
 		<AssemblyDescription>Download and manage GitHub-hosted game ports</AssemblyDescription>
-		<Version>2.3.10</Version>
-		<AssemblyVersion>2.3.10.0</AssemblyVersion>
-		<FileVersion>2.3.10.0</FileVersion>
+		<Version>2.3.11</Version>
+		<AssemblyVersion>2.3.11.0</AssemblyVersion>
+		<FileVersion>2.3.11.0</FileVersion>
 		<Configurations>Debug;Release</Configurations>
 		<Platforms>AnyCPU;x64</Platforms>
 		<Nullable>enable</Nullable>
