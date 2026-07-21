@@ -749,27 +749,51 @@
 					Padding="8,6"
 					Margin="0,0,0,6"
 					Classes.gamepad-focused="{Binding IsGamepadFocused}">
-				<Grid ColumnDefinitions="Auto,*,Auto">
-					<Border Grid.Column="0" CornerRadius="6" ClipToBounds="True" Width="44" Height="44" Margin="0,0,10,0">
-						<asyncImageLoader:AdvancedImage Source="{Binding IconUrl}" Width="44" Height="44" Stretch="Uniform"/>
-					</Border>
-					<StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
-						<TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold"
-								   Foreground="{DynamicResource ThemeText}"
-								   TextTrimming="CharacterEllipsis"/>
-						<TextBlock FontSize="11" Foreground="{DynamicResource ThemeTextSecondary}">
-							<Run Text="{Binding InstalledVersion}"/>
-							<Run Text=" → "/>
-							<Run Text="{Binding LatestVersion}"/>
+				<Grid RowDefinitions="Auto,Auto">
+					<Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
+						<Border Grid.Column="0" CornerRadius="6" ClipToBounds="True" Width="44" Height="44" Margin="0,0,10,0">
+							<asyncImageLoader:AdvancedImage Source="{Binding IconUrl}" Width="44" Height="44" Stretch="Uniform"/>
+						</Border>
+						<StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+							<TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold"
+									   Foreground="{DynamicResource ThemeText}"
+									   TextTrimming="CharacterEllipsis"/>
+							<TextBlock FontSize="11" Foreground="{DynamicResource ThemeTextSecondary}">
+								<Run Text="{Binding InstalledVersion}"/>
+								<Run Text=" → "/>
+								<Run Text="{Binding LatestVersion}"/>
+							</TextBlock>
+						</StackPanel>
+						<StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+							<Button Classes="options" Content="Update" FontSize="10" Padding="6,2"
+									IsEnabled="{Binding CanUpdate}"
+									Click="AppUpdateReviewRowUpdate_Click"/>
+							<Button Classes="options" Content="Skip" FontSize="10" Padding="6,2"
+									IsEnabled="{Binding CanSkipUpdate}"
+									Click="AppUpdateReviewRowSkip_Click"/>
+							<Button Classes="options" Content="Versions" FontSize="10" Padding="6,2"
+									IsEnabled="{Binding CanVersionOptions}"
+									Click="AppUpdateReviewRowVersions_Click"/>
+						</StackPanel>
+					</Grid>
+					<StackPanel Grid.Row="1"
+								Spacing="4"
+								Margin="54,8,0,0"
+								IsVisible="{Binding IsDownloading}">
+						<TextBlock FontSize="11"
+								   Foreground="{DynamicResource ThemeTextSecondary}">
+							<Run Text="{Binding StatusText}"/>
+							<Run Text=" ("/>
+							<Run Text="{Binding DownloadProgress, StringFormat={}{0:F0}}"/>
+							<Run Text="%)"/>
 						</TextBlock>
-					</StackPanel>
-					<StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-						<Button Classes="options" Content="Update" FontSize="10" Padding="6,2"
-								Click="AppUpdateReviewRowUpdate_Click"/>
-						<Button Classes="options" Content="Skip" FontSize="10" Padding="6,2"
-								Click="AppUpdateReviewRowSkip_Click"/>
-						<Button Classes="options" Content="Versions" FontSize="10" Padding="6,2"
-								Click="AppUpdateReviewRowVersions_Click"/>
+						<ProgressBar Value="{Binding DownloadProgress}"
+									 Minimum="0"
+									 Maximum="100"
+									 Height="4"
+									 Background="{DynamicResource ThemeBorder}"
+									 Foreground="{Binding ProgressBarColor}"
+									 BorderThickness="0"/>
 					</StackPanel>
 				</Grid>
 			</Border>
@@ -1398,7 +1422,7 @@
 		<Setter Property="IsHitTestVisible" Value="False"/>
 	</Style>
 
-	<Style Selector="Button.display-filter-row:pointerover Button.display-filter-overflow, Button.display-filter-row:focus-within Button.display-filter-overflow, Button.display-filter-row.dragging Button.display-filter-overflow">
+	<Style Selector="Button.display-filter-row:pointerover Button.display-filter-overflow, Button.display-filter-row:focus-within Button.display-filter-overflow, Button.display-filter-row.dragging Button.display-filter-overflow, Button.display-filter-row.gamepad-focused Button.display-filter-overflow">
 		<Setter Property="Opacity" Value="1"/>
 		<Setter Property="IsHitTestVisible" Value="True"/>
 	</Style>
@@ -1413,7 +1437,7 @@
 		<Setter Property="ToolTip.BetweenShowDelay" Value="-1"/>
 	</Style>
 
-	<Style Selector="Button.display-filter-row:pointerover Border.display-filter-reorder, Button.display-filter-row:focus-within Border.display-filter-reorder, Button.display-filter-row.dragging Border.display-filter-reorder">
+	<Style Selector="Button.display-filter-row:pointerover Border.display-filter-reorder, Button.display-filter-row:focus-within Border.display-filter-reorder, Button.display-filter-row.dragging Border.display-filter-reorder, Button.display-filter-row.gamepad-focused Border.display-filter-reorder">
 		<Setter Property="Opacity" Value="1"/>
 		<Setter Property="IsHitTestVisible" Value="True"/>
 	</Style>
@@ -1944,6 +1968,12 @@
 																<MenuItem Header="Edit"
 																		  Tag="{Binding Id}"
 																		  Click="EditTagDisplayFilter_Click"/>
+																<MenuItem Header="Move Up"
+																		  Tag="{Binding Id}"
+																		  Click="MoveTagDisplayFilterUp_Click"/>
+																<MenuItem Header="Move Down"
+																		  Tag="{Binding Id}"
+																		  Click="MoveTagDisplayFilterDown_Click"/>
 																<MenuItem Header="Delete"
 																		  Tag="{Binding Id}"
 																		  Click="DeleteTagDisplayFilter_Click"/>

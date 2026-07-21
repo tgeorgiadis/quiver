@@ -29,7 +29,24 @@ public class AppUpdateReviewMessagesTests
         summary.Should().Be(
             "1 app update is available:\n\n" +
             "• Doom (v1.0.0 → v1.1.0)\n\n" +
-            "Open the App Updates review to update or skip these apps?");
+            "Review this update now?");
+    }
+
+    [Fact]
+    public void FormatPendingAppUpdatesMessage_multiple_apps_with_prompt()
+    {
+        var summary = AppUpdateReviewMessages.FormatPendingAppUpdatesMessage(
+            [
+                PendingGame("Beta", "v2.0.0", "v2.1.0"),
+                PendingGame("Alpha", "v1.0.0", "v1.2.0"),
+            ],
+            includeOpenPrompt: true);
+
+        summary.Should().Be(
+            "2 app updates are available:\n\n" +
+            "• Alpha (v1.0.0 → v1.2.0)\n" +
+            "• Beta (v2.0.0 → v2.1.0)\n\n" +
+            "Review these updates now?");
     }
 
     [Fact]

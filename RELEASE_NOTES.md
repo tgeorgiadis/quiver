@@ -1,20 +1,18 @@
-# Quiver v2.3.11
+# Quiver v2.3.12
 
-Keyboard controls are now rebindable alongside gamepad bindings in Settings → Controls, with sensible defaults (Enter Select, Escape Back, O Options) and context menus that respect your Back key.
+Polish for updates and controller/keyboard flows: live progress when updating apps from the review screen, clearer update prompts, tag-filter Options with reorder, and keyboard navigation on Yes/No dialogs.
 
-## Rebindable keyboard controls
+## App updates review
 
-- **Settings → Controls** — Each action shows Gamepad and Keyboard rows with separate Rebind. Reset restores both maps to defaults.
-- **Defaults** — Select = Enter, Back = Escape, Options = O, arrows for navigation.
-- **Runtime** — Confirm, Cancel, Options, and navigation use stored keyboard bindings (no more hardcoded Left Shift cancel). Keyboard works even when Enable Gamepad Input is off.
-- **Hints bar** — Shows keyboard bindings (and gamepad glyphs when gamepad input is enabled).
+- **Progress while updating** — The App Updates review shows status text, percent, and a progress bar on each row while an update downloads and installs. Action buttons disable mid-update; in-progress rows stay visible until finished.
+- **Clearer prompt** — The updates available dialog asks “Review this update now?” / “Review these updates now?” instead of the longer “Open the App Updates review…” wording.
 
-## Context menu Back
+## Tag filters (sidebar)
 
-- Closing an open context menu uses the bound **Back** key, not Avalonia’s hardcoded Escape alone.
-- If you rebind Back away from Escape, Escape no longer dismisses the menu; your bound key does.
+- **Options menu** — With a tag filter focused, Options (gamepad Y / keyboard Options) opens Edit, Move Up, Move Down, and Delete.
+- **Reorder without dragging** — Move Up / Move Down work from that menu (mouse overflow menu too). First/last items disable the unavailable direction. Drag-to-reorder is unchanged.
+- **Focus chrome** — Overflow and reorder handles appear when a filter row is gamepad-focused.
 
-## Other
+## Modal dialogs
 
-- Text boxes still allow normal typing (including Backspace); Escape still leaves text edit when focused.
-- Esc cancels a rebind listen session without assigning Escape as the new binding.
+- **Keyboard navigation** — Arrow keys move between Yes/No (and other dialog buttons) while a modal is open; Confirm and Cancel use your bound keys. Focus rings show for keyboard navigation the same way they do for gamepad.

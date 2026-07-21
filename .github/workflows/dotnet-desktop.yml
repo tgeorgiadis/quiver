@@ -204,9 +204,9 @@ jobs:
             <key>CFBundleName</key>
             <string>${{ env.App_Name }}</string>
             <key>CFBundleVersion</key>
-            <string>2.3.11</string>
+            <string>2.3.12</string>
             <key>CFBundleShortVersionString</key>
-            <string>2.3.11</string>
+            <string>2.3.12</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>LSMinimumSystemVersion</key>

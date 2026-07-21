@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 
@@ -12,10 +13,13 @@ public sealed class GamepadModalDialogNavigation
 
     private readonly List<Window> _dialogStack = [];
     private readonly Dictionary<Window, Action<bool>> _questionResultCallbacks = new();
+    private readonly HashSet<Window> _keyboardAttachedDialogs = [];
     private List<Control> _dialogControls = [];
     private int _focusedControlIndex;
     private InputService? _inputService;
     private readonly EventHandler<PointerEventArgs> _dialogControlPointerEntered;
+    private readonly EventHandler<KeyEventArgs> _dialogKeyDownHandler;
+    private readonly EventHandler<KeyEventArgs> _dialogKeyUpHandler;
 
     public static GamepadModalDialogNavigation Instance => _instance ??= new GamepadModalDialogNavigation();
 
@@ -26,11 +30,21 @@ public sealed class GamepadModalDialogNavigation
 
     public int DialogStackCount => _dialogStack.Count;
 
-    private bool HasConnectedGamepad => _inputService?.HasConnectedGamepad == true;
+    /// <summary>
+    /// Resolves a key press to a <see cref="GamepadAction"/> using the app's keyboard bindings.
+    /// </summary>
+    public Func<Key, KeyModifiers, GamepadAction?>? ResolveKeyboardAction { get; set; }
+
+    /// <summary>
+    /// Called when keyboard navigation is used on a modal so focus chrome can activate.
+    /// </summary>
+    public Action? OnKeyboardNavigationActivated { get; set; }
 
     public GamepadModalDialogNavigation()
     {
         _dialogControlPointerEntered = OnDialogControlPointerEntered;
+        _dialogKeyDownHandler = OnDialogKeyDown;
+        _dialogKeyUpHandler = OnDialogKeyUp;
     }
 
     public void Configure(InputService inputService)
@@ -65,11 +79,13 @@ public sealed class GamepadModalDialogNavigation
         if (_dialogStack.Contains(dialog))
         {
             BringToTop(dialog);
+            AttachDialogKeyboardHandlers(dialog);
             RefreshDialogButtons();
             return;
         }
 
         _dialogStack.Add(dialog);
+        AttachDialogKeyboardHandlers(dialog);
         GamepadFocusChrome.ApplyToWindow(dialog, GamepadFocusChrome.IsActive);
         RefreshDialogButtons();
 
@@ -116,8 +132,9 @@ public sealed class GamepadModalDialogNavigation
         AttachDialogControlHoverHandlers(_dialogControls);
         _focusedControlIndex = GetDefaultFocusIndex(_dialogControls);
 
-        // With a gamepad: paint default focus. Without: wait for mouse hover / D-pad.
-        if (HasConnectedGamepad && GamepadFocusChrome.IsActive)
+        // With chrome active (gamepad or keyboard nav): paint default focus.
+        // Without: wait for mouse hover / first keyboard or D-pad action.
+        if (GamepadFocusChrome.IsActive)
             Dispatcher.UIThread.Post(FocusCurrentControl, DispatcherPriority.Loaded);
         else
             ClearGamepadFocusClasses(_dialogControls);
@@ -126,6 +143,7 @@ public sealed class GamepadModalDialogNavigation
     public void UnregisterModalDialog(Window dialog)
     {
         _questionResultCallbacks.Remove(dialog);
+        DetachDialogKeyboardHandlers(dialog);
 
         var wasTop = ReferenceEquals(ActiveDialog, dialog);
         if (!_dialogStack.Remove(dialog))
@@ -152,6 +170,128 @@ public sealed class GamepadModalDialogNavigation
             return;
 
         _dialogStack.Add(dialog);
+    }
+
+    private void AttachDialogKeyboardHandlers(Window dialog)
+    {
+        if (!_keyboardAttachedDialogs.Add(dialog))
+            return;
+
+        dialog.AddHandler(InputElement.KeyDownEvent, _dialogKeyDownHandler, RoutingStrategies.Tunnel);
+        dialog.AddHandler(InputElement.KeyUpEvent, _dialogKeyUpHandler, RoutingStrategies.Tunnel);
+    }
+
+    private void DetachDialogKeyboardHandlers(Window dialog)
+    {
+        if (!_keyboardAttachedDialogs.Remove(dialog))
+            return;
+
+        dialog.RemoveHandler(InputElement.KeyDownEvent, _dialogKeyDownHandler);
+        dialog.RemoveHandler(InputElement.KeyUpEvent, _dialogKeyUpHandler);
+    }
+
+    private void OnDialogKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Handled || !ReferenceEquals(sender, ActiveDialog))
+            return;
+
+        if (TryHandleDialogKeyDown(e.Key, e.KeyModifiers))
+            e.Handled = true;
+    }
+
+    private void OnDialogKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (!ReferenceEquals(sender, ActiveDialog))
+            return;
+
+        var action = ResolveKeyboardAction?.Invoke(e.Key, e.KeyModifiers);
+        if (action is GamepadAction.NavUp or GamepadAction.NavDown or GamepadAction.NavLeft or GamepadAction.NavRight)
+            _inputService?.ResetNavigationTimer();
+    }
+
+    /// <summary>
+    /// Handles a keyboard binding against the active modal dialog.
+    /// </summary>
+    internal bool TryHandleDialogKeyDown(Key key, KeyModifiers modifiers)
+    {
+        if (ActiveDialog == null)
+            return false;
+
+        var editingText = TopLevel.GetTopLevel(ActiveDialog)?.FocusManager?.GetFocusedElement() is TextBox;
+        if (editingText)
+        {
+            if (key == Key.Escape)
+            {
+                ActivateKeyboardChrome();
+                return TryHandleCancel();
+            }
+
+            var editingAction = ResolveKeyboardAction?.Invoke(key, modifiers);
+            if (editingAction == GamepadAction.Cancel)
+            {
+                ActivateKeyboardChrome();
+                return TryHandleCancel();
+            }
+
+            return false;
+        }
+
+        var action = ResolveKeyboardAction?.Invoke(key, modifiers);
+        if (action == null)
+            return false;
+
+        switch (action)
+        {
+            case GamepadAction.Confirm:
+                ActivateKeyboardChrome();
+                return TryHandleConfirm();
+
+            case GamepadAction.Cancel:
+                ActivateKeyboardChrome();
+                return TryHandleCancel();
+
+            case GamepadAction.NavUp:
+                ActivateKeyboardChrome();
+                return TryHandleNavigation(NavigationDirection.Up);
+
+            case GamepadAction.NavDown:
+                ActivateKeyboardChrome();
+                return TryHandleNavigation(NavigationDirection.Down);
+
+            case GamepadAction.NavLeft:
+                ActivateKeyboardChrome();
+                return TryHandleNavigation(NavigationDirection.Left);
+
+            case GamepadAction.NavRight:
+                ActivateKeyboardChrome();
+                return TryHandleNavigation(NavigationDirection.Right);
+
+            case GamepadAction.Options:
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    private void ActivateKeyboardChrome()
+    {
+        OnKeyboardNavigationActivated?.Invoke();
+        if (!GamepadFocusChrome.IsActive)
+        {
+            GamepadFocusChrome.SetKeyboardNavigationActive(true);
+            GamepadFocusChrome.SetActive(true);
+            SyncChromeClass(true);
+        }
+
+        EnsureDialogControls();
+        if (_dialogControls.Count > 0 &&
+            (_focusedControlIndex < 0 || _focusedControlIndex >= _dialogControls.Count))
+        {
+            _focusedControlIndex = GetDefaultFocusIndex(_dialogControls);
+        }
+
+        FocusCurrentControl();
     }
 
     public bool TryHandleNavigation(NavigationDirection direction)
@@ -466,8 +606,8 @@ public sealed class GamepadModalDialogNavigation
             GamepadFocusChrome.SetFocused(styled, true);
 
         // TextBoxes: visual highlight only — Confirm (A) calls ActivateTextBox / OSK.
-        // With a gamepad, also move keyboard focus; hover-only selection skips Focus.
-        if (HasConnectedGamepad && GamepadFocusChrome.IsActive)
+        // With chrome active, also move keyboard focus for buttons.
+        if (GamepadFocusChrome.IsActive)
             GamepadControlActivation.ApplyGamepadHighlightFocus(control);
     }
 

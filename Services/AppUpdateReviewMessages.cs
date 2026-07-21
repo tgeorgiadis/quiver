@@ -46,9 +46,13 @@ public static class AppUpdateReviewMessages
         var lines = ordered.Select(FormatGameUpdateLine);
         var body = header + "\n\n" + string.Join('\n', lines);
 
-        return includeOpenPrompt
-            ? body + "\n\nOpen the App Updates review to update or skip these apps?"
-            : body;
+        if (!includeOpenPrompt)
+            return body;
+
+        var prompt = ordered.Count == 1
+            ? "Review this update now?"
+            : "Review these updates now?";
+        return body + "\n\n" + prompt;
     }
 
     internal static string FormatGameUpdateLine(GameInfo game)

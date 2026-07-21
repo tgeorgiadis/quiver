@@ -358,6 +358,8 @@ namespace Quiver.Models
                     DispatchPropertyChanged(nameof(CanVersionOptions));
                     DispatchPropertyChanged(nameof(HasExecutableChoice));
                     DispatchPropertyChanged(nameof(CanLaunchOptions));
+                    DispatchPropertyChanged(nameof(IsDownloading));
+                    DispatchPropertyChanged(nameof(ProgressBarColor));
                 }
             }
         }
@@ -469,6 +471,7 @@ namespace Quiver.Models
                     GameStatus.NotInstalled => "Not installed",
                     GameStatus.Downloading => "Downloading...",
                     GameStatus.Installing => "Installing...",
+                    GameStatus.Updating => "Updating...",
                     _ => ""
                 };
             }

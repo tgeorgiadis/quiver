@@ -528,6 +528,12 @@ namespace Quiver
                 _settings.EnsureInitialized();
                 return KeyboardBindingDefaults.FindAction(_settings.KeyboardBindings, key, modifiers);
             };
+            GamepadModalDialogNavigation.Instance.ResolveKeyboardAction = (key, modifiers) =>
+            {
+                _settings.EnsureInitialized();
+                return KeyboardBindingDefaults.FindAction(_settings.KeyboardBindings, key, modifiers);
+            };
+            GamepadModalDialogNavigation.Instance.OnKeyboardNavigationActivated = ActivateKeyboardNavChrome;
             UpdateGamepadChromeClass();
             UpdateGamepadHintsBar();
             RefreshGamepadBindingsPanel();
@@ -1942,9 +1948,10 @@ namespace Quiver
             {
                 if (_isAppUpdatesReviewOpen)
                 {
-                    updateAllButton.IsEnabled = AppUpdateReviewRows.Count > 0;
+                    var availableCount = GetPendingAppUpdates().Count;
+                    updateAllButton.IsEnabled = availableCount > 0;
                     if (this.FindControl<Button>("AppUpdatesSkipAllButton") is Button skipAll)
-                        skipAll.IsEnabled = AppUpdateReviewRows.Count > 0;
+                        skipAll.IsEnabled = availableCount > 0;
                 }
             }
         }
@@ -2727,28 +2734,39 @@ namespace Quiver
 
         private void RefreshAppUpdateReviewRows()
         {
-            var pending = GetPendingAppUpdates();
+            var reviewRows = GetAppUpdateReviewRows();
+            var availableCount = reviewRows.Count(g => g.Status == GameStatus.UpdateAvailable);
+            var inProgressCount = reviewRows.Count - availableCount;
+
             AppUpdateReviewRows.Clear();
-            foreach (var game in pending)
+            foreach (var game in reviewRows)
                 AppUpdateReviewRows.Add(game);
 
             if (this.FindControl<TextBlock>("AppUpdatesReviewHeaderText") is TextBlock header)
             {
-                header.Text = pending.Count == 0
+                header.Text = reviewRows.Count == 0
                     ? "No app updates pending."
-                    : pending.Count == 1
-                        ? "1 app update is available"
-                        : $"{pending.Count} app updates are available";
+                    : inProgressCount > 0 && availableCount == 0
+                        ? inProgressCount == 1
+                            ? "1 app update in progress"
+                            : $"{inProgressCount} app updates in progress"
+                        : inProgressCount > 0
+                            ? availableCount == 1
+                                ? $"1 app update available ({inProgressCount} in progress)"
+                                : $"{availableCount} app updates available ({inProgressCount} in progress)"
+                            : availableCount == 1
+                                ? "1 app update is available"
+                                : $"{availableCount} app updates are available";
             }
 
             if (this.FindControl<TextBlock>("AppUpdatesReviewEmptyText") is TextBlock emptyText)
-                emptyText.IsVisible = pending.Count == 0;
+                emptyText.IsVisible = reviewRows.Count == 0;
 
             if (this.FindControl<Button>("AppUpdatesUpdateAllButton") is Button updateAll)
-                updateAll.IsEnabled = pending.Count > 0;
+                updateAll.IsEnabled = availableCount > 0;
 
             if (this.FindControl<Button>("AppUpdatesSkipAllButton") is Button skipAll)
-                skipAll.IsEnabled = pending.Count > 0;
+                skipAll.IsEnabled = availableCount > 0;
         }
 
         private void CloseAppUpdatesReviewIfEmpty()
@@ -3065,6 +3083,14 @@ namespace Quiver
         private List<GameInfo> GetPendingAppUpdates() =>
             Games
                 .Where(g => g.Status == GameStatus.UpdateAvailable)
+                .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        private List<GameInfo> GetAppUpdateReviewRows() =>
+            Games
+                .Where(g => g.Status is GameStatus.UpdateAvailable
+                    or GameStatus.Updating
+                    or GameStatus.Installing)
                 .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -4888,13 +4914,64 @@ namespace Quiver
         {
             e.Handled = true;
 
-            if (sender is Button button && button.ContextMenu != null)
+            if (sender is Button button)
+                OpenDisplayFilterOverflowMenu(button);
+        }
+
+        private void OpenDisplayFilterOverflowMenu(Button overflowButton)
+        {
+            if (overflowButton.ContextMenu == null)
+                return;
+
+            UpdateDisplayFilterOverflowMenuState(overflowButton);
+            overflowButton.ContextMenu.PlacementTarget = overflowButton;
+            overflowButton.ContextMenu.Placement = PlacementMode.Bottom;
+            GamepadContextMenuNavigation.Attach(overflowButton.ContextMenu);
+            overflowButton.ContextMenu.Open();
+        }
+
+        private void UpdateDisplayFilterOverflowMenuState(Button overflowButton)
+        {
+            if (overflowButton.ContextMenu == null)
+                return;
+
+            _settings.EnsureInitialized();
+            var filterId = overflowButton.Tag as string;
+            var index = string.IsNullOrEmpty(filterId) ? -1 : GetTagDisplayFilterIndex(filterId);
+            var count = _settings.TagDisplayFilters.Count;
+
+            foreach (var item in overflowButton.ContextMenu.Items.OfType<MenuItem>())
             {
-                button.ContextMenu.PlacementTarget = button;
-                button.ContextMenu.Placement = PlacementMode.Bottom;
-                GamepadContextMenuNavigation.Attach(button.ContextMenu);
-                button.ContextMenu.Open();
+                if (item.Header is not string header)
+                    continue;
+
+                if (string.Equals(header, "Move Up", StringComparison.Ordinal))
+                    item.IsEnabled = index > 0;
+                else if (string.Equals(header, "Move Down", StringComparison.Ordinal))
+                    item.IsEnabled = index >= 0 && index < count - 1;
             }
+        }
+
+        private static Button? FindDisplayFilterOverflowButton(Button row) =>
+            row.GetVisualDescendants().OfType<Button>()
+                .FirstOrDefault(b => b.Classes.Contains("display-filter-overflow") && b.ContextMenu != null);
+
+        private bool TryOpenFocusedDisplayFilterOverflowMenu()
+        {
+            var controls = CollectSidebarFocusableControls();
+            var index = _gamepadNavigation.ClampIndex(_gamepadNavigation.SidebarSelectedIndex, controls.Count);
+            if (index < 0 || index >= controls.Count)
+                return false;
+
+            if (controls[index] is not Button row || !row.Classes.Contains("display-filter-row"))
+                return false;
+
+            var overflow = FindDisplayFilterOverflowButton(row);
+            if (overflow == null)
+                return false;
+
+            OpenDisplayFilterOverflowMenu(overflow);
+            return true;
         }
 
         private static string? GetFilterIdFromSender(object? sender) =>
@@ -4904,6 +4981,45 @@ namespace Quiver
                 MenuItem { Tag: string id } => id,
                 _ => null
             };
+
+        private void MoveTagDisplayFilterUp_Click(object? sender, RoutedEventArgs e) =>
+            MoveTagDisplayFilterByOffset(GetFilterIdFromSender(sender), -1);
+
+        private void MoveTagDisplayFilterDown_Click(object? sender, RoutedEventArgs e) =>
+            MoveTagDisplayFilterByOffset(GetFilterIdFromSender(sender), 1);
+
+        private void MoveTagDisplayFilterByOffset(string? filterId, int offset)
+        {
+            if (string.IsNullOrEmpty(filterId))
+                return;
+
+            _settings.EnsureInitialized();
+            var fromIndex = GetTagDisplayFilterIndex(filterId);
+            if (fromIndex < 0)
+                return;
+
+            var toIndex = fromIndex + offset;
+            if (toIndex < 0 || toIndex >= _settings.TagDisplayFilters.Count)
+                return;
+
+            PreviewMoveTagDisplayFilter(filterId, toIndex);
+            OnSettingChanged();
+
+            if (IsGamepadFocusActive && _gamepadNavigation.ActiveZone == GamepadNavigationZone.Sidebar)
+                SelectSidebarDisplayFilterRow(filterId);
+        }
+
+        private void SelectSidebarDisplayFilterRow(string filterId)
+        {
+            var controls = CollectSidebarFocusableControls();
+            var index = controls.FindIndex(c =>
+                c is Button b &&
+                b.Classes.Contains("display-filter-row") &&
+                b.Tag is string id &&
+                string.Equals(id, filterId, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+                ApplySidebarGamepadSelection(index);
+        }
 
         private void EditTagDisplayFilter_Click(object? sender, RoutedEventArgs e)
         {
@@ -9956,6 +10072,12 @@ namespace Quiver
             // Don't open the app options menu over combo boxes / modal dialogs.
             if (_inputService?.IsGamepadOverlayActive == true)
                 return;
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.Sidebar)
+            {
+                TryOpenFocusedDisplayFilterOverflowMenu();
+                return;
+            }
 
             if (_gamepadNavigation.ActiveZone != GamepadNavigationZone.Library ||
                 _gamepadNavigation.LibrarySelectedIndex < 0)

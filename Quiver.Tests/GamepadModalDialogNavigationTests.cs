@@ -1,7 +1,9 @@
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using FluentAssertions;
 using Quiver.Services;
+using NavigationDirection = Quiver.Services.NavigationDirection;
 
 namespace Quiver.Tests;
 
@@ -469,5 +471,115 @@ public class GamepadModalDialogNavigationTests
 
         GamepadModalDialogNavigation.ApplyDialogResultHint(dialog, new Button { Content = "Not now" });
         dialog.Tag.Should().Be(false);
+    }
+
+    [AvaloniaFact]
+    public void TryHandleDialogKeyDown_moves_left_right_between_yes_and_no()
+    {
+        var yesButton = new Button { Content = "Yes", IsDefault = true, MinWidth = 80 };
+        var noButton = new Button { Content = "No", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 420,
+            Height = 200,
+            Content = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                Children = { yesButton, noButton },
+            },
+        };
+        var nav = GamepadModalDialogNavigation.Instance;
+        var previousResolver = nav.ResolveKeyboardAction;
+        var previousChromeCallback = nav.OnKeyboardNavigationActivated;
+
+        try
+        {
+            nav.ResolveKeyboardAction = (key, modifiers) =>
+                KeyboardBindingDefaults.FindAction(KeyboardBindingDefaults.Create(), key, modifiers);
+            nav.OnKeyboardNavigationActivated = () =>
+            {
+                GamepadFocusChrome.SetKeyboardNavigationActive(true);
+                GamepadFocusChrome.SetActive(true, dialog);
+            };
+
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog);
+            nav.RefreshDialogButtons();
+
+            nav.TryHandleDialogKeyDown(Key.Right, KeyModifiers.None).Should().BeTrue();
+            noButton.Classes.Contains("gamepad-focused").Should().BeTrue();
+            yesButton.Classes.Contains("gamepad-focused").Should().BeFalse();
+
+            nav.TryHandleDialogKeyDown(Key.Left, KeyModifiers.None).Should().BeTrue();
+            yesButton.Classes.Contains("gamepad-focused").Should().BeTrue();
+            noButton.Classes.Contains("gamepad-focused").Should().BeFalse();
+        }
+        finally
+        {
+            nav.ResolveKeyboardAction = previousResolver;
+            nav.OnKeyboardNavigationActivated = previousChromeCallback;
+            nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetKeyboardNavigationActive(false);
+            GamepadFocusChrome.SetActive(false);
+            if (dialog.IsVisible)
+                dialog.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleDialogKeyDown_confirm_activates_focused_button()
+    {
+        var accepted = false;
+        var yesButton = new Button { Content = "Yes", IsDefault = true, MinWidth = 80 };
+        var noButton = new Button { Content = "No", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 420,
+            Height = 200,
+            Content = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                Children = { yesButton, noButton },
+            },
+        };
+        yesButton.Click += (_, _) =>
+        {
+            accepted = true;
+            dialog.Tag = true;
+            dialog.Close();
+        };
+        var nav = GamepadModalDialogNavigation.Instance;
+        var previousResolver = nav.ResolveKeyboardAction;
+        var previousChromeCallback = nav.OnKeyboardNavigationActivated;
+
+        try
+        {
+            nav.ResolveKeyboardAction = (key, modifiers) =>
+                KeyboardBindingDefaults.FindAction(KeyboardBindingDefaults.Create(), key, modifiers);
+            nav.OnKeyboardNavigationActivated = () =>
+            {
+                GamepadFocusChrome.SetKeyboardNavigationActive(true);
+                GamepadFocusChrome.SetActive(true, dialog);
+            };
+
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog, value => dialog.Tag = value);
+            nav.RefreshDialogButtons();
+
+            nav.TryHandleDialogKeyDown(Key.Enter, KeyModifiers.None).Should().BeTrue();
+            accepted.Should().BeTrue();
+            dialog.Tag.Should().Be(true);
+        }
+        finally
+        {
+            nav.ResolveKeyboardAction = previousResolver;
+            nav.OnKeyboardNavigationActivated = previousChromeCallback;
+            nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetKeyboardNavigationActive(false);
+            GamepadFocusChrome.SetActive(false);
+            if (dialog.IsVisible)
+                dialog.Close();
+        }
     }
 }
