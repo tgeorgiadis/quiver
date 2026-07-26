@@ -315,46 +315,74 @@ public static class GameInstallationService
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            ExtractTarGzWindows(sourceFilePath, destinationDirectoryPath);
+            if (!await TryExtractTarGzWithSystemTarAsync(sourceFilePath, destinationDirectoryPath).ConfigureAwait(false))
+                ExtractTarGzManaged(sourceFilePath, destinationDirectoryPath);
+            return;
         }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ||
-                 RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ||
+            RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            await ExtractTarGzUnixAsync(sourceFilePath, destinationDirectoryPath).ConfigureAwait(false);
+            if (!await TryExtractTarGzWithSystemTarAsync(sourceFilePath, destinationDirectoryPath).ConfigureAwait(false))
+                throw new InvalidOperationException("Could not start tar extraction.");
+            return;
         }
-        else
-        {
-            throw new PlatformNotSupportedException("Unsupported operating system for tar.gz extraction");
-        }
+
+        throw new PlatformNotSupportedException("Unsupported operating system for tar.gz extraction");
     }
 
-    static void ExtractTarGzWindows(string sourceFilePath, string destinationDirectoryPath)
+    /// <summary>
+    /// Extracts a .tar.gz using the system <c>tar</c> tool.
+    /// Returns false only when tar could not be started (e.g. missing from PATH).
+    /// </summary>
+    static async Task<bool> TryExtractTarGzWithSystemTarAsync(string sourceFilePath, string destinationDirectoryPath)
     {
+        Process? process;
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "tar",
+                Arguments = $"-xzf \"{sourceFilePath}\" -C \"{destinationDirectoryPath}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            process = Process.Start(startInfo);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
+        {
+            return false;
+        }
+
+        if (process is null)
+            return false;
+
+        using (process)
+        {
+            await process.WaitForExitAsync().ConfigureAwait(false);
+
+            if (process.ExitCode != 0)
+            {
+                var errorOutput = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+                throw new InvalidOperationException($"Tar extraction failed: {errorOutput}");
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Managed GZip + ustar extraction used as a Windows fallback when system tar is unavailable.
+    /// </summary>
+    internal static void ExtractTarGzManaged(string sourceFilePath, string destinationDirectoryPath)
+    {
+        Directory.CreateDirectory(destinationDirectoryPath);
         using var inputStream = File.OpenRead(sourceFilePath);
         using var gzipStream = new GZipStream(inputStream, CompressionMode.Decompress);
         ExtractTarFromStream(gzipStream, destinationDirectoryPath);
-    }
-
-    static async Task ExtractTarGzUnixAsync(string sourceFilePath, string destinationDirectoryPath)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "tar",
-            Arguments = $"-xzf \"{sourceFilePath}\" -C \"{destinationDirectoryPath}\"",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start tar extraction.");
-        await process.WaitForExitAsync().ConfigureAwait(false);
-
-        if (process.ExitCode != 0)
-        {
-            var errorOutput = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-            throw new InvalidOperationException($"Tar extraction failed: {errorOutput}");
-        }
     }
 
     static string GetSafeExtractionPath(string destinationDirectoryPath, string archivePath)
@@ -374,19 +402,21 @@ public static class GameInstallationService
         return fullDestinationPath;
     }
 
-    static void ExtractTarFromStream(Stream tarStream, string destinationDirectoryPath)
+    internal static void ExtractTarFromStream(Stream tarStream, string destinationDirectoryPath)
     {
         using var reader = new BinaryReader(tarStream);
+        var buffer = new byte[8192];
+
         while (true)
         {
             var headerBytes = reader.ReadBytes(512);
             if (headerBytes.Length < 512) break;
 
-            var fileName = Encoding.ASCII.GetString(headerBytes, 0, 100).TrimEnd('\0');
+            var fileName = Encoding.ASCII.GetString(headerBytes, 0, 100).Trim('\0', ' ');
             if (string.IsNullOrWhiteSpace(fileName)) break;
 
-            var fileSizeStr = Encoding.ASCII.GetString(headerBytes, 124, 12).TrimEnd('\0');
-            var fileSize = Convert.ToInt64(fileSizeStr, 8);
+            var fileSizeStr = Encoding.ASCII.GetString(headerBytes, 124, 12).Trim('\0', ' ');
+            var fileSize = string.IsNullOrEmpty(fileSizeStr) ? 0L : Convert.ToInt64(fileSizeStr, 8);
             var fileType = headerBytes[156];
             var destPath = GetSafeExtractionPath(destinationDirectoryPath, fileName);
 
@@ -405,14 +435,21 @@ public static class GameInstallationService
                 Directory.CreateDirectory(destinationDirectory);
 
                 using var fileStream = File.Create(destPath);
-                var blocksToRead = (int)Math.Ceiling((double)fileSize / 512);
-                var fileBytes = new byte[blocksToRead * 512];
-                reader.Read(fileBytes, 0, fileBytes.Length);
-                fileStream.Write(fileBytes, 0, (int)fileSize);
+                var remaining = fileSize;
+                while (remaining > 0)
+                {
+                    var toRead = (int)Math.Min(remaining, buffer.Length);
+                    var read = reader.Read(buffer, 0, toRead);
+                    if (read == 0)
+                        throw new EndOfStreamException($"Unexpected end of tar stream while extracting '{fileName}'.");
+                    fileStream.Write(buffer, 0, read);
+                    remaining -= read;
+                }
             }
 
-            var paddingBytes = 512 - (int)(fileSize % 512);
-            if (paddingBytes < 512)
+            // Content is read exactly; skip only the trailing pad to the next 512-byte boundary.
+            var paddingBytes = (int)((512 - (fileSize % 512)) % 512);
+            if (paddingBytes > 0)
             {
                 reader.ReadBytes(paddingBytes);
             }

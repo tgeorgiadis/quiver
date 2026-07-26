@@ -1,18 +1,8 @@
-# Quiver v2.3.12
+# Quiver v2.3.13
 
-Polish for updates and controller/keyboard flows: live progress when updating apps from the review screen, clearer update prompts, tag-filter Options with reorder, and keyboard navigation on Yes/No dialogs.
+Fixes Windows installs for GitHub releases that ship `.tar.gz` assets (for example Project Picori / Minish Cap decomp).
 
-## App updates review
+## Install / extraction
 
-- **Progress while updating** — The App Updates review shows status text, percent, and a progress bar on each row while an update downloads and installs. Action buttons disable mid-update; in-progress rows stay visible until finished.
-- **Clearer prompt** — The updates available dialog asks “Review this update now?” / “Review these updates now?” instead of the longer “Open the App Updates review…” wording.
-
-## Tag filters (sidebar)
-
-- **Options menu** — With a tag filter focused, Options (gamepad Y / keyboard Options) opens Edit, Move Up, Move Down, and Delete.
-- **Reorder without dragging** — Move Up / Move Down work from that menu (mouse overflow menu too). First/last items disable the unavailable direction. Drag-to-reorder is unchanged.
-- **Focus chrome** — Overflow and reorder handles appear when a filter row is gamepad-focused.
-
-## Modal dialogs
-
-- **Keyboard navigation** — Arrow keys move between Yes/No (and other dialog buttons) while a modal is open; Confirm and Cancel use your bound keys. Focus rings show for keyboard navigation the same way they do for gamepad.
+- **Windows tar.gz installs** — Game installs now extract `.tar.gz` with the system `tar` tool (same approach as Linux/macOS and the CLI updater), instead of the broken custom Windows tar reader that could fail with “Could not find any recognizable digits.”
+- **Managed fallback** — If system `tar` cannot be started, a corrected built-in extractor is used (no double-read of block padding; size fields trim spaces).
