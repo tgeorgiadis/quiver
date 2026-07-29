@@ -7,9 +7,9 @@
 		<RootNamespace>Quiver</RootNamespace>
 		<AssemblyTitle>Quiver</AssemblyTitle>
 		<AssemblyDescription>Download and manage GitHub-hosted game ports</AssemblyDescription>
-		<Version>2.3.13</Version>
-		<AssemblyVersion>2.3.13.0</AssemblyVersion>
-		<FileVersion>2.3.13.0</FileVersion>
+		<Version>2.4.0</Version>
+		<AssemblyVersion>2.4.0.0</AssemblyVersion>
+		<FileVersion>2.4.0.0</FileVersion>
 		<Configurations>Debug;Release</Configurations>
 		<Platforms>AnyCPU;x64</Platforms>
 		<Nullable>enable</Nullable>
@@ -34,6 +34,7 @@
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.12" />
 		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.12" />
 		<PackageReference Include="ppy.SDL2-CS" Version="1.0.82" />
+		<PackageReference Include="SharpCompress" Version="0.50.1" />
 		<PackageReference Include="System.Text.Json" Version="10.0.3" />
 		<PackageReference Include="System.Drawing.Common" Version="10.0.3" />
 		<PackageReference Include="NAudio" Version="2.2.1" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />

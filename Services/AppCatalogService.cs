@@ -1,4 +1,5 @@
 using Quiver.Models;
+using Quiver.Services.Mods;
 using System.Net.Http;
 using AppSettings = Quiver.AppSettings;
 using AppCatalogSource = Quiver.AppCatalogSource;
@@ -494,7 +495,8 @@ namespace Quiver.Services
             string.Equals(a.GameIconUrl ?? "", b.GameIconUrl ?? "", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.PreferredVersion ?? "", b.PreferredVersion ?? "", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(TagHelper.FormatTagsForDisplay(a.Tags), TagHelper.FormatTagsForDisplay(b.Tags), StringComparison.OrdinalIgnoreCase) &&
-            AppFilesToAddService.AreEquivalent(a.FilesToAdd, b.FilesToAdd);
+            AppFilesToAddService.AreEquivalent(a.FilesToAdd, b.FilesToAdd) &&
+            GameModsConfig.AreEquivalent(a.ModsPath, a.ModsSources, b.ModsPath, b.ModsSources);
 
         private async Task ApplyCachedVersionMetadataAsync(AppCatalogSource source)
         {
@@ -681,6 +683,8 @@ namespace Quiver.Services
                         SkippedUpdateVersion = appElement.TryGetProperty("skippedUpdateVersion", out var skippedUpdateVersionElement) ? skippedUpdateVersionElement.GetString() : null,
                         Tags = ParseTagsProperty(appElement),
                         FilesToAdd = ParseFilesToAddProperty(appElement),
+                        ModsPath = ParseModsPathProperty(appElement),
+                        ModsSources = ParseModsSourcesProperty(appElement),
                         IsExperimental = false,
                         IsCustom = true,
                         GameManager = gameManager,
@@ -749,6 +753,71 @@ namespace Quiver.Services
             return AppFilesToAddService.Normalize(files);
         }
 
+        private static string? ParseModsPathProperty(JsonElement appElement)
+        {
+            if (!appElement.TryGetProperty("mods", out var modsElement) ||
+                modsElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (!modsElement.TryGetProperty("path", out var pathElement) ||
+                pathElement.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var normalized = GameModsConfig.NormalizePath(pathElement.GetString());
+            return normalized.Length == 0 ? null : normalized;
+        }
+
+        private static List<GameModSource> ParseModsSourcesProperty(JsonElement appElement)
+        {
+            if (!appElement.TryGetProperty("mods", out var modsElement) ||
+                modsElement.ValueKind != JsonValueKind.Object)
+            {
+                return [];
+            }
+
+            if (!modsElement.TryGetProperty("sources", out var sourcesElement) ||
+                sourcesElement.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var sources = new List<GameModSource>();
+            foreach (var sourceElement in sourcesElement.EnumerateArray())
+            {
+                if (sourceElement.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                var provider = ModProviderIds.Thunderstore;
+                if (sourceElement.TryGetProperty("provider", out var providerElement) &&
+                    providerElement.ValueKind == JsonValueKind.String)
+                {
+                    provider = GameModsConfig.NormalizeProvider(providerElement.GetString());
+                }
+
+                var sourceUrl = string.Empty;
+                if (sourceElement.TryGetProperty("sourceUrl", out var urlElement) &&
+                    urlElement.ValueKind == JsonValueKind.String)
+                {
+                    sourceUrl = urlElement.GetString()?.Trim() ?? string.Empty;
+                }
+
+                if (sourceUrl.Length == 0)
+                    continue;
+
+                sources.Add(new GameModSource
+                {
+                    Provider = provider,
+                    SourceUrl = sourceUrl,
+                });
+            }
+
+            return GameModsConfig.NormalizeSources(sources);
+        }
+
         private static object SerializeApp(GameInfo app)
         {
             var payload = new Dictionary<string, object?>
@@ -769,6 +838,25 @@ namespace Quiver.Services
             var normalizedFilesToAdd = AppFilesToAddService.Normalize(app.FilesToAdd);
             if (normalizedFilesToAdd.Count > 0)
                 payload["filesToAdd"] = normalizedFilesToAdd;
+
+            var modsPath = GameModsConfig.NormalizePath(app.ModsPath);
+            var modsSources = GameModsConfig.NormalizeSources(app.ModsSources);
+            if (modsPath.Length > 0 || modsSources.Count > 0)
+            {
+                var modsPayload = new Dictionary<string, object?>();
+                if (modsPath.Length > 0)
+                    modsPayload["path"] = modsPath;
+                if (modsSources.Count > 0)
+                {
+                    modsPayload["sources"] = modsSources.Select(s => new Dictionary<string, object?>
+                    {
+                        ["provider"] = s.Provider,
+                        ["sourceUrl"] = s.SourceUrl,
+                    }).ToList();
+                }
+
+                payload["mods"] = modsPayload;
+            }
 
             return payload;
         }

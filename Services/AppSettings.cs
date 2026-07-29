@@ -88,6 +88,9 @@ namespace Quiver
         public string GitHubApiToken { get; set; } = string.Empty;
         public string SortBy { get; set; } = "LastPlayed";
         public string CatalogReviewSortBy { get; set; } = "Name";
+        public string ModsSortBy { get; set; } = "InstalledFirst";
+        public bool ModsIncludeNsfw { get; set; }
+        public List<string> DismissedAnnouncementIds { get; set; } = new List<string>();
         public bool IgnoreArticlesWhenSorting { get; set; } = true;
         public bool StartFullscreen { get; set; } = false;
         public bool CloseAfterLaunch {  get; set; } = false;
@@ -115,6 +118,7 @@ namespace Quiver
             ManuallyHiddenApps ??= new List<string>();
             TagDisplayFilters ??= new List<TagDisplayFilter>();
             UserAppTags ??= new Dictionary<string, List<string>>();
+            DismissedAnnouncementIds ??= new List<string>();
             GamepadBindings ??= GamepadBindingDefaults.Create();
             GamepadBindingDefaults.EnsureComplete(GamepadBindings);
             KeyboardBindings ??= KeyboardBindingDefaults.Create();

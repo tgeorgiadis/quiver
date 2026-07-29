@@ -4,7 +4,16 @@
       "name": "Example App",
       "repository": "username/example-app-repo",
       "folderName": "ExampleApp",
-      "appIconUrl": null
+      "appIconUrl": null,
+      "mods": {
+        "path": "mods",
+        "sources": [
+          {
+            "provider": "thunderstore",
+            "sourceUrl": "https://thunderstore.io/c/example-community/"
+          }
+        ]
+      }
     }
   ]
 }

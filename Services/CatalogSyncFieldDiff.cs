@@ -1,5 +1,6 @@
 using Avalonia.Media;
 using Quiver.Models;
+using Quiver.Services.Mods;
 
 namespace Quiver.Services;
 
@@ -74,6 +75,7 @@ public static class CatalogSyncFieldDiffBuilder
         ["preferredVersion"] = "Preferred version",
         ["tags"] = "Tags",
         ["filesToAdd"] = "Files to add",
+        ["mods"] = "Mods",
     };
 
     public static IReadOnlyList<CatalogSyncFieldDiffItem> BuildFieldDiffs(
@@ -153,6 +155,17 @@ public static class CatalogSyncFieldDiffBuilder
             });
         }
 
+        var modsDisplay = GameModsConfig.FormatForDisplay(external.ModsPath, external.ModsSources);
+        if (!string.IsNullOrWhiteSpace(modsDisplay))
+        {
+            diffs.Add(new CatalogSyncFieldDiffItem
+            {
+                FieldLabel = "Mods",
+                Kind = CatalogSyncFieldDiffKind.ExternalPreview,
+                ExternalValue = modsDisplay,
+            });
+        }
+
         return diffs;
     }
 
@@ -218,6 +231,7 @@ public static class CatalogSyncFieldDiffBuilder
             "preferredVersion" => app.PreferredVersion ?? "",
             "tags" => TagHelper.FormatTagsForDisplay(app.Tags),
             "filesToAdd" => AppFilesToAddService.FormatForDisplay(app.FilesToAdd),
+            "mods" => GameModsConfig.FormatForDisplay(app.ModsPath, app.ModsSources),
             _ => "",
         };
 }

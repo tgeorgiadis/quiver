@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Quiver.Models;
+using Quiver.Services.Mods;
 
 namespace Quiver.Services
 {
@@ -84,6 +85,7 @@ namespace Quiver.Services
             "preferredVersion",
             "tags",
             "filesToAdd",
+            "mods",
         ];
 
         public static IReadOnlyList<CatalogSyncRowItem> BuildCompareRows(
@@ -172,6 +174,8 @@ namespace Quiver.Services
                 changed.Add("tags");
             if (!AppFilesToAddService.AreEquivalent(local.FilesToAdd, external.FilesToAdd))
                 changed.Add("filesToAdd");
+            if (!GameModsConfig.AreEquivalent(local.ModsPath, local.ModsSources, external.ModsPath, external.ModsSources))
+                changed.Add("mods");
 
             return changed;
         }
@@ -188,6 +192,8 @@ namespace Quiver.Services
                 SkippedUpdateVersion = external.SkippedUpdateVersion,
                 Tags = TagHelper.NormalizeTags(external.Tags),
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
+                ModsPath = GameModsConfig.NormalizePath(external.ModsPath) is { Length: > 0 } path ? path : null,
+                ModsSources = GameModsConfig.NormalizeSources(external.ModsSources),
                 IsExperimental = false,
                 IsCustom = true,
                 GameManager = external.GameManager,
@@ -206,6 +212,8 @@ namespace Quiver.Services
                 SkippedUpdateVersion = external.SkippedUpdateVersion,
                 Tags = TagHelper.NormalizeTags(external.Tags),
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
+                ModsPath = GameModsConfig.NormalizePath(external.ModsPath) is { Length: > 0 } path ? path : null,
+                ModsSources = GameModsConfig.NormalizeSources(external.ModsSources),
                 IsExperimental = local.IsExperimental,
                 IsCustom = local.IsCustom,
                 GameManager = local.GameManager,
@@ -216,6 +224,15 @@ namespace Quiver.Services
         {
             var mergedTags = TagHelper.NormalizeTags(
                 (local.Tags ?? []).Concat(external.Tags ?? []));
+
+            // Prefer external mods config when present; otherwise keep local.
+            var externalHasMods = GameModsConfig.HasUsableConfig(external.ModsPath, external.ModsSources);
+            var modsPath = externalHasMods
+                ? GameModsConfig.NormalizePath(external.ModsPath)
+                : GameModsConfig.NormalizePath(local.ModsPath);
+            var modsSources = externalHasMods
+                ? GameModsConfig.NormalizeSources(external.ModsSources)
+                : GameModsConfig.NormalizeSources(local.ModsSources);
 
             return new GameInfo
             {
@@ -228,6 +245,8 @@ namespace Quiver.Services
                 SkippedUpdateVersion = local.SkippedUpdateVersion,
                 Tags = mergedTags,
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
+                ModsPath = modsPath.Length > 0 ? modsPath : null,
+                ModsSources = modsSources,
                 IsExperimental = local.IsExperimental,
                 IsCustom = local.IsCustom,
                 GameManager = local.GameManager,

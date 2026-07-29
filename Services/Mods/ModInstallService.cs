@@ -1,0 +1,347 @@
+using Quiver.Services.Mods.Providers.Thunderstore;
+using SharpCompress.Archives;
+using SharpCompress.Common;
+
+namespace Quiver.Services.Mods;
+
+public sealed class ModInstallService
+{
+    private readonly ModProviderRegistry _registry;
+    private readonly InstalledModsStore _store = new();
+
+    public ModInstallService(ModProviderRegistry registry)
+    {
+        _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+    }
+
+    public string GetModsDirectory(string installRoot, string modsPath)
+    {
+        var normalized = GameModsConfig.NormalizePath(modsPath);
+        if (normalized.Length == 0)
+            throw new InvalidOperationException("Mods path is not configured.");
+
+        var parts = normalized.Split('/');
+        return Path.Combine(new[] { installRoot }.Concat(parts).ToArray());
+    }
+
+    public async Task<InstalledModRecord> InstallAsync(
+        string installRoot,
+        string modsPath,
+        ModPackage package,
+        IModProvider provider,
+        ModDownloadFile? selectedFile = null,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        ArgumentNullException.ThrowIfNull(provider);
+
+        if (selectedFile != null)
+            package = Providers.GameBanana.GameBananaModProvider.WithSelectedFile(package, selectedFile);
+
+        if (package.LatestVersion == null || string.IsNullOrWhiteSpace(package.LatestVersion.DownloadUrl))
+            throw new InvalidOperationException($"Package '{package.FullName}' has no downloadable version.");
+
+        // Uninstall existing version first (Id or FullName/Owner+Name — covers UUID→Owner-Name).
+        UninstallMatching(installRoot, modsPath, package);
+
+        await using var archiveStream = await provider
+            .DownloadAsync(package.LatestVersion, progress, cancellationToken)
+            .ConfigureAwait(false);
+
+        var modsDir = GetModsDirectory(installRoot, modsPath);
+        Directory.CreateDirectory(modsDir);
+
+        var installedFiles = ExtractPayloadFiles(
+            archiveStream,
+            modsDir,
+            provider.GetArchiveMetadataFileNames());
+
+        var record = new InstalledModRecord
+        {
+            Provider = package.ProviderId,
+            SourceKey = package.SourceKey,
+            Id = package.Id,
+            FullName = package.FullName,
+            Owner = package.Owner,
+            Name = package.Name,
+            Version = package.LatestVersion.Version,
+            DownloadFileId = selectedFile?.Id,
+            DownloadFileName = selectedFile?.FileName,
+            Files = installedFiles,
+        };
+
+        var document = _store.Load(installRoot);
+        document.Mods.RemoveAll(m => ModCatalogListBuilder.RecordMatchesPackage(m, package));
+        document.Mods.Add(record);
+        _store.Save(installRoot, document);
+
+        return record;
+    }
+
+    public async Task InstallWithDependenciesAsync(
+        string installRoot,
+        string modsPath,
+        ModPackage package,
+        IReadOnlyList<ModPackage> catalog,
+        IModProvider provider,
+        ModDownloadFile? selectedFile = null,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var document = _store.Load(installRoot);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await InstallRecursiveAsync(
+            installRoot,
+            modsPath,
+            package,
+            catalog,
+            provider,
+            document,
+            visited,
+            selectedFile,
+            progress,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task InstallRecursiveAsync(
+        string installRoot,
+        string modsPath,
+        ModPackage package,
+        IReadOnlyList<ModPackage> catalog,
+        IModProvider provider,
+        InstalledModsDocument document,
+        HashSet<string> visited,
+        ModDownloadFile? selectedFile,
+        IProgress<double>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (!visited.Add(package.FullName))
+            return;
+
+        package = await EnsureDownloadableAsync(package, provider, cancellationToken).ConfigureAwait(false);
+
+        var deps = package.LatestVersion?.Dependencies ?? [];
+        foreach (var dep in deps)
+        {
+            if (!ThunderstoreModProvider.TryParseDependencyString(dep, out var depFullName, out _))
+                continue;
+
+            if (_store.FindByFullName(document, package.ProviderId, package.SourceKey, depFullName) != null)
+                continue;
+
+            var depPackage = catalog.FirstOrDefault(p =>
+                string.Equals(p.ProviderId, package.ProviderId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(p.SourceKey, package.SourceKey, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(p.FullName, depFullName, StringComparison.OrdinalIgnoreCase));
+
+            if (depPackage == null)
+            {
+                depPackage = CreateThunderstoreDependencyStub(package, depFullName)
+                    ?? throw new InvalidOperationException(
+                        $"Dependency '{depFullName}' was not found in the mod catalog and could not be resolved.");
+            }
+
+            depPackage = await EnsureDownloadableAsync(depPackage, provider, cancellationToken)
+                .ConfigureAwait(false);
+
+            await InstallRecursiveAsync(
+                installRoot,
+                modsPath,
+                depPackage,
+                catalog,
+                provider,
+                document,
+                visited,
+                selectedFile: null,
+                progress,
+                cancellationToken).ConfigureAwait(false);
+
+            document = _store.Load(installRoot);
+        }
+
+        if (ModCatalogListBuilder.FindMatchingRecord(document, package) is { } existing &&
+            string.Equals(existing.Version, package.LatestVersion?.Version, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // Only apply the selected file to the root package being installed, not dependencies.
+        var fileForThis = selectedFile;
+        await InstallAsync(installRoot, modsPath, package, provider, fileForThis, progress, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Listing stubs have empty download URLs; enrich Thunderstore packages via experimental API.
+    /// </summary>
+    private static async Task<ModPackage> EnsureDownloadableAsync(
+        ModPackage package,
+        IModProvider provider,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(package.LatestVersion?.DownloadUrl))
+            return package;
+
+        if (provider is not ThunderstoreModProvider thunderstore)
+            return package;
+
+        var enriched = await thunderstore
+            .EnrichForInstallAsync(package, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(enriched.LatestVersion?.DownloadUrl))
+        {
+            throw new InvalidOperationException(
+                $"Package '{package.FullName}' could not be resolved for download.");
+        }
+
+        return enriched;
+    }
+
+    internal static ModPackage? CreateThunderstoreDependencyStub(ModPackage parent, string depFullName)
+    {
+        if (!string.Equals(parent.ProviderId, ModProviderIds.Thunderstore, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (!ThunderstoreModProvider.TrySplitPackageFullName(depFullName, out var owner, out var name))
+            return null;
+
+        return new ModPackage
+        {
+            ProviderId = parent.ProviderId,
+            SourceKey = parent.SourceKey,
+            SourceDisplayLabel = parent.SourceDisplayLabel,
+            Id = depFullName,
+            Owner = owner,
+            Name = name,
+            FullName = depFullName,
+            PackagePageUrl = ThunderstoreModProvider.BuildPackagePageUrl(parent.SourceKey, owner, name),
+            LatestVersion = new ModPackageVersion
+            {
+                Version = string.Empty,
+                DownloadUrl = string.Empty,
+            },
+        };
+    }
+
+    public bool Uninstall(string installRoot, string modsPath, string providerId, string packageId)
+    {
+        var document = _store.Load(installRoot);
+        var record = _store.Find(document, providerId, packageId)
+                     ?? document.Mods.FirstOrDefault(m =>
+                         string.Equals(m.Provider, providerId, StringComparison.OrdinalIgnoreCase) &&
+                         (string.Equals(m.FullName, packageId, StringComparison.OrdinalIgnoreCase) ||
+                          string.Equals(m.Id, packageId, StringComparison.OrdinalIgnoreCase)));
+        if (record == null)
+            return false;
+
+        return UninstallRecord(installRoot, modsPath, document, record);
+    }
+
+    public bool UninstallMatching(string installRoot, string modsPath, ModPackage package)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        var document = _store.Load(installRoot);
+        var record = ModCatalogListBuilder.FindMatchingRecord(document, package);
+        if (record == null)
+            return false;
+
+        return UninstallRecord(installRoot, modsPath, document, record);
+    }
+
+    private bool UninstallRecord(
+        string installRoot,
+        string modsPath,
+        InstalledModsDocument document,
+        InstalledModRecord record)
+    {
+        var modsDir = GetModsDirectory(installRoot, modsPath);
+        foreach (var relative in record.Files)
+        {
+            var fullPath = Path.GetFullPath(Path.Combine(modsDir, relative));
+            if (!fullPath.StartsWith(Path.GetFullPath(modsDir), StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            try
+            {
+                if (File.Exists(fullPath))
+                    File.Delete(fullPath);
+            }
+            catch
+            {
+                // Best-effort cleanup.
+            }
+        }
+
+        document.Mods.RemoveAll(m => ReferenceEquals(m, record) ||
+            (string.Equals(m.Provider, record.Provider, StringComparison.OrdinalIgnoreCase) &&
+             string.Equals(m.Id, record.Id, StringComparison.OrdinalIgnoreCase)));
+        _store.Save(installRoot, document);
+        return true;
+    }
+
+    public async Task UpdateAsync(
+        string installRoot,
+        string modsPath,
+        ModPackage package,
+        IModProvider provider,
+        ModDownloadFile? selectedFile = null,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        await InstallAsync(installRoot, modsPath, package, provider, selectedFile, progress, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public InstalledModsDocument LoadInstalled(string installRoot) => _store.Load(installRoot);
+
+    /// <summary>
+    /// Extracts non-metadata entries from a zip or 7z archive into <paramref name="modsDir"/>.
+    /// Returns relative paths that were written (forward-slash normalized).
+    /// </summary>
+    public static List<string> ExtractPayloadFiles(
+        Stream archiveStream,
+        string modsDir,
+        IReadOnlySet<string> metadataFileNames)
+    {
+        Directory.CreateDirectory(modsDir);
+        var installed = new List<string>();
+        var modsRootFull = Path.GetFullPath(modsDir);
+
+        using var archive = ArchiveFactory.OpenArchive(archiveStream);
+        foreach (var entry in archive.Entries)
+        {
+            if (entry.IsDirectory)
+                continue;
+
+            var key = entry.Key ?? string.Empty;
+            var relative = key.Replace('\\', '/').TrimStart('/');
+            if (relative.Length == 0)
+                continue;
+
+            // Skip host metadata files only at the package root.
+            if (!relative.Contains('/') && metadataFileNames.Contains(relative))
+                continue;
+
+            // Zip-slip protection
+            var destination = Path.GetFullPath(Path.Combine(modsDir, relative.Replace('/', Path.DirectorySeparatorChar)));
+            if (!destination.StartsWith(modsRootFull, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var destDir = Path.GetDirectoryName(destination);
+            if (!string.IsNullOrEmpty(destDir))
+                Directory.CreateDirectory(destDir);
+
+            entry.WriteToFile(destination, new ExtractionOptions
+            {
+                Overwrite = true,
+                ExtractFullPath = false,
+            });
+            installed.Add(relative);
+        }
+
+        return installed;
+    }
+}

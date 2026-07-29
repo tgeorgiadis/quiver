@@ -36,6 +36,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="Fixtures\index.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\sample-mod.7z" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\community-app-catalog\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\quiver-community-apps-catalog.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

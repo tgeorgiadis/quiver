@@ -10,6 +10,8 @@ public enum GamepadNavigationZone
 
     TopBar,
 
+    AnnouncementBanner,
+
     Library,
 
     CatalogSources,
@@ -31,6 +33,18 @@ public enum GamepadNavigationZone
     AppUpdatesReviewList,
 
     AppUpdatesReviewRowActions,
+
+    ModsOverlayToolbar,
+
+    ModsOverlayFilters,
+
+    ModsOverlayList,
+
+    ModsOverlayRowActions,
+
+    ModsOverlaySourceFilters,
+
+    ModsDetailsOverlay,
 
     DisplayFilterOverlay,
 
@@ -626,6 +640,16 @@ public sealed class GamepadNavigationService
 
 
 
+            if (mainContentZone is GamepadNavigationZone.ModsOverlayList
+                or GamepadNavigationZone.ModsOverlayToolbar
+                or GamepadNavigationZone.ModsOverlayFilters
+                or GamepadNavigationZone.ModsOverlaySourceFilters
+                or GamepadNavigationZone.ModsOverlayRowActions)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlayToolbar, 0);
+
+
+
             if (mainContentZone == GamepadNavigationZone.CatalogSources)
 
                 return new GamepadZoneTransition(GamepadNavigationZone.CatalogSourcesToolbar, 0);
@@ -633,6 +657,63 @@ public sealed class GamepadNavigationService
 
 
             return new GamepadZoneTransition(GamepadNavigationZone.Library, 0);
+
+        }
+
+
+
+        if (zone == GamepadNavigationZone.AnnouncementBanner)
+
+        {
+
+            if (direction == NavigationDirection.Up)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.TopBar, null);
+
+
+
+            if (direction == NavigationDirection.Down)
+
+            {
+
+                if (mainContentZone is GamepadNavigationZone.CatalogReviewList or GamepadNavigationZone.CatalogReviewFilters)
+
+                    return new GamepadZoneTransition(GamepadNavigationZone.CatalogReviewList, 0);
+
+
+
+                if (mainContentZone is GamepadNavigationZone.AppUpdatesReviewList
+                    or GamepadNavigationZone.AppUpdatesReviewToolbar)
+
+                    return new GamepadZoneTransition(GamepadNavigationZone.AppUpdatesReviewToolbar, 0);
+
+
+
+                if (mainContentZone is GamepadNavigationZone.ModsOverlayList
+                    or GamepadNavigationZone.ModsOverlayToolbar
+                    or GamepadNavigationZone.ModsOverlayFilters
+                    or GamepadNavigationZone.ModsOverlaySourceFilters
+                    or GamepadNavigationZone.ModsOverlayRowActions)
+
+                    return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlayToolbar, 0);
+
+
+
+                if (mainContentZone == GamepadNavigationZone.CatalogSources)
+
+                    return new GamepadZoneTransition(GamepadNavigationZone.CatalogSourcesToolbar, 0);
+
+
+
+                return new GamepadZoneTransition(GamepadNavigationZone.Library, 0);
+
+            }
+
+
+
+            if (direction == NavigationDirection.Left)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
 
         }
 
@@ -830,6 +911,108 @@ public sealed class GamepadNavigationService
 
 
 
+        if (zone == GamepadNavigationZone.ModsOverlayToolbar)
+
+        {
+
+            if (direction == NavigationDirection.Up)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.TopBar, null);
+
+
+
+            if (direction == NavigationDirection.Down)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlayFilters, 0);
+
+
+
+            if (direction == NavigationDirection.Left && currentIndex <= 0)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
+
+        }
+
+
+
+        if (zone == GamepadNavigationZone.ModsOverlayFilters)
+
+        {
+
+            if (direction == NavigationDirection.Up)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlayToolbar, null);
+
+
+
+            if (direction == NavigationDirection.Down)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlaySourceFilters, 0);
+
+
+
+            if (direction == NavigationDirection.Left && currentIndex <= 0)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
+
+        }
+
+
+
+        if (zone == GamepadNavigationZone.ModsOverlaySourceFilters)
+
+        {
+
+            if (direction == NavigationDirection.Up)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlayFilters, null);
+
+
+
+            if (direction == NavigationDirection.Down)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlayList, 0);
+
+
+
+            if (direction == NavigationDirection.Left && currentIndex <= 0)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
+
+        }
+
+
+
+        if (zone == GamepadNavigationZone.ModsOverlayList)
+
+        {
+
+            if (direction == NavigationDirection.Left &&
+
+                IsAtContentEdge(direction, isListLayout, positions, currentIndex, itemCount))
+
+            {
+
+                return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
+
+            }
+
+
+
+            if (direction == NavigationDirection.Up &&
+
+                (itemCount == 0 || IsAtContentEdge(direction, isListLayout, positions, currentIndex, itemCount)))
+
+            {
+
+                return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlaySourceFilters, null);
+
+            }
+
+        }
+
+
+
         return null;
 
     }
@@ -863,7 +1046,8 @@ public sealed class GamepadNavigationService
 
 
             if (zone is GamepadNavigationZone.Library or GamepadNavigationZone.CatalogSources or GamepadNavigationZone.CatalogReviewList
-                or GamepadNavigationZone.AppUpdatesReviewList)
+                or GamepadNavigationZone.AppUpdatesReviewList
+                or GamepadNavigationZone.ModsOverlayList)
 
                 return new GamepadZoneTransition(GamepadNavigationZone.Sidebar, null);
 
@@ -911,9 +1095,27 @@ public sealed class GamepadNavigationService
 
 
 
+            if (zone == GamepadNavigationZone.AnnouncementBanner)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.TopBar, null);
+
+
+
             if (zone == GamepadNavigationZone.AppUpdatesReviewList && (itemCount == 0 || currentIndex <= 0))
 
                 return new GamepadZoneTransition(GamepadNavigationZone.AppUpdatesReviewToolbar, null);
+
+
+
+            if (zone == GamepadNavigationZone.ModsOverlayToolbar)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.TopBar, null);
+
+
+
+            if (zone == GamepadNavigationZone.ModsOverlayList)
+
+                return new GamepadZoneTransition(GamepadNavigationZone.ModsOverlaySourceFilters, null);
 
 
 

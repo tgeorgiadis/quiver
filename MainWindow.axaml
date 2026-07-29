@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
 		xmlns:local="clr-namespace:Quiver"
 		xmlns:services="clr-namespace:Quiver.Services"
+		xmlns:mods="clr-namespace:Quiver.Services.Mods"
 		xmlns:asyncImageLoader="clr-namespace:AsyncImageLoader;assembly=AsyncImageLoader.Avalonia"
         Title="Quiver"
 		Width="1280" Height="720"
@@ -82,6 +83,10 @@
 										   FontSize="12"
 										   Foreground="{DynamicResource ThemeTextSecondary}"/>
 							</StackPanel>
+							<TextBlock Text="Mod updates available"
+									   FontSize="11"
+									   Foreground="#E8A838"
+									   IsVisible="{Binding HasModUpdates}"/>
 						</StackPanel>
 						
 						<!-- Gamecard: Options -->
@@ -158,6 +163,10 @@
 													  IsVisible="{Binding IsInstalled}"
 													  CommandParameter="{Binding}"/>
 										</MenuItem>
+										<MenuItem Header="Mods"
+												  Click="OpenMods_Click"
+												  CommandParameter="{Binding}"
+												  IsVisible="{Binding CanOpenMods}"/>
 										<MenuItem Header="Catalog">
 											<MenuItem Header="Edit Entry"
 													  Click="EditGameEntry_Click"
@@ -311,6 +320,10 @@
 												  IsVisible="{Binding IsInstalled}"
 												  CommandParameter="{Binding}"/>
 									</MenuItem>
+									<MenuItem Header="Mods"
+											  Click="OpenMods_Click"
+											  CommandParameter="{Binding}"
+											  IsVisible="{Binding CanOpenMods}"/>
 									<MenuItem Header="Catalog">
 										<MenuItem Header="Edit Entry"
 												  Click="EditGameEntry_Click"
@@ -438,6 +451,10 @@
 								<Run Text="Preferred: "/>
 								<Run Text="{Binding PreferredVersion}" Foreground="{DynamicResource ThemeTextSecondary}"/>
 							</TextBlock>
+							<TextBlock Text="Mod updates available"
+									   FontSize="10"
+									   Foreground="#E8A838"
+									   IsVisible="{Binding HasModUpdates}"/>
 						</StackPanel>
 					</Grid>
 				</Grid>
@@ -541,6 +558,10 @@
 											  IsVisible="{Binding IsInstalled}"
 											  CommandParameter="{Binding}"/>
 								</MenuItem>
+								<MenuItem Header="Mods"
+										  Click="OpenMods_Click"
+										  CommandParameter="{Binding}"
+										  IsVisible="{Binding CanOpenMods}"/>
 								<MenuItem Header="Catalog">
 									<MenuItem Header="Edit Entry"
 											  Click="EditGameEntry_Click"
@@ -643,6 +664,10 @@
 								<Run Text="Preferred: "/>
 								<Run Text="{Binding PreferredVersion}" Foreground="{DynamicResource ThemeTextSecondary}"/>
 							</TextBlock>
+							<TextBlock Text="Mod updates available"
+									   FontSize="10"
+									   Foreground="#E8A838"
+									   IsVisible="{Binding HasModUpdates}"/>
 						</StackPanel>
 					</Grid>
 
@@ -795,6 +820,145 @@
 									 Foreground="{Binding ProgressBarColor}"
 									 BorderThickness="0"/>
 					</StackPanel>
+				</Grid>
+			</Border>
+		</DataTemplate>
+
+		<!-- Mod browser card -->
+		<DataTemplate x:Key="ModListCardTemplate" DataType="mods:ModListItem">
+			<Border Classes="catalog-focus-card"
+					Width="228"
+					CornerRadius="8"
+					Padding="0"
+					Margin="0,0,12,12"
+					Classes.gamepad-focused="{Binding IsGamepadFocused}"
+					Classes.mod-update-available="{Binding HasUpdateAvailable}"
+					Background="{DynamicResource ThemeDarker}"
+					BorderBrush="{DynamicResource ThemeBorder}"
+					BorderThickness="1"
+					ClipToBounds="True">
+				<Grid>
+					<Grid RowDefinitions="Auto,*,Auto">
+						<!-- Thumbnail -->
+						<Border Grid.Row="0"
+								Height="148"
+								CornerRadius="8,8,0,0"
+								ClipToBounds="True"
+								Background="{DynamicResource ThemeLighter}">
+							<Grid>
+								<asyncImageLoader:AdvancedImage Source="{Binding IconUrl}"
+																Stretch="UniformToFill"
+																HorizontalAlignment="Stretch"
+																VerticalAlignment="Stretch"/>
+								<Border Classes="mod-update-accent"
+										Width="4"
+										HorizontalAlignment="Left"
+										IsVisible="{Binding HasUpdateAvailable}"
+										Background="{DynamicResource ThemeSuccess}"/>
+								<Border Classes="mod-status-chip"
+										Classes.mod-update-available="{Binding HasUpdateAvailable}"
+										CornerRadius="3"
+										Padding="5,2"
+										Margin="8"
+										HorizontalAlignment="Right"
+										VerticalAlignment="Top"
+										IsVisible="{Binding ShowStatusBadge}">
+									<TextBlock Text="{Binding StatusLabel}" FontSize="9"/>
+								</Border>
+							</Grid>
+						</Border>
+
+						<!-- Text -->
+						<StackPanel Grid.Row="1" Margin="10,8,10,6" Spacing="3">
+							<TextBlock Text="{Binding DisplayName}"
+									   FontSize="13"
+									   FontWeight="SemiBold"
+									   Foreground="{DynamicResource ThemeText}"
+									   TextWrapping="Wrap"
+									   MaxLines="2"
+									   TextTrimming="CharacterEllipsis"/>
+							<TextBlock Text="{Binding AuthorLine}"
+									   FontSize="11"
+									   Foreground="{DynamicResource ThemeTextSecondary}"
+									   TextTrimming="CharacterEllipsis"/>
+							<TextBlock Text="{Binding DescriptionPreview}"
+									   FontSize="11"
+									   Foreground="{DynamicResource ThemeText}"
+									   Opacity="0.85"
+									   TextWrapping="Wrap"
+									   MaxLines="2"
+									   TextTrimming="CharacterEllipsis"
+									   IsVisible="{Binding HasDescriptionPreview}"
+									   MinHeight="0"/>
+							<TextBlock Text="{Binding VersionLine}"
+									   FontSize="10"
+									   Foreground="{DynamicResource ThemeTextSecondary}"
+									   TextTrimming="CharacterEllipsis"/>
+
+							<!-- Stats -->
+							<WrapPanel Orientation="Horizontal" Margin="0,4,0,0" IsVisible="{Binding HasStatsRow}">
+								<StackPanel Orientation="Horizontal" Spacing="4" Margin="0,0,10,2"
+											IsVisible="{Binding HasDownloadCount}">
+									<TextBlock Text="↓" FontSize="11" Foreground="{DynamicResource ThemeTextSecondary}"/>
+									<TextBlock Text="{Binding DownloadCountText}" FontSize="11"
+											   Foreground="{DynamicResource ThemeTextSecondary}"/>
+								</StackPanel>
+								<StackPanel Orientation="Horizontal" Spacing="4" Margin="0,0,10,2"
+											IsVisible="{Binding HasRatingScore}">
+									<TextBlock Text="★" FontSize="11" Foreground="{DynamicResource ThemeTextSecondary}"/>
+									<TextBlock Text="{Binding RatingText}" FontSize="11"
+											   Foreground="{DynamicResource ThemeTextSecondary}"/>
+								</StackPanel>
+								<StackPanel Orientation="Horizontal" Spacing="4" Margin="0,0,0,2"
+											IsVisible="{Binding HasUpdatedText}">
+									<TextBlock Text="⏱" FontSize="11" Foreground="{DynamicResource ThemeTextSecondary}"/>
+									<TextBlock Text="{Binding UpdatedText}" FontSize="11"
+											   Foreground="{DynamicResource ThemeTextSecondary}"
+											   TextTrimming="CharacterEllipsis"/>
+								</StackPanel>
+							</WrapPanel>
+						</StackPanel>
+
+						<!-- Actions -->
+						<WrapPanel Grid.Row="2"
+								   Orientation="Horizontal"
+								   Margin="8,0,8,8">
+							<Button Classes="options" Content="Install" FontSize="10" Padding="6,2" Margin="0,0,4,4"
+									IsVisible="{Binding CanInstall}"
+									CommandParameter="{Binding}"
+									Click="ModRowInstall_Click"/>
+							<Button Classes="options mod-update" Content="Update" FontSize="10" Padding="6,2" Margin="0,0,4,4"
+									IsVisible="{Binding CanUpdate}"
+									CommandParameter="{Binding}"
+									Click="ModRowUpdate_Click"/>
+							<Button Classes="options" Content="Uninstall" FontSize="10" Padding="6,2" Margin="0,0,4,4"
+									IsVisible="{Binding CanUninstall}"
+									CommandParameter="{Binding}"
+									Click="ModRowUninstall_Click"/>
+							<Button Classes="options" Content="Details" FontSize="10" Padding="6,2" Margin="0,0,4,4"
+									CommandParameter="{Binding}"
+									Click="ModRowDetails_Click"/>
+							<Button Classes="options" Content="Open" FontSize="10" Padding="6,2" Margin="0,0,0,4"
+									CommandParameter="{Binding}"
+									Click="ModRowOpenPage_Click"/>
+						</WrapPanel>
+					</Grid>
+
+					<!-- Progress bar (same pattern as library game cards) -->
+					<Border VerticalAlignment="Bottom"
+							Height="4"
+							CornerRadius="0,0,8,8"
+							ClipToBounds="True"
+							IsVisible="{Binding IsBusy}">
+						<ProgressBar Value="{Binding DownloadProgress}"
+									 Minimum="0"
+									 Maximum="100"
+									 Height="4"
+									 Background="Transparent"
+									 Foreground="{Binding ProgressBarColor}"
+									 BorderThickness="0"
+									 IsIndeterminate="{Binding IsProgressIndeterminate}"/>
+					</Border>
 				</Grid>
 			</Border>
 		</DataTemplate>
@@ -1353,6 +1517,60 @@
 		<Setter Property="Padding" Value="10,8"/>
 	</Style>
 
+	<!-- Sky blue announcement strip — distinct from orange focus and green success. -->
+	<Style Selector="Border.announcement-banner">
+		<Setter Property="Background" Value="#0ea5e9"/>
+		<Setter Property="BorderBrush" Value="#0284c7"/>
+		<Setter Property="BorderThickness" Value="0,0,0,1"/>
+	</Style>
+
+	<Style Selector="Border.announcement-banner TextBlock">
+		<Setter Property="Foreground" Value="#0f172a"/>
+	</Style>
+
+	<Style Selector="Button.announcement-banner-close">
+		<Setter Property="Background" Value="#0284c7"/>
+		<Setter Property="Foreground" Value="#f8fafc"/>
+		<Setter Property="BorderBrush" Value="#0369a1"/>
+		<Setter Property="BorderThickness" Value="1"/>
+		<Setter Property="CornerRadius" Value="4"/>
+		<Setter Property="Padding" Value="0"/>
+		<Setter Property="HorizontalContentAlignment" Value="Center"/>
+		<Setter Property="VerticalContentAlignment" Value="Center"/>
+		<Setter Property="Cursor" Value="Hand"/>
+		<Setter Property="Template">
+			<ControlTemplate TargetType="Button">
+				<Border Background="{TemplateBinding Background}"
+						BorderBrush="{TemplateBinding BorderBrush}"
+						BorderThickness="{TemplateBinding BorderThickness}"
+						CornerRadius="{TemplateBinding CornerRadius}"
+						Padding="{TemplateBinding Padding}">
+					<ContentPresenter
+						Name="PART_ContentPresenter"
+						Content="{TemplateBinding Content}"
+						ContentTemplate="{TemplateBinding ContentTemplate}"
+						HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+						VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+						HorizontalContentAlignment="Center"
+						VerticalContentAlignment="Center"
+						Foreground="{TemplateBinding Foreground}"
+						FontSize="{TemplateBinding FontSize}"
+						FontWeight="{TemplateBinding FontWeight}"/>
+				</Border>
+			</ControlTemplate>
+		</Setter>
+	</Style>
+
+	<Style Selector="Button.announcement-banner-close:pointerover">
+		<Setter Property="Background" Value="#0369a1"/>
+		<Setter Property="Foreground" Value="#ffffff"/>
+	</Style>
+
+	<Style Selector="Button.announcement-banner-close:pressed">
+		<Setter Property="Background" Value="#075985"/>
+		<Setter Property="Foreground" Value="#ffffff"/>
+	</Style>
+
 	<Style Selector="Button.settings">
 		<Setter Property="Background" Value="Transparent"/>
 		<Setter Property="Foreground" Value="{DynamicResource ThemeTextSecondary}"/>
@@ -1539,6 +1757,49 @@
 		<Setter Property="BorderThickness" Value="3"/>
 	</Style>
 
+	<!-- Installed badge: solid green + border so it reads on thumbnails. -->
+	<Style Selector="Border.mod-status-chip">
+		<Setter Property="Background" Value="#E622c55e"/>
+		<Setter Property="BorderBrush" Value="#166534"/>
+		<Setter Property="BorderThickness" Value="1.5"/>
+	</Style>
+
+	<Style Selector="Border.mod-status-chip TextBlock">
+		<Setter Property="Foreground" Value="#FFFFFF"/>
+		<Setter Property="FontWeight" Value="SemiBold"/>
+	</Style>
+
+	<!-- Update available: same family, outlined so it stays distinct from Installed. -->
+	<Style Selector="Border.mod-status-chip.mod-update-available">
+		<Setter Property="Background" Value="#E616a34a"/>
+		<Setter Property="BorderBrush" Value="#BBF7D0"/>
+		<Setter Property="BorderThickness" Value="1.5"/>
+	</Style>
+
+	<Style Selector="Border.mod-status-chip.mod-update-available TextBlock">
+		<Setter Property="Foreground" Value="#FFFFFF"/>
+		<Setter Property="FontWeight" Value="SemiBold"/>
+	</Style>
+
+	<Style Selector="Button.options.mod-update">
+		<Setter Property="Background" Value="{DynamicResource ThemeSuccess}"/>
+		<Setter Property="Foreground" Value="#18181b"/>
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeSuccess}"/>
+		<Setter Property="FontWeight" Value="SemiBold"/>
+	</Style>
+
+	<Style Selector="Button.options.mod-update:pointerover">
+		<Setter Property="Background" Value="#16a34a"/>
+		<Setter Property="BorderBrush" Value="#16a34a"/>
+		<Setter Property="Foreground" Value="#18181b"/>
+	</Style>
+
+	<Style Selector="Button.options.mod-update:pressed">
+		<Setter Property="Background" Value="#15803d"/>
+		<Setter Property="BorderBrush" Value="#15803d"/>
+		<Setter Property="Foreground" Value="#18181b"/>
+	</Style>
+
 	<!-- Orange gamepad rings require Window.gamepad-chrome (controller connected). -->
 	<Style Selector="Window.gamepad-chrome Border.gamecard.gamepad-focused,
 	                 Window.gamepad-chrome Border.gamecardgrid.gamepad-focused,
@@ -1552,6 +1813,16 @@
 
 	<!-- Focus Visual Styles: orange :focus only under nav chrome; :focus-visible for Tab. -->
 	<Style Selector="Window.gamepad-chrome Button:focus">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="Window.gamepad-chrome ListBox.gamepad-focused">
+		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+		<Setter Property="BorderThickness" Value="2"/>
+	</Style>
+
+	<Style Selector="Window.gamepad-chrome ListBox:focus">
 		<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 		<Setter Property="BorderThickness" Value="2"/>
 	</Style>
@@ -2022,6 +2293,7 @@
 		<Grid Grid.Column="1">
 			<Grid.RowDefinitions>
 				<RowDefinition Height="Auto"/>
+				<RowDefinition Height="Auto"/>
 				<RowDefinition Height="*"/>
 			</Grid.RowDefinitions>
 
@@ -2221,8 +2493,36 @@
 				</Grid>
 			</Border>
 
+			<!-- Remote announcement banner (sky blue — not focus orange / success green) -->
+			<Border x:Name="AnnouncementBanner"
+					Grid.Row="1"
+					Classes="announcement-banner"
+					IsVisible="False"
+					ZIndex="1">
+				<Grid ColumnDefinitions="*,Auto" Margin="12,8">
+					<TextBlock x:Name="AnnouncementBannerText"
+							   Grid.Column="0"
+							   TextWrapping="Wrap"
+							   VerticalAlignment="Center"
+							   FontSize="13"
+							   FontWeight="SemiBold"
+							   Margin="0,0,12,0"/>
+					<Button x:Name="AnnouncementBannerCloseButton"
+							Grid.Column="1"
+							Classes="announcement-banner-close"
+							Content="✕"
+							Width="32"
+							Height="28"
+							FontSize="14"
+							FontWeight="Bold"
+							VerticalAlignment="Center"
+							ToolTip.Tip="Dismiss"
+							Click="AnnouncementBannerClose_Click"/>
+				</Grid>
+			</Border>
+
 			<!-- Apps Content with Settings Panel Overlay -->
-			<Grid Grid.Row="1">
+			<Grid Grid.Row="2">
 
 				<!-- Background Image -->
 				<Border Background="{DynamicResource ThemeDarker}"/>
@@ -2342,6 +2642,116 @@
 											  ItemsSource="{Binding AppUpdateReviewRows}">
 									<ItemsControl.ItemTemplate>
 										<StaticResource ResourceKey="AppUpdateReviewCardTemplate"/>
+									</ItemsControl.ItemTemplate>
+								</ItemsControl>
+							</StackPanel>
+						</ScrollViewer>
+					</Grid>
+
+					<!-- Mods browser (in-window overlay on Library) -->
+					<Grid x:Name="ModsPanel"
+						  IsVisible="False"
+						  Margin="30,20,30,30"
+						  RowDefinitions="Auto,Auto,Auto,Auto,*">
+						<TextBlock x:Name="ModsHeaderText"
+								   Grid.Row="0"
+								   FontSize="15"
+								   FontWeight="SemiBold"
+								   Foreground="{DynamicResource ThemeText}"
+								   TextWrapping="Wrap"
+								   Margin="0,0,0,8"/>
+						<StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+							<Button x:Name="ModsRefreshButton"
+									Classes="options"
+									Content="Refresh"
+									FontSize="11"
+									Click="ModsRefresh_Click"/>
+							<Button x:Name="ModsUpdateAllButton"
+									Classes="options"
+									Content="Update All"
+									FontSize="11"
+									Click="ModsUpdateAll_Click"/>
+							<Button x:Name="ModsOpenFolderButton"
+									Classes="options"
+									Content="Open Mod Folder"
+									FontSize="11"
+									Click="ModsOpenFolder_Click"/>
+							<Button x:Name="ModsCloseButton"
+									Classes="options"
+									Content="Back to Library"
+									FontSize="11"
+									Click="ModsClose_Click"/>
+							<TextBlock x:Name="ModsStatusText"
+									   VerticalAlignment="Center"
+									   FontSize="11"
+									   Foreground="{DynamicResource ThemeTextSecondary}"
+									   Margin="8,0,0,0"/>
+						</StackPanel>
+						<StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+							<Button x:Name="ModsTabBrowseButton"
+									Classes="catalog-filter selected"
+									Content="Browse"
+									Tag="Browse"
+									FontSize="11"
+									Click="ModsTabFilter_Click"/>
+							<Button x:Name="ModsTabInstalledButton"
+									Classes="catalog-filter"
+									Content="Installed"
+									Tag="Installed"
+									FontSize="11"
+									Click="ModsTabFilter_Click"/>
+							<TextBox x:Name="ModsSearchTextBox"
+									 Watermark="Search mods"
+									 Width="220"
+									 FontSize="12"
+									 Margin="12,0,0,0"
+									 TextChanged="ModsSearch_TextChanged"/>
+							<TextBlock Text="Sort:"
+									   FontSize="11"
+									   Foreground="{DynamicResource ThemeTextSecondary}"
+									   VerticalAlignment="Center"
+									   Margin="12,0,0,0"/>
+							<ComboBox x:Name="ModsSortByComboBox"
+									  FontSize="12"
+									  MinWidth="150"
+									  Foreground="{DynamicResource ThemeTextSecondary}"
+									  Background="{DynamicResource ThemeDarker}"
+									  BorderBrush="{DynamicResource ThemeBorder}"
+									  SelectionChanged="ModsSortByComboBox_SelectionChanged">
+								<ComboBoxItem Content="Installed first" Tag="InstalledFirst"/>
+								<ComboBoxItem Content="Name (A-Z)" Tag="Name"/>
+								<ComboBoxItem Content="Name (Z-A)" Tag="NameDesc"/>
+								<ComboBoxItem Content="Updates first" Tag="UpdatesFirst"/>
+								<ComboBoxItem Content="Top rated" Tag="TopRated"/>
+								<ComboBoxItem Content="Newest" Tag="Newest"/>
+								<ComboBoxItem Content="Last updated" Tag="LastUpdated"/>
+								<ComboBoxItem Content="Most downloaded" Tag="MostDownloaded"/>
+							</ComboBox>
+						</StackPanel>
+						<WrapPanel x:Name="ModsSourceFilterPanel"
+								   Grid.Row="3"
+								   Orientation="Horizontal"
+								   Margin="0,0,0,8"/>
+						<ScrollViewer x:Name="ModsListScrollViewer"
+									  Grid.Row="4"
+									  VerticalScrollBarVisibility="Auto"
+									  ScrollChanged="ModsListScrollViewer_ScrollChanged">
+							<StackPanel>
+								<TextBlock x:Name="ModsEmptyText"
+										   Text="No mods found."
+										   FontSize="12"
+										   Foreground="{DynamicResource ThemeTextSecondary}"
+										   IsVisible="False"
+										   Margin="0,8,0,0"/>
+								<ItemsControl x:Name="ModsItemsControl"
+											  ItemsSource="{Binding ModListRows}">
+									<ItemsControl.ItemsPanel>
+										<ItemsPanelTemplate>
+											<WrapPanel Orientation="Horizontal"/>
+										</ItemsPanelTemplate>
+									</ItemsControl.ItemsPanel>
+									<ItemsControl.ItemTemplate>
+										<StaticResource ResourceKey="ModListCardTemplate"/>
 									</ItemsControl.ItemTemplate>
 								</ItemsControl>
 							</StackPanel>
@@ -3269,6 +3679,72 @@
 					</Grid>
 				</Border>
 
+				<!-- Mod details (README / Changelog) -->
+				<Border x:Name="ModDetailsPanel"
+						Grid.RowSpan="2"
+						Background="{DynamicResource ThemeBase}"
+						IsVisible="False"
+						ZIndex="110">
+					<Grid RowDefinitions="Auto,Auto,*">
+						<Border Grid.Row="0"
+								Background="{DynamicResource ThemeDarker}"
+								BorderBrush="{DynamicResource ThemeBorder}"
+								BorderThickness="0,0,0,1"
+								Padding="40,16,40,16">
+							<Grid ColumnDefinitions="*,Auto">
+								<TextBlock x:Name="ModDetailsTitle"
+										   Grid.Column="0"
+										   Text="Mod Details"
+										   FontSize="24"
+										   FontWeight="Bold"
+										   Foreground="{DynamicResource ThemeText}"
+										   VerticalAlignment="Center"
+										   TextTrimming="CharacterEllipsis"
+										   Margin="0,0,16,0"/>
+								<StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+									<Button x:Name="ModDetailsOpenPageButton"
+											Classes="options"
+											Content="Open Page"
+											Click="ModDetailsOpenPage_Click"/>
+									<Button x:Name="CloseModDetailsButton"
+											Classes="options"
+											Content="Close"
+											Width="100"
+											Click="CloseModDetails_Click"/>
+								</StackPanel>
+							</Grid>
+						</Border>
+						<StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="40,16,40,0">
+							<Button x:Name="ModDetailsTabDetailsButton"
+									Classes="catalog-filter selected"
+									Content="Details"
+									Tag="Details"
+									FontSize="11"
+									Click="ModDetailsTab_Click"/>
+							<Button x:Name="ModDetailsTabChangelogButton"
+									Classes="catalog-filter"
+									Content="Changelog"
+									Tag="Changelog"
+									FontSize="11"
+									Click="ModDetailsTab_Click"/>
+						</StackPanel>
+						<ScrollViewer x:Name="ModDetailsScrollViewer"
+									  Grid.Row="2"
+									  VerticalScrollBarVisibility="Auto"
+									  Margin="40,16,40,40">
+							<StackPanel MaxWidth="900">
+								<ItemsControl x:Name="ModDetailsContent">
+									<ItemsControl.ItemTemplate>
+										<DataTemplate>
+											<ContentControl Content="{Binding}"/>
+										</DataTemplate>
+									</ItemsControl.ItemTemplate>
+								</ItemsControl>
+							</StackPanel>
+						</ScrollViewer>
+					</Grid>
+				</Border>
+
 				<!-- Entry Form Overlay -->
 				<Border x:Name="EntryFormOverlay"
 						Grid.RowSpan="2"
@@ -3296,6 +3772,8 @@
 											<ColumnDefinition Width="*"/>
 										</Grid.ColumnDefinitions>
 										<Grid.RowDefinitions>
+											<RowDefinition Height="Auto"/>
+											<RowDefinition Height="Auto"/>
 											<RowDefinition Height="Auto"/>
 											<RowDefinition Height="Auto"/>
 											<RowDefinition Height="Auto"/>
@@ -3377,7 +3855,34 @@
 												 BorderThickness="1"
 												 CornerRadius="4"
 												 Padding="8"
-												 Margin="8,0,0,0"/>
+												 Margin="8,0,0,8"/>
+
+										<TextBlock Grid.Row="6" Grid.Column="0" Text="Mods Path:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="6" Grid.Column="1"
+												 x:Name="NewGameModsPathTextBox"
+												 Watermark="e.g. mods"
+												 Foreground="{DynamicResource ThemeText}"
+												 Background="{DynamicResource ThemeBase}"
+												 BorderBrush="{DynamicResource ThemeBorder}"
+												 BorderThickness="1"
+												 CornerRadius="4"
+												 Padding="8"
+												 Margin="8,0,0,8"/>
+
+										<TextBlock Grid.Row="7" Grid.Column="0" Text="Mod Sources:" VerticalAlignment="Top" Margin="0,10,0,0" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="7" Grid.Column="1"
+												 x:Name="NewGameModsSourcesTextBox"
+												 Watermark="Thunderstore URL/slug or GameBanana mods/games/{id} (one per line)"
+												 Foreground="{DynamicResource ThemeText}"
+												 Background="{DynamicResource ThemeBase}"
+												 BorderBrush="{DynamicResource ThemeBorder}"
+												 BorderThickness="1"
+												 CornerRadius="4"
+												 Padding="8"
+												 Margin="8,0,0,0"
+												 AcceptsReturn="True"
+												 TextWrapping="Wrap"
+												 MinHeight="72"/>
 									</Grid>
 
 									<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,12,0,0">

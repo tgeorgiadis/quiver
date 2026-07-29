@@ -1,6 +1,7 @@
 using Quiver.Core.Models;
 using Quiver.Core.Services;
 using Quiver.Models;
+using Quiver.Services.Mods;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
@@ -15,6 +16,7 @@ namespace Quiver.Services
         public AppSettings _settings = new();
         private readonly HttpClient _httpClient;
         private readonly AppCatalogService _catalogService;
+        private readonly ModProviderRegistry _modProviderRegistry;
         private bool _disposed;
         private string _appsFolder;
         private readonly string _cacheFolder;
@@ -34,6 +36,7 @@ namespace Quiver.Services
         public ObservableCollection<GameInfo> Games { get; set; } = [];
         public HttpClient HttpClient => _httpClient;
         public AppCatalogService CatalogService => _catalogService;
+        public ModProviderRegistry ModProviderRegistry => _modProviderRegistry;
         public string AppsFolder => _appsFolder;
         public string GamesFolder => _appsFolder;
         public string CacheFolder => _cacheFolder;
@@ -87,6 +90,8 @@ namespace Quiver.Services
             {
                 System.Diagnostics.Debug.WriteLine($"Failed to create directories: {ex.Message}");
             }
+
+            _modProviderRegistry = new ModProviderRegistry(_httpClient, _cacheFolder);
 
             LoadVersionString();
             _ = _catalogService.ValidateAndFixLocalAppsJsonAsync();

@@ -101,6 +101,49 @@ On first launch, Quiver shows a short welcome dialog, then opens **App Catalog**
 
 Community catalog lists are loaded from the remote index on startup and **Refresh All Sources**. New lists added to the [community catalog repo](https://github.com/tgeorgiadis/quiver-community-app-catalog) appear automatically without a Quiver app update. After a successful fetch, list contents are cached locally for offline review.
 
+### Mods (Thunderstore & GameBanana)
+
+Apps can expose a **Mods** browser when `mods.path` and `mods.sources` are set in the catalog entry (or via **+ Add New Entry**).
+
+**Source URL formats** (one per line in Mod Sources):
+
+| Provider | Examples |
+|----------|----------|
+| Thunderstore | `https://thunderstore.io/c/banjo-recompiled/` or slug `banjo-recompiled` |
+| GameBanana | `https://gamebanana.com/mods/games/24774`, `https://gamebanana.com/games/24774`, or bare id `24774` |
+
+GameBanana URLs are detected automatically (no `gamebanana|` prefix required). Other hosts can still use `provider|url`.
+
+**Browse & search**
+
+- **Thunderstore** uses the cyberstorm listing API (paged browse + `q=` search), preferring the community **Mods** section when available. Install/update resolves version and download URL via the experimental package API.
+- **GameBanana** browses via Index pages and searches via Subfeed (`_sName`), keeping `_sModelName == Mod` only.
+- Both sources support infinite scroll / load-more (mouse or gamepad). Multi-source search merges pages from each provider.
+- Content-rated / NSFW mods are **hidden by default**. Use the **Include NSFW** chip to show them (persisted in settings).
+- GameBanana mods with multiple download files show a file picker on Install/Update. **Zip** and **7z** archives are supported.
+
+### Announcement banner
+
+Quiver can show a dismissible sky-blue banner under the top bar with release notes or other notices. The text is loaded from a remote JSON file on startup — edit and push that file to announce something **without shipping a Quiver release**.
+
+Remote URL:
+
+`https://raw.githubusercontent.com/tgeorgiadis/quiver/main/announcement.json`
+
+Repo file: [`announcement.json`](announcement.json)
+
+```json
+{
+  "id": "2026-07-28-mods",
+  "enabled": true,
+  "message": "Your announcement text here."
+}
+```
+
+- Change **`message`** to update the copy.
+- Change **`id`** when you want the banner to appear again for users who already dismissed the previous notice (dismiss is forever **per id**).
+- Set **`enabled`: false** to hide the banner for everyone without waiting for dismissals.
+
 Remote index URL (the only catalog URL built into Quiver):
 
 `https://raw.githubusercontent.com/tgeorgiadis/quiver-community-app-catalog/main/index.json`

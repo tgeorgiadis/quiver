@@ -156,6 +156,37 @@ public class GamepadModalDialogNavigationTests
     }
 
     [AvaloniaFact]
+    public void CollectDialogFocusableControls_includes_listbox()
+    {
+        var root = new StackPanel
+        {
+            Children =
+            {
+                new ListBox { Focusable = true, Items = { "One", "Two" } },
+                new Button { Content = "Install" },
+                new Button { Content = "Cancel" },
+            },
+        };
+
+        var window = new Window { Content = root };
+        try
+        {
+            window.Show();
+            var controls = GamepadModalDialogNavigation.CollectDialogFocusableControls(window);
+            controls.Should().Contain(c => c is ListBox);
+            controls.OfType<Button>().Select(b => b.Content?.ToString())
+                .Should().BeEquivalentTo("Install", "Cancel");
+            GamepadModalDialogNavigation.GetDefaultFocusIndex(controls).Should().Be(
+                controls.FindIndex(c => c is ListBox));
+        }
+        finally
+        {
+            if (window.IsVisible)
+                window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void CollectDialogFocusableControls_includes_textbox_and_buttons()
     {
         var root = new StackPanel

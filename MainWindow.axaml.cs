@@ -13,6 +13,7 @@ using Quiver.Core.Models;
 using Quiver.Core.Services;
 using Quiver.Models;
 using Quiver.Services;
+using Quiver.Services.Mods;
 using Quiver.ViewModels;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -52,6 +53,7 @@ namespace Quiver
         public ObservableCollection<CatalogSourceListItem> CatalogSources { get; } = new();
         public ObservableCollection<CatalogSyncRowItem> CatalogSyncRows { get; } = new();
         public ObservableCollection<GameInfo> AppUpdateReviewRows { get; } = new();
+        public ObservableCollection<ModListItem> ModListRows { get; } = new();
 
         public int CatalogReviewBadgeCount =>
             CatalogSources.Where(s => s.Enabled).Sum(s => s.PendingReviewCount);
@@ -64,6 +66,8 @@ namespace Quiver
             !_isTagEditOpen &&
             !_isChangelogOpen &&
             !IsDisplayFilterOverlayOpen &&
+            !_isModsOverlayOpen &&
+            !_isModDetailsOpen &&
             (_mainViewMode == MainViewMode.Library ||
              (_mainViewMode == MainViewMode.AppCatalog &&
               (_appCatalogSubView == AppCatalogSubView.Sources ||
@@ -199,6 +203,7 @@ namespace Quiver
         private MainViewMode _mainViewMode = MainViewMode.Library;
         private AppCatalogSubView _appCatalogSubView = AppCatalogSubView.Sources;
         private bool _isAppUpdatesReviewOpen;
+        private string? _activeAnnouncementId;
         private bool _suppressCatalogSourceUiEvents;
         private bool _suppressSettingsUiEvents;
         private bool _isRefreshingCatalogSources;
@@ -541,6 +546,7 @@ namespace Quiver
 
             GamepadComboBoxNavigation.Attach(SortByComboBox);
             GamepadComboBoxNavigation.Attach(CatalogReviewSortByComboBox);
+            GamepadComboBoxNavigation.Attach(ModsSortByComboBox);
             GamepadComboBoxNavigation.Attach(DisplayFilterMatchModeComboBox);
             GamepadComboBoxNavigation.Attach(DisplayFilterExcludeMatchModeComboBox);
 
@@ -1226,6 +1232,7 @@ namespace Quiver
                 });
 
                 await NotifyCatalogUpdatesIfNeededAsync();
+                _ = RefreshAnnouncementBannerAsync();
             }
             catch (Exception ex)
             {
@@ -1234,6 +1241,86 @@ namespace Quiver
                     UpdateGameCollectionUi();
                     await ShowMessageBoxAsync($"Failed to load apps: {ex.Message}", "Load Error");
                 });
+            }
+        }
+
+        private async Task RefreshAnnouncementBannerAsync()
+        {
+            try
+            {
+                var payload = await AnnouncementService
+                    .TryFetchAsync(_gameManager.HttpClient)
+                    .ConfigureAwait(true);
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    _settings.EnsureInitialized();
+                    if (!AnnouncementService.ShouldShow(payload, _settings.DismissedAnnouncementIds))
+                    {
+                        HideAnnouncementBanner();
+                        return;
+                    }
+
+                    ShowAnnouncementBanner(payload!);
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Announcement banner fetch failed: {ex.Message}");
+            }
+        }
+
+        private void ShowAnnouncementBanner(AnnouncementPayload payload)
+        {
+            _activeAnnouncementId = payload.Id;
+            if (AnnouncementBannerText != null)
+                AnnouncementBannerText.Text = payload.Message.Trim();
+            if (AnnouncementBanner != null)
+                AnnouncementBanner.IsVisible = true;
+        }
+
+        private void HideAnnouncementBanner()
+        {
+            _activeAnnouncementId = null;
+            if (AnnouncementBanner != null)
+                AnnouncementBanner.IsVisible = false;
+            if (AnnouncementBannerText != null)
+                AnnouncementBannerText.Text = string.Empty;
+        }
+
+        private void AnnouncementBannerClose_Click(object? sender, RoutedEventArgs e)
+        {
+            DismissAnnouncementBanner();
+        }
+
+        private void DismissAnnouncementBanner()
+        {
+            var id = _activeAnnouncementId;
+            HideAnnouncementBanner();
+
+            if (string.IsNullOrWhiteSpace(id))
+                return;
+
+            _settings.EnsureInitialized();
+            if (!_settings.DismissedAnnouncementIds.Any(existing =>
+                    string.Equals(existing, id, StringComparison.OrdinalIgnoreCase)))
+            {
+                _settings.DismissedAnnouncementIds.Add(id);
+                AppSettings.Save(_settings);
+            }
+
+            // Drop focus chrome if the close button was selected.
+            if (AnnouncementBannerCloseButton != null)
+                ClearFocusIfOnControls([AnnouncementBannerCloseButton]);
+
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.AnnouncementBanner && IsGamepadFocusActive)
+            {
+                ClearAnnouncementBannerGamepadFocus();
+                ApplyTopBarGamepadSelection(Math.Max(0, _gamepadNavigation.TopBarSelectedIndex));
+            }
+            else if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.TopBar && IsGamepadFocusActive)
+            {
+                ApplyTopBarGamepadSelection(Math.Max(0, _gamepadNavigation.TopBarSelectedIndex));
             }
         }
 
@@ -1355,6 +1442,12 @@ namespace Quiver
             if (_isChangelogOpen)
             {
                 CloseChangelog();
+                return;
+            }
+
+            if (_isModDetailsOpen)
+            {
+                CloseModDetails();
                 return;
             }
 
@@ -2676,6 +2769,8 @@ namespace Quiver
             _mainViewMode = MainViewMode.Library;
             _appCatalogSubView = AppCatalogSubView.Sources;
             _isAppUpdatesReviewOpen = false;
+            if (_isModsOverlayOpen)
+                CloseModsOverlay();
             ResetGamepadNavigationIndices();
             UpdateMainViewUi();
             if (IsGamepadFocusActive)
@@ -2689,6 +2784,8 @@ namespace Quiver
             _mainViewMode = MainViewMode.AppCatalog;
             _appCatalogSubView = AppCatalogSubView.Sources;
             _isAppUpdatesReviewOpen = false;
+            if (_isModsOverlayOpen)
+                CloseModsOverlay();
             _activeCatalogSyncSource = null;
             CatalogSyncRows.Clear();
             ResetGamepadNavigationIndices();
@@ -2719,6 +2816,9 @@ namespace Quiver
 
         private void OpenAppUpdatesReview()
         {
+            if (_isModsOverlayOpen)
+                CloseModsOverlay();
+
             _mainViewMode = MainViewMode.Library;
             _appCatalogSubView = AppCatalogSubView.Sources;
             _isAppUpdatesReviewOpen = true;
@@ -2785,6 +2885,7 @@ namespace Quiver
             var isCatalog = _mainViewMode == MainViewMode.AppCatalog;
             var isReview = isCatalog && _appCatalogSubView == AppCatalogSubView.Review;
             var isAppUpdatesReview = isLibrary && _isAppUpdatesReviewOpen;
+            var isModsOverlay = isLibrary && _isModsOverlayOpen && !_isAppUpdatesReviewOpen;
 
             if (this.FindControl<Grid>("LibraryViewContainer") is Grid libraryView)
                 libraryView.IsVisible = isLibrary;
@@ -2801,8 +2902,11 @@ namespace Quiver
             if (this.FindControl<Grid>("AppUpdatesReviewPanel") is Grid appUpdatesPanel)
                 appUpdatesPanel.IsVisible = isAppUpdatesReview;
 
+            if (this.FindControl<Grid>("ModsPanel") is Grid modsPanel)
+                modsPanel.IsVisible = isModsOverlay;
+
             if (this.FindControl<StackPanel>("LibraryTopBarPanel") is StackPanel libraryTopBar)
-                libraryTopBar.IsVisible = isLibrary && !isAppUpdatesReview;
+                libraryTopBar.IsVisible = isLibrary && !isAppUpdatesReview && !isModsOverlay;
 
             if (this.FindControl<StackPanel>("CatalogReviewTopBarPanel") is StackPanel catalogReviewTopBar)
                 catalogReviewTopBar.IsVisible = isReview;
@@ -2811,20 +2915,22 @@ namespace Quiver
                 backButton.IsVisible = isReview;
 
             if (this.FindControl<Grid>("LibraryFiltersPanel") is Grid libraryFilters)
-                libraryFilters.IsVisible = isLibrary && !isAppUpdatesReview;
+                libraryFilters.IsVisible = isLibrary && !isAppUpdatesReview && !isModsOverlay;
 
             LibraryNavButton?.Classes.Set("selected", isLibrary);
             AppCatalogNavButton?.Classes.Set("selected", isCatalog);
 
             if (this.FindControl<TextBlock>("HeaderTitleText") is TextBlock headerTitle)
             {
-                headerTitle.Text = isAppUpdatesReview
-                    ? "App Updates"
-                    : isLibrary
-                        ? "Library"
-                        : isReview && _activeCatalogSyncSource != null
-                            ? $"Review: {_activeCatalogSyncSource.Name}"
-                            : "App Catalog";
+                headerTitle.Text = isModsOverlay
+                    ? "Mods"
+                    : isAppUpdatesReview
+                        ? "App Updates"
+                        : isLibrary
+                            ? "Library"
+                            : isReview && _activeCatalogSyncSource != null
+                                ? $"Review: {_activeCatalogSyncSource.Name}"
+                                : "App Catalog";
             }
 
             UpdateLibraryEmptyState();
@@ -2833,7 +2939,7 @@ namespace Quiver
 
         private void UpdateLibraryEmptyState()
         {
-            var showLibrary = _mainViewMode == MainViewMode.Library && !_isAppUpdatesReviewOpen;
+            var showLibrary = _mainViewMode == MainViewMode.Library && !_isAppUpdatesReviewOpen && !_isModsOverlayOpen;
             var showEmptyState = showLibrary && IsLibraryEmpty;
 
             if (EmptyLibraryPanel != null)
@@ -3955,6 +4061,7 @@ namespace Quiver
                     };
 
                 await _gameManager.CheckAllUpdatesAsync();
+                await RefreshAllModUpdateBadgesAsync();
                 ApplySorting();
                 RefreshUpdateCheckStatus(DateTime.Now);
 
@@ -6255,6 +6362,10 @@ namespace Quiver
                 NewGameTagsTextBox.Text = TagHelper.FormatTagsForDisplay(game.Tags);
             if (NewGameFilesToAddTextBox != null)
                 NewGameFilesToAddTextBox.Text = AppFilesToAddService.FormatForDisplay(game.FilesToAdd);
+            if (NewGameModsPathTextBox != null)
+                NewGameModsPathTextBox.Text = GameModsConfig.NormalizePath(game.ModsPath);
+            if (NewGameModsSourcesTextBox != null)
+                NewGameModsSourcesTextBox.Text = GameModsFormHelper.FormatSourcesForEditor(game.ModsSources);
             CreateEditButton.Content = "Update Entry";
             CancelButton.IsVisible = true;
 
@@ -6333,6 +6444,8 @@ namespace Quiver
                 var iconUrl = NewGameIconTextBox?.Text?.Trim();
                 var tags = TagHelper.ParseCommaSeparatedTags(NewGameTagsTextBox?.Text);
                 var filesToAdd = AppFilesToAddService.ParseCommaSeparated(NewGameFilesToAddTextBox?.Text);
+                var modsPath = GameModsConfig.NormalizePath(NewGameModsPathTextBox?.Text);
+                var modsSources = GameModsFormHelper.ParseSourcesFromEditor(NewGameModsSourcesTextBox?.Text);
 
                 if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(repository) || string.IsNullOrEmpty(folderName))
                 {
@@ -6382,6 +6495,8 @@ namespace Quiver
                     appToUpdate.GameIconUrl = iconUrl;
                     appToUpdate.Tags = tags;
                     appToUpdate.FilesToAdd = filesToAdd;
+                    appToUpdate.ModsPath = modsPath.Length > 0 ? modsPath : null;
+                    appToUpdate.ModsSources = modsSources;
 
                     await SaveGamesToJsonAsync(games);
                     AppFilesToAddService.SyncForGame(appToUpdate, _gameManager.GamesFolder, previousFilesToAdd);
@@ -6403,6 +6518,8 @@ namespace Quiver
                         GameIconUrl = iconUrl,
                         Tags = tags,
                         FilesToAdd = filesToAdd,
+                        ModsPath = modsPath.Length > 0 ? modsPath : null,
+                        ModsSources = modsSources,
                         IsCustom = true,
                         IsExperimental = false
                     };
@@ -6558,6 +6675,8 @@ namespace Quiver
             if (NewGameIconTextBox != null) NewGameIconTextBox.Text = "";
             if (NewGameTagsTextBox != null) NewGameTagsTextBox.Text = "";
             if (NewGameFilesToAddTextBox != null) NewGameFilesToAddTextBox.Text = "";
+            if (NewGameModsPathTextBox != null) NewGameModsPathTextBox.Text = "";
+            if (NewGameModsSourcesTextBox != null) NewGameModsSourcesTextBox.Text = "";
             if (CreateEditButton != null) CreateEditButton.Content = "Create Entry";
             if (FormTitleText != null) FormTitleText.Text = "Create New Entry";
             if (ValidationStatusText != null) ValidationStatusText.Text = "";
@@ -7074,6 +7193,12 @@ namespace Quiver
                 return HandleChangelogGamepadNavigation(direction);
             }
 
+            if (_isModDetailsOpen)
+            {
+                _gamepadNavigation.ActiveZone = GamepadNavigationZone.ModsDetailsOverlay;
+                return HandleModDetailsGamepadNavigation(direction);
+            }
+
             if (_isEntryFormOpen)
             {
                 _gamepadNavigation.ActiveZone = GamepadNavigationZone.EntryFormOverlay;
@@ -7098,8 +7223,14 @@ namespace Quiver
             if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.TopBar)
                 return HandleTopBarGamepadNavigation(direction);
 
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.AnnouncementBanner)
+                return HandleAnnouncementBannerGamepadNavigation(direction);
+
             if (_mainViewMode == MainViewMode.AppCatalog && _appCatalogSubView == AppCatalogSubView.Review)
                 return HandleCatalogReviewGamepadNavigation(direction);
+
+            if (_mainViewMode == MainViewMode.Library && _isModsOverlayOpen)
+                return HandleModsGamepadNavigation(direction);
 
             if (_mainViewMode == MainViewMode.Library && _isAppUpdatesReviewOpen)
                 return HandleAppUpdatesReviewGamepadNavigation(direction);
@@ -7236,6 +7367,8 @@ namespace Quiver
             Add(NewGameTagsTextBox);
             Add(NewGameIconTextBox);
             Add(NewGameFilesToAddTextBox);
+            Add(NewGameModsPathTextBox);
+            Add(NewGameModsSourcesTextBox);
             Add(CancelButton);
             Add(CreateEditButton);
             return controls;
@@ -7841,6 +7974,9 @@ namespace Quiver
 
         private GamepadNavigationZone GetMainContentGamepadZone()
         {
+            if (_mainViewMode == MainViewMode.Library && _isModsOverlayOpen)
+                return GamepadNavigationZone.ModsOverlayList;
+
             if (_mainViewMode == MainViewMode.Library && _isAppUpdatesReviewOpen)
                 return GamepadNavigationZone.AppUpdatesReviewList;
 
@@ -7882,6 +8018,12 @@ namespace Quiver
                 ClearTopBarGamepadFocus();
             }
 
+            if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.AnnouncementBanner &&
+                transition.Zone != GamepadNavigationZone.AnnouncementBanner)
+            {
+                ClearAnnouncementBannerGamepadFocus();
+            }
+
             if (_gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogSourcesToolbar &&
                 transition.Zone != GamepadNavigationZone.CatalogSourcesToolbar)
             {
@@ -7918,6 +8060,22 @@ namespace Quiver
                 ClearAppUpdatesReviewToolbarGamepadFocus();
             }
 
+            if (_gamepadNavigation.ActiveZone is GamepadNavigationZone.ModsOverlayToolbar
+                or GamepadNavigationZone.ModsOverlayFilters
+                or GamepadNavigationZone.ModsOverlaySourceFilters
+                or GamepadNavigationZone.ModsOverlayList
+                or GamepadNavigationZone.ModsOverlayRowActions)
+            {
+                if (transition.Zone is not (GamepadNavigationZone.ModsOverlayToolbar
+                    or GamepadNavigationZone.ModsOverlayFilters
+                    or GamepadNavigationZone.ModsOverlaySourceFilters
+                    or GamepadNavigationZone.ModsOverlayList
+                    or GamepadNavigationZone.ModsOverlayRowActions))
+                {
+                    ClearModsGamepadFocus();
+                }
+            }
+
             switch (transition.Zone)
             {
                 case GamepadNavigationZone.Sidebar:
@@ -7929,11 +8087,23 @@ namespace Quiver
                     ApplySidebarGamepadSelection(_gamepadNavigation.SidebarSelectedIndex < 0 ? 0 : _gamepadNavigation.SidebarSelectedIndex);
                     return true;
                 case GamepadNavigationZone.TopBar:
+                    // Coming up from content: stop on the banner first when it is visible.
+                    if (IsAnnouncementBannerVisible &&
+                        _gamepadNavigation.ActiveZone is not (GamepadNavigationZone.TopBar
+                            or GamepadNavigationZone.AnnouncementBanner))
+                    {
+                        ApplyAnnouncementBannerGamepadSelection();
+                        return true;
+                    }
+
                     ClearGamepadFocus();
                     _gamepadNavigation.ActiveZone = GamepadNavigationZone.TopBar;
                     _gamepadNavigation.LibrarySelectedIndex = -1;
                     _gamepadNavigation.CatalogReviewSelectedIndex = -1;
                     ApplyTopBarGamepadSelection(_gamepadNavigation.TopBarSelectedIndex < 0 ? 0 : _gamepadNavigation.TopBarSelectedIndex);
+                    return true;
+                case GamepadNavigationZone.AnnouncementBanner:
+                    ApplyAnnouncementBannerGamepadSelection();
                     return true;
                 case GamepadNavigationZone.Library:
                     ApplyLibraryGamepadSelection(transition.SelectedIndex ?? 0);
@@ -8011,6 +8181,42 @@ namespace Quiver
                         (_gamepadNavigation.AppUpdatesReviewRowActionIndex < 0
                             ? 0
                             : _gamepadNavigation.AppUpdatesReviewRowActionIndex));
+                    return true;
+                case GamepadNavigationZone.ModsOverlayToolbar:
+                    ApplyModsToolbarSelection(transition.SelectedIndex ?? Math.Max(0, _modsGamepadToolbarIndex));
+                    return true;
+                case GamepadNavigationZone.ModsOverlayFilters:
+                    ApplyModsFiltersSelection(transition.SelectedIndex ?? Math.Max(0, _modsGamepadFilterIndex));
+                    return true;
+                case GamepadNavigationZone.ModsOverlaySourceFilters:
+                    if (CollectModsSourceFilterControls().Count == 0)
+                    {
+                        // Down from filters passes SelectedIndex; Up from list passes null.
+                        if (transition.SelectedIndex.HasValue && ModListRows.Count > 0)
+                            ApplyModsListSelection(transition.SelectedIndex.Value);
+                        else
+                            ApplyModsFiltersSelection(Math.Max(0, _modsGamepadFilterIndex));
+                        return true;
+                    }
+
+                    ApplyModsSourceFiltersSelection(
+                        transition.SelectedIndex ?? Math.Max(0, _modsGamepadSourceFilterIndex));
+                    return true;
+                case GamepadNavigationZone.ModsOverlayList:
+                    if (ModListRows.Count == 0)
+                    {
+                        if (CollectModsSourceFilterControls().Count > 0)
+                            ApplyModsSourceFiltersSelection(Math.Max(0, _modsGamepadSourceFilterIndex));
+                        else
+                            ApplyModsFiltersSelection(Math.Max(0, _modsGamepadFilterIndex));
+                        return true;
+                    }
+
+                    ApplyModsListSelection(transition.SelectedIndex ?? 0);
+                    return true;
+                case GamepadNavigationZone.ModsOverlayRowActions:
+                    ApplyModsRowActionSelection(
+                        transition.SelectedIndex ?? Math.Max(0, _modsGamepadRowActionIndex));
                     return true;
                 default:
                     return false;
@@ -8765,6 +8971,13 @@ namespace Quiver
             if (controls.Count == 0)
                 return false;
 
+            if (direction == Services.NavigationDirection.Down && IsAnnouncementBannerVisible)
+            {
+                ClearTopBarGamepadFocus();
+                ApplyAnnouncementBannerGamepadSelection();
+                return true;
+            }
+
             var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
                 direction,
                 GamepadNavigationZone.TopBar,
@@ -8792,6 +9005,57 @@ namespace Quiver
             // Avalonia focus walk does not move keyboard focus onto Sort By while
             // the gamepad selection ring stays on Check for Updates / Settings / etc.
             return true;
+        }
+
+        private bool HandleAnnouncementBannerGamepadNavigation(Services.NavigationDirection direction)
+        {
+            if (!IsAnnouncementBannerVisible)
+            {
+                return TryApplyGamepadZoneTransition(
+                    new GamepadZoneTransition(GetMainContentGamepadZone(), 0));
+            }
+
+            var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
+                direction,
+                GamepadNavigationZone.AnnouncementBanner,
+                GetMainContentGamepadZone(),
+                isListLayout: true,
+                positions: null,
+                currentIndex: 0,
+                itemCount: 1);
+
+            if (zoneTransition.HasValue)
+                return TryApplyGamepadZoneTransition(zoneTransition.Value);
+
+            return true;
+        }
+
+        private bool IsAnnouncementBannerVisible =>
+            AnnouncementBanner is { IsVisible: true } &&
+            AnnouncementBannerCloseButton is { IsVisible: true, IsEnabled: true };
+
+        private void ApplyAnnouncementBannerGamepadSelection()
+        {
+            if (!IsAnnouncementBannerVisible)
+                return;
+
+            ClearGamepadFocus();
+            ClearAnnouncementBannerGamepadFocus();
+            _gamepadNavigation.ActiveZone = GamepadNavigationZone.AnnouncementBanner;
+
+            if (AnnouncementBannerCloseButton is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", true);
+
+            GamepadControlActivation.ApplyGamepadHighlightFocus(AnnouncementBannerCloseButton!);
+        }
+
+        private void ClearAnnouncementBannerGamepadFocus()
+        {
+            if (AnnouncementBannerCloseButton is StyledElement styled)
+                styled.Classes.Set("gamepad-focused", false);
+
+            if (AnnouncementBannerCloseButton != null)
+                ClearFocusIfOnControls([AnnouncementBannerCloseButton]);
         }
 
         private List<Control> CollectSidebarFocusableControls()
@@ -8857,7 +9121,7 @@ namespace Quiver
                     controls.Add(control);
             }
 
-            if (_mainViewMode == MainViewMode.Library)
+            if (_mainViewMode == MainViewMode.Library && !_isAppUpdatesReviewOpen && !_isModsOverlayOpen)
             {
                 Add(AddNewEntryButton);
                 Add(SortByComboBox);
@@ -9356,7 +9620,9 @@ namespace Quiver
                 return;
             }
 
-            if (_mainViewMode == MainViewMode.Library && _isAppUpdatesReviewOpen)
+            if (_mainViewMode == MainViewMode.Library && _isModsOverlayOpen)
+                SelectInitialModsGamepadItem();
+            else if (_mainViewMode == MainViewMode.Library && _isAppUpdatesReviewOpen)
                 SelectInitialAppUpdatesReviewGamepadItem();
             else if (_mainViewMode == MainViewMode.Library)
                 SelectInitialLibraryGamepadItem();
@@ -9672,6 +9938,7 @@ namespace Quiver
 
             ClearTopBarGamepadFocusClasses(CollectTopBarControls());
             ClearSidebarGamepadFocusClasses(CollectSidebarFocusableControls());
+            ClearAnnouncementBannerGamepadFocus();
             ClearCatalogSourcesToolbarGamepadFocus();
             ClearCatalogSourcesFiltersGamepadFocus();
             ClearCatalogSourceCardActionsGamepadFocus();
@@ -9680,6 +9947,7 @@ namespace Quiver
             ClearAppUpdatesReviewToolbarGamepadFocus();
             ClearAppUpdatesReviewRowActionsGamepadFocus();
             ClearAppUpdatesReviewRowFocus();
+            ClearModsGamepadFocus();
             ClearSettingsGamepadFocusClasses(CollectSettingsFocusableControls());
         }
 
@@ -10065,6 +10333,12 @@ namespace Quiver
                 return;
             }
 
+            if (_isModDetailsOpen)
+            {
+                CloseModDetails();
+                return;
+            }
+
             // Options toggles: close an open context menu (download/executable/app options).
             if (_inputService?.TryHandleContextMenuOptionsDismiss() == true)
                 return;
@@ -10117,6 +10391,13 @@ namespace Quiver
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.ChangelogOverlay)
             {
                 ActivateChangelogGamepadSelection();
+                return;
+            }
+
+            if (_isModDetailsOpen &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.ModsDetailsOverlay)
+            {
+                HandleModDetailsGamepadConfirm();
                 return;
             }
 
@@ -10173,6 +10454,13 @@ namespace Quiver
             }
 
             if (AllowChromeActions &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.AnnouncementBanner)
+            {
+                DismissAnnouncementBanner();
+                return;
+            }
+
+            if (AllowChromeActions &&
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewFilters)
             {
                 ActivateReviewFilterSelection();
@@ -10190,6 +10478,24 @@ namespace Quiver
                 _gamepadNavigation.ActiveZone == GamepadNavigationZone.CatalogReviewRowActions)
             {
                 ActivateCatalogReviewRowActionSelection();
+                return;
+            }
+
+            if (AllowChromeActions &&
+                _gamepadNavigation.ActiveZone == GamepadNavigationZone.ModsDetailsOverlay)
+            {
+                HandleModDetailsGamepadConfirm();
+                return;
+            }
+
+            if (AllowChromeActions &&
+                _gamepadNavigation.ActiveZone is GamepadNavigationZone.ModsOverlayToolbar
+                    or GamepadNavigationZone.ModsOverlayFilters
+                    or GamepadNavigationZone.ModsOverlaySourceFilters
+                    or GamepadNavigationZone.ModsOverlayList
+                    or GamepadNavigationZone.ModsOverlayRowActions)
+            {
+                HandleModsGamepadConfirm();
                 return;
             }
 
@@ -10327,6 +10633,12 @@ namespace Quiver
                 return;
             }
 
+            if (_isModDetailsOpen)
+            {
+                CloseModDetails();
+                return;
+            }
+
             if (AllowChromeActions && _inputService?.TryHandleContextMenuCancel() == true)
                 return;
 
@@ -10359,6 +10671,12 @@ namespace Quiver
             if (_isTagEditOpen)
             {
                 CloseTagEditOverlay();
+                return;
+            }
+
+            if (_isModsOverlayOpen)
+            {
+                HandleModsGamepadCancel();
                 return;
             }
 
@@ -10399,8 +10717,10 @@ namespace Quiver
             {
                 case GamepadNavigationZone.Sidebar:
                 case GamepadNavigationZone.TopBar:
+                case GamepadNavigationZone.AnnouncementBanner:
                     ClearSidebarGamepadFocus();
                     ClearTopBarGamepadFocus();
+                    ClearAnnouncementBannerGamepadFocus();
                     SelectInitialGamepadItemForCurrentView();
                     return true;
 

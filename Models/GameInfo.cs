@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using Quiver.Core.Models;
 using Quiver.Core.Services;
 using Quiver.Services;
+using Quiver.Services.Mods;
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -44,6 +45,24 @@ namespace Quiver.Models
         public string? CatalogSourceId { get; set; }
         public List<string> Tags { get; set; } = [];
         public List<string> FilesToAdd { get; set; } = [];
+        public string? ModsPath { get; set; }
+        public List<GameModSource> ModsSources { get; set; } = [];
+        private bool _hasModUpdates;
+        public bool HasModUpdates
+        {
+            get => _hasModUpdates;
+            set
+            {
+                if (_hasModUpdates != value)
+                {
+                    _hasModUpdates = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        public bool CanOpenMods =>
+            GameModsConfig.HasUsableConfig(ModsPath, ModsSources);
         private bool _isInLocalAppsJson;
         public bool IsInLocalAppsJson
         {

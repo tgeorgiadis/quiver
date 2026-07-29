@@ -303,11 +303,56 @@ public sealed class GamepadModalDialogNavigation
         if (_dialogControls.Count == 0)
             return true;
 
+        if (_dialogControls.Count == 1 && GetFocusedControl() is not ListBox)
+            return true;
+
+        // ListBox owns Up/Down for moving among its own items; edges fall through to spatial nav.
+        if (TryMoveListBoxSelection(direction))
+            return true;
+
         if (_dialogControls.Count == 1)
             return true;
 
         var positions = GetControlPositions(_dialogControls, GetControlCenter);
         _focusedControlIndex = MoveFocusIndex(_focusedControlIndex, direction, positions);
+        FocusCurrentControl();
+        return true;
+    }
+
+    private bool TryMoveListBoxSelection(NavigationDirection direction)
+    {
+        if (direction is not (NavigationDirection.Up or NavigationDirection.Down))
+            return false;
+
+        if (GetFocusedControl() is not ListBox listBox)
+            return false;
+
+        var count = listBox.ItemCount;
+        if (count <= 0)
+            return false;
+
+        var index = listBox.SelectedIndex;
+        if (index < 0)
+            index = 0;
+
+        if (direction == NavigationDirection.Down)
+        {
+            if (index >= count - 1)
+                return false;
+            listBox.SelectedIndex = index + 1;
+        }
+        else
+        {
+            if (index <= 0)
+                return false;
+            listBox.SelectedIndex = index - 1;
+        }
+
+        if (listBox.SelectedItem is Control selectedControl)
+            listBox.ScrollIntoView(selectedControl);
+        else if (listBox.SelectedItem != null)
+            listBox.ScrollIntoView(listBox.SelectedItem);
+
         FocusCurrentControl();
         return true;
     }
@@ -333,6 +378,21 @@ public sealed class GamepadModalDialogNavigation
         if (control is TextBox textBox)
         {
             GamepadControlActivation.ActivateTextBox(textBox);
+            return true;
+        }
+
+        // Confirm on a file list installs the current selection via the Install button.
+        if (control is ListBox)
+        {
+            var install = FindAffirmativeButton(_dialogControls) ??
+                          _dialogControls.OfType<Button>().FirstOrDefault(b =>
+                              string.Equals(GetButtonLabel(b), "Install", StringComparison.OrdinalIgnoreCase));
+            if (install == null)
+                return false;
+
+            InvokeQuestionResult(activeDialog, true);
+            ApplyDialogResultHint(activeDialog, install);
+            ActivateAndCloseDialogButton(activeDialog, install);
             return true;
         }
 
@@ -427,6 +487,7 @@ public sealed class GamepadModalDialogNavigation
         "ok",
         "yes",
         "add",
+        "install",
         "download anyway",
         "open settings",
         "update quiver",
@@ -469,7 +530,7 @@ public sealed class GamepadModalDialogNavigation
                 control.IsVisible &&
                 control.IsEnabled &&
                 control.Focusable &&
-                (control is Button or TextBox))
+                (control is Button or TextBox or ListBox))
             .OrderBy(control => GetApproximateCenter(control)?.Y ?? 0)
             .ThenBy(control => GetApproximateCenter(control)?.X ?? 0)
             .ToList();
@@ -483,12 +544,40 @@ public sealed class GamepadModalDialogNavigation
         if (controls.Count == 0)
             return -1;
 
+        // Prefer list selection when present (e.g. multi-file install picker).
+        for (var i = 0; i < controls.Count; i++)
+        {
+            if (controls[i] is ListBox)
+                return i;
+        }
+
         for (var i = 0; i < controls.Count; i++)
         {
             if (controls[i] is Button { IsDefault: true })
                 return i;
         }
 
+        var affirmative = FindAffirmativeButtonIndex(controls);
+        if (affirmative >= 0)
+            return affirmative;
+
+        for (var i = 0; i < controls.Count; i++)
+        {
+            if (controls[i] is TextBox)
+                return i;
+        }
+
+        return 0;
+    }
+
+    private static Button? FindAffirmativeButton(IReadOnlyList<Control> controls)
+    {
+        var index = FindAffirmativeButtonIndex(controls);
+        return index >= 0 ? controls[index] as Button : null;
+    }
+
+    private static int FindAffirmativeButtonIndex(IReadOnlyList<Control> controls)
+    {
         for (var i = 0; i < controls.Count; i++)
         {
             if (controls[i] is not Button button)
@@ -502,13 +591,7 @@ public sealed class GamepadModalDialogNavigation
             }
         }
 
-        for (var i = 0; i < controls.Count; i++)
-        {
-            if (controls[i] is TextBox)
-                return i;
-        }
-
-        return 0;
+        return -1;
     }
 
     public static int FindCancelButtonIndex(IReadOnlyList<Button> buttons) =>
