@@ -759,6 +759,20 @@ public partial class MainWindow
 
     private void ApplyModsFiltersToUi()
     {
+        var restoreFocus = IsGamepadFocusActive &&
+            _gamepadNavigation.ActiveZone is GamepadNavigationZone.ModsOverlayList
+                or GamepadNavigationZone.ModsOverlayRowActions;
+        ModPackage? focusedPackage = null;
+        var fallbackIndex = _modsGamepadListIndex;
+        if (restoreFocus)
+        {
+            var focusedRow = ModListRows.FirstOrDefault(r => r.IsGamepadFocused);
+            if (focusedRow != null)
+                focusedPackage = focusedRow.Package;
+            else if (fallbackIndex >= 0 && fallbackIndex < ModListRows.Count)
+                focusedPackage = ModListRows[fallbackIndex].Package;
+        }
+
         IEnumerable<ModListItem> query = _modsAllItems;
 
         // Remote search already applied NSFW via the API where supported; still hide NSFW client-side
@@ -797,6 +811,35 @@ public partial class MainWindow
 
         if (ModsUpdateAllButton != null)
             ModsUpdateAllButton.IsEnabled = rows.Any(r => r.CanUpdate);
+
+        if (!restoreFocus || ModListRows.Count == 0)
+            return;
+
+        var index = ModCatalogListBuilder.FindListIndexByPackage(ModListRows, focusedPackage, fallbackIndex);
+        if (index >= 0)
+            ApplyModsListSelection(index);
+    }
+
+    /// <summary>
+    /// Updates install status on existing list rows without rebuilding ModListItem instances
+    /// (avoids focus loss and AdvancedImage rebinds after install/uninstall).
+    /// </summary>
+    private void ApplyInstalledStateToMatchingItems(ModPackage package)
+    {
+        if (_modsGame == null)
+            return;
+
+        var installRoot = _modsGame.GetInstallPath(_gameManager.GamesFolder);
+        var installedDoc = string.IsNullOrWhiteSpace(installRoot) || !Directory.Exists(installRoot)
+            ? new InstalledModsDocument()
+            : ModInstaller.LoadInstalled(installRoot);
+        var record = FindInstalledRecord(installedDoc, package);
+
+        foreach (var existing in _modsAllItems)
+        {
+            if (ModCatalogListBuilder.PackagesMatch(existing.Package, package))
+                existing.ApplyInstalled(record);
+        }
     }
 
     private void BuildModsSourceFilterButtons()
@@ -943,7 +986,7 @@ public partial class MainWindow
                 selectedFile,
                 progress).ConfigureAwait(true);
 
-            SyncModListItemsFromCatalog();
+            ApplyInstalledStateToMatchingItems(package);
             ApplyModsFiltersToUi();
             await RefreshModUpdateFlagsForGameAsync(_modsGame).ConfigureAwait(true);
             SetModsStatus(isUpdate ? $"Updated {item.DisplayName}" : $"Installed {item.DisplayName}");
@@ -1094,8 +1137,9 @@ public partial class MainWindow
         item.IsBusy = true;
         try
         {
+            var package = item.Package;
             ModInstaller.Uninstall(installRoot, modsPath, item.ProviderId, item.PackageId);
-            SyncModListItemsFromCatalog();
+            ApplyInstalledStateToMatchingItems(package);
             ApplyModsFiltersToUi();
             _ = RefreshModUpdateFlagsForGameAsync(_modsGame);
             SetModsStatus($"Uninstalled {item.DisplayName}");

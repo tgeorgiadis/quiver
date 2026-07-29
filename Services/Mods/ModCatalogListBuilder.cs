@@ -65,6 +65,35 @@ public static class ModCatalogListBuilder
                string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Index of <paramref name="package"/> in <paramref name="rows"/>, or <paramref name="fallbackIndex"/>
+    /// clamped into range when no match (or 0 when the list is non-empty and fallback is invalid).
+    /// </summary>
+    public static int FindListIndexByPackage(
+        IReadOnlyList<ModListItem> rows,
+        ModPackage? package,
+        int fallbackIndex)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        if (rows.Count == 0)
+            return -1;
+
+        if (package != null)
+        {
+            for (var i = 0; i < rows.Count; i++)
+            {
+                if (PackagesMatch(rows[i].Package, package))
+                    return i;
+            }
+        }
+
+        if (fallbackIndex < 0)
+            return 0;
+        if (fallbackIndex >= rows.Count)
+            return rows.Count - 1;
+        return fallbackIndex;
+    }
+
     public static InstalledModRecord? FindMatchingRecord(InstalledModsDocument doc, ModPackage package)
     {
         ArgumentNullException.ThrowIfNull(doc);

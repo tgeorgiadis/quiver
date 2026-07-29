@@ -4184,6 +4184,18 @@ namespace Quiver
             }
         }
 
+        private void DiscordButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                OpenUrl("https://discord.gg/5XRThpWHGk");
+            }
+            catch (Exception ex)
+            {
+                _ = ShowMessageBoxAsync($"Failed to open Discord link: {ex.Message}", "Action Error");
+            }
+        }
+
         private async void LaunchGameMenu_Click(object sender, RoutedEventArgs e)
         {
             var menuItem = sender as MenuItem;
@@ -8941,13 +8953,63 @@ namespace Quiver
             if (controls.Count == 0)
                 return false;
 
+            var currentIndex = _gamepadNavigation.ClampIndex(_gamepadNavigation.SidebarSelectedIndex, controls.Count);
+            var footerStartIndex = FindSidebarFooterStartIndex(controls);
+
+            // Footer icons are a horizontal strip: Left/Right only between them.
+            if (footerStartIndex >= 0 && currentIndex >= footerStartIndex)
+            {
+                var footerCount = controls.Count - footerStartIndex;
+                var footerLocalIndex = currentIndex - footerStartIndex;
+
+                if (direction is Services.NavigationDirection.Left or Services.NavigationDirection.Right)
+                {
+                    // Right from the last footer button leaves the sidebar.
+                    if (direction == Services.NavigationDirection.Right && footerLocalIndex >= footerCount - 1)
+                    {
+                        var leaveSidebar = _gamepadNavigation.TryGetZoneTransition(
+                            direction,
+                            GamepadNavigationZone.Sidebar,
+                            GetMainContentGamepadZone(),
+                            isListLayout: true,
+                            positions: null,
+                            currentIndex,
+                            controls.Count);
+                        if (leaveSidebar.HasValue)
+                            return TryApplyGamepadZoneTransition(leaveSidebar.Value);
+                        return true;
+                    }
+
+                    var nextLocal = _gamepadNavigation.MoveHorizontalIndex(footerLocalIndex, direction, footerCount);
+                    ApplySidebarGamepadSelection(footerStartIndex + nextLocal);
+                    return true;
+                }
+
+                if (direction == Services.NavigationDirection.Up)
+                {
+                    if (footerStartIndex > 0)
+                        ApplySidebarGamepadSelection(footerStartIndex - 1);
+                    return true;
+                }
+
+                if (direction == Services.NavigationDirection.Down)
+                {
+                    // Stay on the current footer icon; wrap from the last one to the top of the sidebar.
+                    if (currentIndex >= controls.Count - 1 && footerStartIndex > 0)
+                        ApplySidebarGamepadSelection(0);
+                    return true;
+                }
+
+                return true;
+            }
+
             var zoneTransition = _gamepadNavigation.TryGetZoneTransition(
                 direction,
                 GamepadNavigationZone.Sidebar,
                 GetMainContentGamepadZone(),
                 isListLayout: true,
                 positions: null,
-                _gamepadNavigation.SidebarSelectedIndex,
+                currentIndex,
                 controls.Count);
 
             if (zoneTransition.HasValue)
@@ -8956,13 +9018,43 @@ namespace Quiver
             if (direction is not (Services.NavigationDirection.Up or Services.NavigationDirection.Down))
                 return true;
 
-            var nextIndex = _gamepadNavigation.MoveListIndex(
-                _gamepadNavigation.SidebarSelectedIndex,
-                direction,
-                controls.Count);
+            // Enter the footer strip on its first button (GitHub), not Discord.
+            if (direction == Services.NavigationDirection.Down &&
+                footerStartIndex >= 0 &&
+                currentIndex == footerStartIndex - 1)
+            {
+                ApplySidebarGamepadSelection(footerStartIndex);
+                return true;
+            }
+
+            var nextIndex = _gamepadNavigation.MoveListIndex(currentIndex, direction, controls.Count);
+
+            // Wrapping Up from the first sidebar item lands on the last control (Discord).
+            // Prefer the start of the footer strip so Up/Down never step GitHub ↔ Discord.
+            if (direction == Services.NavigationDirection.Up &&
+                currentIndex <= 0 &&
+                footerStartIndex >= 0 &&
+                nextIndex >= footerStartIndex)
+            {
+                nextIndex = footerStartIndex;
+            }
 
             ApplySidebarGamepadSelection(nextIndex);
             return true;
+        }
+
+        private int FindSidebarFooterStartIndex(IReadOnlyList<Control> controls)
+        {
+            for (var i = 0; i < controls.Count; i++)
+            {
+                if (ReferenceEquals(controls[i], GitHubFooterButton) ||
+                    ReferenceEquals(controls[i], DiscordFooterButton))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         private bool HandleTopBarGamepadNavigation(Services.NavigationDirection direction)
@@ -9097,18 +9189,9 @@ namespace Quiver
                 Add(addDisplayFilterButton);
             }
 
-            Add(FindGitHubFooterButton());
+            Add(GitHubFooterButton);
+            Add(DiscordFooterButton);
             return controls;
-        }
-
-        private Button? FindGitHubFooterButton()
-        {
-            return this.GetVisualDescendants().OfType<Button>()
-                .FirstOrDefault(b =>
-                    b.IsVisible &&
-                    b.IsEnabled &&
-                    b.GetVisualDescendants().OfType<TextBlock>()
-                        .Any(textBlock => textBlock.Text == "GitHub"));
         }
 
         private List<Control> CollectTopBarControls()
@@ -10800,16 +10883,10 @@ namespace Quiver
 
         private void MainWindow_Activated(object? sender, EventArgs e)
         {
-            if (!_trackingLaunchedGameProcess)
-            {
-                _launchedGameOwnsInput = false;
-            }
-
-            _inputService?.SetWindowActive(true);
-            if (_settings.EnableGamepadInput && !_launchedGameOwnsInput)
-            {
-                _inputService?.SetGamepadEnabled(true);
-            }
+            // Always reclaim input when Quiver is focused. Waiting on the launched process can
+            // hang (shell-execute / orphaned waiters), which used to leave _launchedGameOwnsInput
+            // true and swallow all gamepad/keyboard navigation while Cancel still worked.
+            RestoreLauncherInputAfterForeground();
 
             #if WINDOWS
                         _ = FadeMusicAsync(MusicVolume, FADE_DURATION_MS);
@@ -10856,6 +10933,9 @@ namespace Quiver
 
             if (process == null)
             {
+                // Nothing to wait on — reclaim immediately if Quiver is still foreground.
+                if (IsActive)
+                    RestoreLauncherInputAfterForeground();
                 return;
             }
 
@@ -10885,13 +10965,78 @@ namespace Quiver
                     _trackingLaunchedGameProcess = false;
                     _launchedGameOwnsInput = false;
 
-                    if (IsActive && _settings.EnableGamepadInput)
-                    {
-                        _inputService?.SetGamepadEnabled(true);
-                        _inputService?.SetWindowActive(true);
-                    }
+                    if (IsActive)
+                        RestoreLauncherInputAfterForeground();
                 });
             });
+        }
+
+        /// <summary>
+        /// Re-enable launcher input and restore the current gamepad/keyboard highlight after
+        /// returning from a launched game (or when focus returns while a wait is still pending).
+        /// </summary>
+        private void RestoreLauncherInputAfterForeground()
+        {
+            _launchedGameOwnsInput = false;
+            _inputService?.SetWindowActive(true);
+            if (_settings.EnableGamepadInput)
+                _inputService?.SetGamepadEnabled(true);
+
+            UpdateGamepadChromeClass();
+
+            if (!IsGamepadFocusActive)
+                return;
+
+            RestoreCurrentGamepadZoneSelection();
+        }
+
+        private void RestoreCurrentGamepadZoneSelection()
+        {
+            switch (_gamepadNavigation.ActiveZone)
+            {
+                case GamepadNavigationZone.Sidebar:
+                    ApplySidebarGamepadSelection(
+                        _gamepadNavigation.SidebarSelectedIndex < 0
+                            ? 0
+                            : _gamepadNavigation.SidebarSelectedIndex);
+                    return;
+                case GamepadNavigationZone.TopBar:
+                    ApplyTopBarGamepadSelection(
+                        _gamepadNavigation.TopBarSelectedIndex < 0
+                            ? 0
+                            : _gamepadNavigation.TopBarSelectedIndex);
+                    return;
+                case GamepadNavigationZone.AnnouncementBanner:
+                    ApplyAnnouncementBannerGamepadSelection();
+                    return;
+                case GamepadNavigationZone.ModsOverlayToolbar:
+                    ApplyModsToolbarSelection(
+                        _modsGamepadToolbarIndex < 0 ? 0 : _modsGamepadToolbarIndex);
+                    return;
+                case GamepadNavigationZone.ModsOverlayFilters:
+                    ApplyModsFiltersSelection(
+                        _modsGamepadFilterIndex < 0 ? 0 : _modsGamepadFilterIndex);
+                    return;
+                case GamepadNavigationZone.ModsOverlaySourceFilters:
+                    ApplyModsSourceFiltersSelection(
+                        _modsGamepadSourceFilterIndex < 0 ? 0 : _modsGamepadSourceFilterIndex);
+                    return;
+                case GamepadNavigationZone.ModsOverlayList:
+                    ApplyModsListSelection(
+                        _modsGamepadListIndex < 0 ? 0 : _modsGamepadListIndex);
+                    return;
+                case GamepadNavigationZone.ModsOverlayRowActions:
+                    ApplyModsRowActionSelection(
+                        _modsGamepadRowActionIndex < 0 ? 0 : _modsGamepadRowActionIndex);
+                    return;
+                case GamepadNavigationZone.ModsDetailsOverlay:
+                    ApplyModDetailsGamepadSelection(
+                        _modDetailsGamepadFocusIndex < 0 ? 0 : _modDetailsGamepadFocusIndex);
+                    return;
+                default:
+                    SelectInitialGamepadItemForCurrentView();
+                    return;
+            }
         }
 
         private static async Task<int?> TryGetProcessGroupIdAsync(int processId)

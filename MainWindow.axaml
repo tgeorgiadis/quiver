@@ -2269,22 +2269,26 @@
 				<!-- Footer Links -->
 				<StackPanel Grid.Row="4" Margin="12,0,12,8">
 						<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="-12,0,-12,8"/>
-					<Button Classes="iconbutton"
-							Width="216"
-							Height="44"
-							HorizontalAlignment="Left"
-							Click="GithubButton_Click">
-						<StackPanel Orientation="Horizontal" Margin="12,0">
-							<Image Width="32" Height="32" 
-								   Source="avares://Quiver/Assets/Github.png"
-								   Margin="0,0,12,0"/>
-							<TextBlock Text="GitHub" 
-									   Foreground="{DynamicResource ThemeTextSecondary}"
-									   FontSize="14"
-									   FontWeight="Medium"
-									   VerticalAlignment="Center"/>
-						</StackPanel>
-					</Button>
+					<StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+						<Button x:Name="GitHubFooterButton"
+								Classes="iconbutton"
+								Width="44"
+								Height="44"
+								ToolTip.Tip="GitHub"
+								Click="GithubButton_Click">
+							<Image Width="32" Height="32"
+								   Source="avares://Quiver/Assets/Github.png"/>
+						</Button>
+						<Button x:Name="DiscordFooterButton"
+								Classes="iconbutton"
+								Width="44"
+								Height="44"
+								ToolTip.Tip="Discord"
+								Click="DiscordButton_Click">
+							<Image Width="32" Height="32"
+								   Source="avares://Quiver/Assets/Discord.png"/>
+						</Button>
+					</StackPanel>
 				</StackPanel>
 			</Grid>
 		</Border>

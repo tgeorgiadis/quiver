@@ -1224,6 +1224,80 @@ public class ModsSystemTests
     }
 
     [Fact]
+    public void ModCatalogListBuilder_FindListIndexByPackage_prefers_package_identity()
+    {
+        var a = MakePkg(ModProviderIds.Thunderstore, "banjo", "A", "Own", "A");
+        var b = MakePkg(ModProviderIds.Thunderstore, "banjo", "B", "Own", "B");
+        var c = MakePkg(ModProviderIds.Thunderstore, "banjo", "C", "Own", "C");
+        var rows = new List<ModListItem>
+        {
+            new() { Package = a },
+            new() { Package = b },
+            new() { Package = c },
+        };
+
+        // After Installed-first sort, B may move — identity still finds it.
+        ModCatalogListBuilder.FindListIndexByPackage(rows, b, fallbackIndex: 0).Should().Be(1);
+        ModCatalogListBuilder.FindListIndexByPackage(rows, c, fallbackIndex: 0).Should().Be(2);
+    }
+
+    [Fact]
+    public void ModCatalogListBuilder_FindListIndexByPackage_falls_back_when_missing()
+    {
+        var rows = new List<ModListItem>
+        {
+            new() { Package = MakePkg(ModProviderIds.Thunderstore, "banjo", "A", "Own", "A") },
+            new() { Package = MakePkg(ModProviderIds.Thunderstore, "banjo", "B", "Own", "B") },
+        };
+        var missing = MakePkg(ModProviderIds.Thunderstore, "banjo", "Z", "Own", "Z");
+
+        ModCatalogListBuilder.FindListIndexByPackage(rows, missing, fallbackIndex: 1).Should().Be(1);
+        ModCatalogListBuilder.FindListIndexByPackage(rows, missing, fallbackIndex: 99).Should().Be(1);
+        ModCatalogListBuilder.FindListIndexByPackage(rows, null, fallbackIndex: -1).Should().Be(0);
+        ModCatalogListBuilder.FindListIndexByPackage([], missing, fallbackIndex: 0).Should().Be(-1);
+    }
+
+    [Fact]
+    public void ModListItem_ApplyInstalled_updates_status_in_place()
+    {
+        var package = new ModPackage
+        {
+            ProviderId = ModProviderIds.Thunderstore,
+            SourceKey = "banjo",
+            SourceDisplayLabel = "Thunderstore · banjo",
+            Id = "Cloudy-Mumbo",
+            Owner = "Cloudy",
+            Name = "Mumbo",
+            FullName = "Cloudy-Mumbo",
+            LatestVersion = new ModPackageVersion
+            {
+                Version = "2.0.0",
+                DownloadUrl = "https://example.com/mod.zip",
+            },
+        };
+
+        var item = new ModListItem { Package = package };
+        item.CanInstall.Should().BeTrue();
+        item.CanUninstall.Should().BeFalse();
+
+        item.ApplyInstalled(new InstalledModRecord { Version = "2.0.0" });
+        item.Status.Should().Be(ModInstallStatus.Installed);
+        item.CanInstall.Should().BeFalse();
+        item.CanUpdate.Should().BeFalse();
+        item.CanUninstall.Should().BeTrue();
+        item.InstalledVersion.Should().Be("2.0.0");
+
+        item.ApplyInstalled(new InstalledModRecord { Version = "1.0.0" });
+        item.Status.Should().Be(ModInstallStatus.UpdateAvailable);
+        item.CanUpdate.Should().BeTrue();
+
+        item.ApplyInstalled(null);
+        item.Status.Should().Be(ModInstallStatus.NotInstalled);
+        item.CanInstall.Should().BeTrue();
+        item.InstalledVersion.Should().BeNull();
+    }
+
+    [Fact]
     public async Task ModCatalogLoader_load_more_dedupes_overlapping_page_packages()
     {
         var provider = new FakePagedBrowseProvider(

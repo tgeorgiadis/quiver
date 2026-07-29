@@ -7,6 +7,23 @@ namespace Quiver.Core.Services;
 
 public static class GameInstallationService
 {
+    /// <summary>
+    /// True for single-file release binaries: .exe, .appimage, or extensionless (e.g. CrashBandicoot_Linux).
+    /// </summary>
+    public static bool IsSingleFileExecutableAsset(string assetName)
+    {
+        if (string.IsNullOrWhiteSpace(assetName))
+            return false;
+
+        if (assetName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+            assetName.EndsWith(".appimage", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return !Path.HasExtension(assetName);
+    }
+
     public static async Task InstallOrUpdateGameAsync(
         string downloadPath,
         string gamePath,
@@ -17,8 +34,7 @@ public static class GameInstallationService
         options ??= GameInstallationOptions.Default;
         Directory.CreateDirectory(gamePath);
 
-        if (assetName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
-            assetName.EndsWith(".appimage", StringComparison.OrdinalIgnoreCase))
+        if (IsSingleFileExecutableAsset(assetName))
         {
             var destPath = Path.Combine(gamePath, assetName);
             File.Move(downloadPath, destPath, true);
@@ -31,6 +47,12 @@ public static class GameInstallationService
         else if (assetName.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
         {
             await ExtractTarGzAsync(downloadPath, gamePath).ConfigureAwait(false);
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"Unsupported release asset type: '{assetName}'. " +
+                "Expected .exe, .appimage, .zip, .tar.gz, or an extensionless binary.");
         }
 
         try

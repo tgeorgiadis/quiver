@@ -1,3 +1,5 @@
+using AsyncImageLoader;
+using AsyncImageLoader.Loaders;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -155,6 +157,7 @@ public class App : Application, INotifyPropertyChanged
 #endif
 
         CleanupStaleUpdateBackups();
+        ConfigureAsyncImageLoaderCache();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -186,6 +189,24 @@ public class App : Application, INotifyPropertyChanged
             {
                 _startupSelfUpdatePromptCompleted.TrySetResult();
             }
+        }
+    }
+
+    private static void ConfigureAsyncImageLoaderCache()
+    {
+        try
+        {
+            var imagesCache = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache", "Images");
+            Directory.CreateDirectory(imagesCache);
+
+            var previous = ImageLoader.AsyncImageLoader;
+            ImageLoader.AsyncImageLoader = new DiskCachedWebImageLoader(imagesCache);
+            if (!ReferenceEquals(previous, ImageLoader.AsyncImageLoader))
+                previous?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"Failed to configure AsyncImageLoader disk cache: {ex.Message}");
         }
     }
 

@@ -201,10 +201,13 @@ public static class GameDownloadInstallService
             }
             finally
             {
-                var wasSingleExecutable = asset.name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
-                                          asset.name.EndsWith(".appimage", StringComparison.OrdinalIgnoreCase);
+                // Single-file assets are moved into the game folder; archives stay in temp and must be deleted.
+                // If a single-file move failed, the temp file may still exist — clean it up either way for archives,
+                // and for leftover single-file temps after a failed install.
+                var wasSingleExecutable = GameInstallationService.IsSingleFileExecutableAsset(asset.name);
 
-                if (!wasSingleExecutable && File.Exists(downloadPath))
+                if (File.Exists(downloadPath) &&
+                    (!wasSingleExecutable || !File.Exists(Path.Combine(gamePath, asset.name))))
                 {
                     try
                     {

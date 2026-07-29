@@ -1,5 +1,5 @@
 {
-  "id": "2026-07-28-mods",
+  "id": "2026-07-30-241",
   "enabled": true,
-  "message": "v2.4.0 - Mod Manager is now in Beta with Thunderstore & GameBanana support. Update mod sources via the App Catalog, then open Mods from the app's options."
+  "message": "v2.4.1 - Linux single-file installs (e.g. Crash Bandicoot), Discord footer link, Mod Manager focus fixes, and gamepad input recovery after launching a game."
 }

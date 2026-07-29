@@ -134,11 +134,15 @@ namespace Quiver.Core.Services
                         return false;
                     }
 
-                    bool isLinuxX64 = HasAnyOf(assetNameLower, "x86_64", "x64", "amd64", "x86-64") &&
-                                      !HasAnyOf(assetNameLower, "arm64", "aarch64", "armv7", "armhf", "arm-");
+                    if (HasAnyOf(assetNameLower, "arm64", "aarch64", "armv7", "armhf", "arm-"))
+                    {
+                        System.Diagnostics.Debug.WriteLine("Excluded: ARM Linux build for x64 platform");
+                        return false;
+                    }
 
-                    System.Diagnostics.Debug.WriteLine($"Linux x64 match result: {isLinuxX64}");
-                    return isLinuxX64;
+                    // Explicit x64 markers, or arch-unspecified Linux builds (e.g. CrashBandicoot_Linux).
+                    System.Diagnostics.Debug.WriteLine("Linux x64 match result: True");
+                    return true;
                 }
             }
 
