@@ -52,11 +52,11 @@ public static class GameLaunchService
 
             var settings = AppSettings.Load();
 
-            if (needsWine && !WindowsRunnerService.IsWindowsRunnerAvailable(settings))
+            if (needsWine && !WindowsRunnerService.IsWindowsRunnerAvailable(settings, game))
             {
                 await GameDialogService.ShowMessageBoxAsync(
                     "Only a Windows executable was found, but no Linux Windows-runner is configured or detected.\n\n" +
-                    "Install Wine/Proton or set a custom command in Settings to launch Windows apps.",
+                    "Install Wine/Proton, or open this app’s menu (⋯) → Launch Options → Windows Runner to pick a runner or custom command.",
                     "Windows Runner Not Found");
                 return false;
             }
@@ -97,7 +97,7 @@ public static class GameLaunchService
             }
             else if (needsWine && RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                var runnerCommand = WindowsRunnerService.GetWindowsRunnerCommand(settings, executablePath, gamePath);
+                var runnerCommand = WindowsRunnerService.GetWindowsRunnerCommand(settings, executablePath, gamePath, game);
                 if (runnerCommand == null)
                 {
                     await GameDialogService.ShowMessageBoxAsync(

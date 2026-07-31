@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Quiver.Models;
 
 namespace Quiver.Services;
 
@@ -9,6 +10,13 @@ public sealed class WindowsRunnerCommandSpec
     public required string FileName { get; init; }
     public required List<string> Arguments { get; init; }
     public Dictionary<string, string> EnvironmentVariables { get; init; } = new(StringComparer.Ordinal);
+}
+
+public sealed class ProtonInstallationInfo
+{
+    public required string DisplayName { get; init; }
+    public required string ProtonExecutable { get; init; }
+    public required string SteamRoot { get; init; }
 }
 
 public static class WindowsRunnerService
@@ -26,15 +34,86 @@ public static class WindowsRunnerService
         ["{exeDir}"] = (executablePath, gamePath) => Path.GetDirectoryName(executablePath) ?? gamePath,
     };
 
-    public static bool IsWindowsRunnerAvailable(AppSettings? settings = null)
+    public static LinuxWindowsRunnerKind ParseRunnerKind(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return LinuxWindowsRunnerKind.Auto;
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "wine" => LinuxWindowsRunnerKind.Wine,
+            "proton" => LinuxWindowsRunnerKind.Proton,
+            "custom" => LinuxWindowsRunnerKind.Custom,
+            _ => LinuxWindowsRunnerKind.Auto,
+        };
+    }
+
+    public static string FormatRunnerKind(LinuxWindowsRunnerKind kind) =>
+        kind switch
+        {
+            LinuxWindowsRunnerKind.Wine => "wine",
+            LinuxWindowsRunnerKind.Proton => "proton",
+            LinuxWindowsRunnerKind.Custom => "custom",
+            _ => "auto",
+        };
+
+    public static string GetDefaultWinePrefixPath(string gamePath) =>
+        Path.Combine(gamePath, ".wine-prefix");
+
+    public static string GetDefaultProtonCompatDataPath(string gamePath) =>
+        Path.Combine(gamePath, ".steam-compat-data");
+
+    public static bool IsWindowsRunnerAvailable(AppSettings? settings = null, GameInfo? game = null)
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             return false;
+
+        var kind = ParseRunnerKind(game?.LinuxRunner);
+        if (kind == LinuxWindowsRunnerKind.Custom &&
+            (!string.IsNullOrWhiteSpace(game?.LinuxCustomLaunchCommand) ||
+             !string.IsNullOrWhiteSpace(settings?.LinuxWindowsLaunchCommand)))
+        {
+            return true;
+        }
+
+        if (kind == LinuxWindowsRunnerKind.Wine)
+            return IsWineAvailable();
+
+        if (kind == LinuxWindowsRunnerKind.Proton)
+            return ListDetectedProtonInstallations().Count > 0 ||
+                   (!string.IsNullOrWhiteSpace(game?.LinuxProtonPath) && File.Exists(game.LinuxProtonPath));
 
         if (!string.IsNullOrWhiteSpace(settings?.LinuxWindowsLaunchCommand))
             return true;
 
         return IsWineOrProtonAvailable();
+    }
+
+    public static bool IsWineAvailable() =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
+        (IsCommandAvailable("wine64") || IsCommandAvailable("wine"));
+
+    public static IReadOnlyList<ProtonInstallationInfo> ListDetectedProtonInstallations()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return [];
+
+        var results = new List<ProtonInstallationInfo>();
+        foreach (var installation in GetProtonInstallations())
+        {
+            if (!File.Exists(installation.ProtonExecutable))
+                continue;
+
+            var dirName = Path.GetFileName(Path.GetDirectoryName(installation.ProtonExecutable)) ?? "Proton";
+            results.Add(new ProtonInstallationInfo
+            {
+                DisplayName = dirName,
+                ProtonExecutable = installation.ProtonExecutable,
+                SteamRoot = installation.SteamRoot,
+            });
+        }
+
+        return results;
     }
 
     public static WindowsRunnerCommandSpec BuildWindowsRunnerCommand(
@@ -69,46 +148,55 @@ public static class WindowsRunnerService
     public static WindowsRunnerCommandSpec? GetWindowsRunnerCommand(
         AppSettings settings,
         string executablePath,
-        string gamePath)
+        string gamePath,
+        GameInfo? game = null)
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             return null;
 
+        var kind = ParseRunnerKind(game?.LinuxRunner);
+
+        if (kind == LinuxWindowsRunnerKind.Custom)
+        {
+            var custom = game?.LinuxCustomLaunchCommand;
+            if (string.IsNullOrWhiteSpace(custom))
+                custom = settings.LinuxWindowsLaunchCommand;
+            if (string.IsNullOrWhiteSpace(custom))
+                return null;
+
+            return BuildWindowsRunnerCommand(custom, executablePath, gamePath);
+        }
+
+        if (kind == LinuxWindowsRunnerKind.Wine)
+            return BuildWineCommand(executablePath, gamePath, game?.LinuxPrefixPath);
+
+        if (kind == LinuxWindowsRunnerKind.Proton)
+            return BuildProtonCommand(executablePath, gamePath, game?.LinuxPrefixPath, game?.LinuxProtonPath);
+
+        // Auto: global custom command, then Proton (preferred), then Wine.
         if (!string.IsNullOrWhiteSpace(settings.LinuxWindowsLaunchCommand))
             return BuildWindowsRunnerCommand(settings.LinuxWindowsLaunchCommand, executablePath, gamePath);
 
-        if (IsCommandAvailable("wine64"))
-            return BuildWindowsRunnerCommand("wine64 {exe}", executablePath, gamePath);
+        var proton = BuildProtonCommand(executablePath, gamePath, game?.LinuxPrefixPath, game?.LinuxProtonPath);
+        if (proton != null)
+            return proton;
 
-        if (IsCommandAvailable("wine"))
-            return BuildWindowsRunnerCommand("wine {exe}", executablePath, gamePath);
-
-        foreach (var protonInstallation in GetProtonInstallations())
-        {
-            if (!File.Exists(protonInstallation.ProtonExecutable))
-                continue;
-
-            var compatDataPath = GetProtonCompatDataPath(gamePath);
-            var compatAppId = GetStableCompatAppId(executablePath);
-            Directory.CreateDirectory(compatDataPath);
-
-            return new WindowsRunnerCommandSpec
-            {
-                FileName = protonInstallation.ProtonExecutable,
-                Arguments = ["waitforexitandrun", executablePath],
-                EnvironmentVariables = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = protonInstallation.SteamRoot,
-                    ["STEAM_COMPAT_DATA_PATH"] = compatDataPath,
-                    ["STEAM_COMPAT_APP_ID"] = compatAppId,
-                    ["SteamAppId"] = compatAppId,
-                    ["SteamGameId"] = compatAppId,
-                },
-            };
-        }
-
-        return null;
+        return BuildWineCommand(executablePath, gamePath, game?.LinuxPrefixPath);
     }
+
+    public static LinuxWindowsRunnerKind GetPreferredDefaultKind()
+    {
+        if (ListDetectedProtonInstallations().Count > 0)
+            return LinuxWindowsRunnerKind.Proton;
+        if (IsWineAvailable())
+            return LinuxWindowsRunnerKind.Wine;
+        return LinuxWindowsRunnerKind.Custom;
+    }
+
+    public static string GetDefaultPrefixPathForKind(LinuxWindowsRunnerKind kind, string gamePath) =>
+        kind == LinuxWindowsRunnerKind.Wine
+            ? GetDefaultWinePrefixPath(gamePath)
+            : GetDefaultProtonCompatDataPath(gamePath);
 
     internal static List<string> SplitRunnerCommand(string command)
     {
@@ -166,6 +254,100 @@ public static class WindowsRunnerService
             tokens.Add(current.ToString());
 
         return tokens;
+    }
+
+    private static WindowsRunnerCommandSpec? BuildWineCommand(
+        string executablePath,
+        string gamePath,
+        string? prefixPath)
+    {
+        string? wineBinary = null;
+        if (IsCommandAvailable("wine64"))
+            wineBinary = "wine64";
+        else if (IsCommandAvailable("wine"))
+            wineBinary = "wine";
+
+        if (wineBinary == null)
+            return null;
+
+        var prefix = string.IsNullOrWhiteSpace(prefixPath)
+            ? GetDefaultWinePrefixPath(gamePath)
+            : prefixPath.Trim();
+        Directory.CreateDirectory(prefix);
+
+        return new WindowsRunnerCommandSpec
+        {
+            FileName = wineBinary,
+            Arguments = [executablePath],
+            EnvironmentVariables = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["WINEPREFIX"] = prefix,
+            },
+        };
+    }
+
+    private static WindowsRunnerCommandSpec? BuildProtonCommand(
+        string executablePath,
+        string gamePath,
+        string? prefixPath,
+        string? protonExecutablePath)
+    {
+        ProtonInstallation? installation = null;
+
+        if (!string.IsNullOrWhiteSpace(protonExecutablePath) && File.Exists(protonExecutablePath))
+        {
+            var steamRoot = FindSteamRootForProton(protonExecutablePath)
+                            ?? GetSteamRoots().FirstOrDefault();
+            if (steamRoot != null)
+            {
+                installation = new ProtonInstallation
+                {
+                    ProtonExecutable = protonExecutablePath,
+                    SteamRoot = steamRoot,
+                };
+            }
+        }
+
+        installation ??= GetProtonInstallations().FirstOrDefault(p => File.Exists(p.ProtonExecutable));
+        if (installation == null)
+            return null;
+
+        var compatDataPath = string.IsNullOrWhiteSpace(prefixPath)
+            ? GetDefaultProtonCompatDataPath(gamePath)
+            : prefixPath.Trim();
+        var compatAppId = GetStableCompatAppId(executablePath);
+        Directory.CreateDirectory(compatDataPath);
+
+        return new WindowsRunnerCommandSpec
+        {
+            FileName = installation.ProtonExecutable,
+            Arguments = ["waitforexitandrun", executablePath],
+            EnvironmentVariables = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = installation.SteamRoot,
+                ["STEAM_COMPAT_DATA_PATH"] = compatDataPath,
+                ["STEAM_COMPAT_APP_ID"] = compatAppId,
+                ["SteamAppId"] = compatAppId,
+                ["SteamGameId"] = compatAppId,
+            },
+        };
+    }
+
+    private static string? FindSteamRootForProton(string protonExecutable)
+    {
+        var dir = Path.GetDirectoryName(protonExecutable);
+        while (!string.IsNullOrEmpty(dir))
+        {
+            if (Directory.Exists(Path.Combine(dir, "steamapps")) ||
+                File.Exists(Path.Combine(dir, "steam.sh")))
+            {
+                return dir;
+            }
+
+            dir = Path.GetDirectoryName(dir);
+        }
+
+        return null;
     }
 
     private static string ReplaceRunnerPlaceholders(string token, string executablePath, string gamePath)
@@ -267,9 +449,6 @@ public static class WindowsRunnerService
             return [];
         }
     }
-
-    private static string GetProtonCompatDataPath(string gamePath) =>
-        Path.Combine(gamePath, ".steam-compat-data");
 
     private static string GetStableCompatAppId(string executablePath)
     {

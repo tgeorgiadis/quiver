@@ -150,6 +150,19 @@ public class CatalogCompareServiceTests
     }
 
     [Fact]
+    public void MergeAndReplace_preserve_local_AutoUpdate()
+    {
+        var local = CreateApp("owner/app", "Local");
+        local.AutoUpdate = true;
+
+        var external = CreateApp("owner/app", "External");
+        external.AutoUpdate = false;
+
+        CatalogCompareService.MergeExternalIntoLocal(local, external).AutoUpdate.Should().BeTrue();
+        CatalogCompareService.ReplaceFromExternal(local, external).AutoUpdate.Should().BeTrue();
+    }
+
+    [Fact]
     public void ApplyAddAllExternalOnly_appends_missing_repositories()
     {
         var local = new List<GameInfo> { CreateApp("owner/existing") };
@@ -160,6 +173,50 @@ public class CatalogCompareServiceTests
         var updated = CatalogCompareService.ApplyAddAllExternalOnly(local, rows);
 
         updated.Select(a => a.Repository).Should().BeEquivalentTo(["owner/existing", "owner/new"]);
+    }
+
+    [Fact]
+    public void CloneForLocal_uses_autoUpdate_argument_not_external_flag()
+    {
+        var external = CreateApp("owner/new", "New App");
+        external.AutoUpdate = true;
+
+        CatalogCompareService.CloneForLocal(external).AutoUpdate.Should().BeFalse();
+        CatalogCompareService.CloneForLocal(external, autoUpdate: true).AutoUpdate.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ApplyRowAdd_sets_AutoUpdate_when_requested()
+    {
+        var local = new List<GameInfo> { CreateApp("owner/existing") };
+        var rows = CatalogCompareService.BuildCompareRows(
+            local,
+            [CreateApp("owner/existing"), CreateApp("owner/new", "New App")]);
+        var addRow = rows.Single(r => r.Repository == "owner/new");
+
+        var withoutFlag = CatalogCompareService.ApplyRowAdd(local, addRow);
+        withoutFlag.Should().ContainSingle(a => a.Repository == "owner/new" && !a.AutoUpdate);
+
+        var withFlag = CatalogCompareService.ApplyRowAdd(local, addRow, autoUpdateNewlyAdded: true);
+        withFlag.Should().ContainSingle(a => a.Repository == "owner/new" && a.AutoUpdate);
+        withFlag.Should().ContainSingle(a => a.Repository == "owner/existing" && !a.AutoUpdate);
+    }
+
+    [Fact]
+    public void ApplyAddAllExternalOnly_sets_AutoUpdate_on_new_apps_only()
+    {
+        var local = new List<GameInfo> { CreateApp("owner/existing") };
+        var rows = CatalogCompareService.BuildCompareRows(
+            local,
+            [CreateApp("owner/existing"), CreateApp("owner/new", "New App")]);
+
+        var updated = CatalogCompareService.ApplyAddAllExternalOnly(
+            local,
+            rows,
+            autoUpdateNewlyAdded: true);
+
+        updated.Should().ContainSingle(a => a.Repository == "owner/existing" && !a.AutoUpdate);
+        updated.Should().ContainSingle(a => a.Repository == "owner/new" && a.AutoUpdate);
     }
 
     [Fact]

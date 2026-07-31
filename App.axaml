@@ -79,5 +79,43 @@
 			<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
 			<Setter Property="BorderThickness" Value="2"/>
 		</Style>
+
+		<!-- Modal dialogs are separate Windows; ComboBox focus ring must live in App styles. -->
+		<Style Selector="Window.gamepad-chrome ComboBox.gamepad-focused">
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
+
+		<Style Selector="Window.gamepad-chrome ComboBox.gamepad-focused /template/ Border#Background">
+			<Setter Property="Background" Value="{DynamicResource ThemeDarker}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
+
+		<!-- Dialog ComboBox popups don't inherit MainWindow styles — define item chrome here. -->
+		<Style Selector="ComboBoxItem:pointerover /template/ ContentPresenter">
+			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+		</Style>
+
+		<!-- Committed selection (mouse or after Confirm) — quieter than the gamepad cursor. -->
+		<Style Selector="ComboBoxItem:selected /template/ ContentPresenter">
+			<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
+			<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+		</Style>
+
+		<!-- Keyboard/gamepad cursor before Confirm — strong fill + orange ring. -->
+		<Style Selector="ComboBoxItem.gamepad-focused /template/ ContentPresenter">
+			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+			<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
+
+		<Style Selector="ComboBoxItem:selected.gamepad-focused /template/ ContentPresenter">
+			<Setter Property="Background" Value="{DynamicResource ThemeLighter}"/>
+			<Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+			<Setter Property="BorderBrush" Value="{DynamicResource ThemeFocusRing}"/>
+			<Setter Property="BorderThickness" Value="2"/>
+		</Style>
 	</Application.Styles>
 </Application>

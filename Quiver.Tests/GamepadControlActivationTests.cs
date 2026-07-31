@@ -95,6 +95,35 @@ public class GamepadControlActivationTests
     }
 
     [AvaloniaFact]
+    public void ApplyGamepadHighlightFocus_on_textbox_clears_button_focus()
+    {
+        var textBox = new TextBox { IsEnabled = true, IsVisible = true, Focusable = true };
+        var button = new Button { Content = "Save", IsEnabled = true, IsVisible = true, Focusable = true };
+        var window = new Window
+        {
+            Width = 240,
+            Height = 160,
+            Content = new StackPanel { Children = { textBox, button } },
+        };
+
+        try
+        {
+            window.Show();
+            button.Focus();
+            button.IsFocused.Should().BeTrue();
+
+            GamepadControlActivation.ApplyGamepadHighlightFocus(textBox);
+
+            button.IsFocused.Should().BeFalse();
+            textBox.IsFocused.Should().BeFalse();
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void ApplyGamepadHighlightFocus_focuses_button()
     {
         var button = new Button { Content = "Save", IsEnabled = true, IsVisible = true, Focusable = true };

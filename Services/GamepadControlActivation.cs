@@ -32,14 +32,15 @@ internal static class GamepadControlActivation
     /// <summary>
     /// Applies keyboard focus for gamepad highlight navigation.
     /// TextBoxes are highlighted visually only — press Confirm (A) to enter edit mode / open OSK.
+    /// Clears keyboard focus when leaving a button/textbox so :focus chrome does not stick.
     /// </summary>
     public static void ApplyGamepadHighlightFocus(Control control)
     {
         if (control is TextBox)
         {
-            var focusManager = TopLevel.GetTopLevel(control)?.FocusManager;
-            if (focusManager?.GetFocusedElement() is TextBox)
-                focusManager.ClearFocus();
+            // Drop keyboard focus from the previous control (often a Button). Leaving a Button
+            // focused makes its :focus ring look like navigation never moved.
+            TopLevel.GetTopLevel(control)?.FocusManager?.ClearFocus();
             return;
         }
 

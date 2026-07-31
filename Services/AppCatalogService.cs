@@ -406,7 +406,7 @@ namespace Quiver.Services
                 app.Tags = TagHelper.NormalizeTags(app.Tags);
         }
 
-        public async Task PromoteAppsToLocalAsync(IEnumerable<GameInfo> apps)
+        public async Task PromoteAppsToLocalAsync(IEnumerable<GameInfo> apps, bool autoUpdateNewlyAdded = false)
         {
             var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
             var localRepos = new HashSet<string>(
@@ -420,7 +420,7 @@ namespace Quiver.Services
                 if (string.IsNullOrWhiteSpace(app.Repository) || localRepos.Contains(app.Repository))
                     continue;
 
-                localApps.Add(CatalogCompareService.CloneForLocal(app));
+                localApps.Add(CatalogCompareService.CloneForLocal(app, autoUpdateNewlyAdded));
                 localRepos.Add(app.Repository);
             }
 
@@ -681,10 +681,24 @@ namespace Quiver.Services
                         GameIconUrl = GetIconUrl(appElement),
                         PreferredVersion = appElement.TryGetProperty("preferredVersion", out var preferredVersionElement) ? preferredVersionElement.GetString() : null,
                         SkippedUpdateVersion = appElement.TryGetProperty("skippedUpdateVersion", out var skippedUpdateVersionElement) ? skippedUpdateVersionElement.GetString() : null,
+                        AutoUpdate = appElement.TryGetProperty("autoUpdate", out var autoUpdateElement) &&
+                                     autoUpdateElement.ValueKind == JsonValueKind.True,
                         Tags = ParseTagsProperty(appElement),
                         FilesToAdd = ParseFilesToAddProperty(appElement),
                         ModsPath = ParseModsPathProperty(appElement),
                         ModsSources = ParseModsSourcesProperty(appElement),
+                        LinuxRunner = appElement.TryGetProperty("linuxRunner", out var linuxRunnerElement)
+                            ? linuxRunnerElement.GetString()
+                            : null,
+                        LinuxPrefixPath = appElement.TryGetProperty("linuxPrefixPath", out var linuxPrefixElement)
+                            ? linuxPrefixElement.GetString()
+                            : null,
+                        LinuxProtonPath = appElement.TryGetProperty("linuxProtonPath", out var linuxProtonElement)
+                            ? linuxProtonElement.GetString()
+                            : null,
+                        LinuxCustomLaunchCommand = appElement.TryGetProperty("linuxCustomLaunchCommand", out var linuxCustomElement)
+                            ? linuxCustomElement.GetString()
+                            : null,
                         IsExperimental = false,
                         IsCustom = true,
                         GameManager = gameManager,
@@ -830,6 +844,24 @@ namespace Quiver.Services
                 ["preferredVersion"] = app.PreferredVersion,
                 ["skippedUpdateVersion"] = app.SkippedUpdateVersion,
             };
+
+            if (app.AutoUpdate)
+                payload["autoUpdate"] = true;
+
+            if (!string.IsNullOrWhiteSpace(app.LinuxRunner) &&
+                !string.Equals(app.LinuxRunner, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                payload["linuxRunner"] = app.LinuxRunner;
+            }
+
+            if (!string.IsNullOrWhiteSpace(app.LinuxPrefixPath))
+                payload["linuxPrefixPath"] = app.LinuxPrefixPath;
+
+            if (!string.IsNullOrWhiteSpace(app.LinuxProtonPath))
+                payload["linuxProtonPath"] = app.LinuxProtonPath;
+
+            if (!string.IsNullOrWhiteSpace(app.LinuxCustomLaunchCommand))
+                payload["linuxCustomLaunchCommand"] = app.LinuxCustomLaunchCommand;
 
             var normalizedTags = TagHelper.NormalizeTags(app.Tags);
             if (normalizedTags.Count > 0)

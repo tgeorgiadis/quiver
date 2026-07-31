@@ -20,8 +20,8 @@ public static class AppUpdateReviewMessages
             .ToList();
 
         var appHeader = ordered.Count == 1
-            ? "1 app update is available:"
-            : $"{ordered.Count} app updates are available:";
+            ? "1 app update needs review:"
+            : $"{ordered.Count} app updates need review:";
 
         var appLines = ordered.Select(FormatGameUpdateLine);
         return
@@ -40,8 +40,8 @@ public static class AppUpdateReviewMessages
             .ToList();
 
         var header = ordered.Count == 1
-            ? "1 app update is available:"
-            : $"{ordered.Count} app updates are available:";
+            ? "1 app update needs review:"
+            : $"{ordered.Count} app updates need review:";
 
         var lines = ordered.Select(FormatGameUpdateLine);
         var body = header + "\n\n" + string.Join('\n', lines);
@@ -53,6 +53,16 @@ public static class AppUpdateReviewMessages
             ? "Review this update now?"
             : "Review these updates now?";
         return body + "\n\n" + prompt;
+    }
+
+    public static string FormatAutoUpdatedSummary(int updatedCount)
+    {
+        if (updatedCount <= 0)
+            return string.Empty;
+
+        return updatedCount == 1
+            ? "1 app was updated automatically."
+            : $"{updatedCount} apps were updated automatically.";
     }
 
     internal static string FormatGameUpdateLine(GameInfo game)

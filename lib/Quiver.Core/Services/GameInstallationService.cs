@@ -335,6 +335,25 @@ public static class GameInstallationService
     {
         Directory.CreateDirectory(destinationDirectoryPath);
 
+        var tempExtractPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempExtractPath);
+
+        try
+        {
+            await ExtractTarGzToDirectoryAsync(sourceFilePath, tempExtractPath).ConfigureAwait(false);
+            var sourcePath = GetEffectiveExtractionSource(tempExtractPath);
+            MoveDirectoryContents(sourcePath, destinationDirectoryPath);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempExtractPath);
+        }
+    }
+
+    static async Task ExtractTarGzToDirectoryAsync(string sourceFilePath, string destinationDirectoryPath)
+    {
+        Directory.CreateDirectory(destinationDirectoryPath);
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             if (!await TryExtractTarGzWithSystemTarAsync(sourceFilePath, destinationDirectoryPath).ConfigureAwait(false))

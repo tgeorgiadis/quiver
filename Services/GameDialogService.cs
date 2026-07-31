@@ -127,7 +127,7 @@ public static class GameDialogService
                         new TextBlock
                         {
                             Text = "This game requires a Linux Windows-runner to launch, but none was detected.\n\n" +
-                                   "Install Wine/Proton or set a custom command in Settings for Bottles or another launcher.\n\n" +
+                                   "Install Wine/Proton, or after install open this app’s menu (⋯) → Launch Options → Windows Runner to pick a runner or custom command.\n\n" +
                                    "Do you want to download anyway? The game will not launch without a configured runner.",
                             TextWrapping = TextWrapping.Wrap,
                             Margin = new Thickness(0, 0, 0, 20),
@@ -180,78 +180,291 @@ public static class GameDialogService
         return userChoice;
     }
 
-    public static async Task<bool> ShowWineDownloadWarningAsync()
+    /// <summary>
+    /// Lets the user pick Wine/Proton/Custom and a prefix path for a Windows app on Linux.
+    /// Returns null if cancelled.
+    /// </summary>
+    public static async Task<LinuxWindowsRunnerConfig?> ShowLinuxWindowsRunnerDialogAsync(
+        string gamePath,
+        LinuxWindowsRunnerConfig? existing = null,
+        bool isInstall = true)
     {
         if (TryGetDesktopMainWindow() is not Window mainWindow)
-            return true;
+        {
+            var kind = existing?.Kind ?? WindowsRunnerService.GetPreferredDefaultKind();
+            return new LinuxWindowsRunnerConfig
+            {
+                Kind = kind,
+                PrefixPath = existing?.PrefixPath ?? WindowsRunnerService.GetDefaultPrefixPathForKind(kind, gamePath),
+                ProtonPath = existing?.ProtonPath
+                             ?? WindowsRunnerService.ListDetectedProtonInstallations().FirstOrDefault()?.ProtonExecutable,
+                CustomLaunchCommand = existing?.CustomLaunchCommand,
+            };
+        }
 
-        var userChoice = false;
+        LinuxWindowsRunnerConfig? result = null;
 
         await Dispatcher.UIThread.InvokeAsync(async () =>
         {
+            var protons = WindowsRunnerService.ListDetectedProtonInstallations();
+            var wineAvailable = WindowsRunnerService.IsWineAvailable();
+            var initial = existing ?? new LinuxWindowsRunnerConfig
+            {
+                Kind = WindowsRunnerService.GetPreferredDefaultKind(),
+            };
+
+            if (string.IsNullOrWhiteSpace(initial.PrefixPath))
+            {
+                initial.PrefixPath = WindowsRunnerService.GetDefaultPrefixPathForKind(
+                    initial.Kind == LinuxWindowsRunnerKind.Auto
+                        ? WindowsRunnerService.GetPreferredDefaultKind()
+                        : initial.Kind,
+                    gamePath);
+            }
+
+            if (string.IsNullOrWhiteSpace(initial.ProtonPath))
+                initial.ProtonPath = protons.FirstOrDefault()?.ProtonExecutable;
+
+            var runnerCombo = new ComboBox
+            {
+                MinWidth = 360,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Focusable = true,
+            };
+            GamepadComboBoxNavigation.Attach(runnerCombo);
+
+            void AddRunnerItem(string label, LinuxWindowsRunnerKind kind, string? protonPath = null)
+            {
+                runnerCombo.Items.Add(new ComboBoxItem
+                {
+                    Content = label,
+                    Tag = (kind, protonPath),
+                });
+            }
+
+            AddRunnerItem("Auto (prefer Proton, then Wine)", LinuxWindowsRunnerKind.Auto);
+            if (wineAvailable)
+                AddRunnerItem("System Wine", LinuxWindowsRunnerKind.Wine);
+            foreach (var proton in protons)
+                AddRunnerItem($"Proton — {proton.DisplayName}", LinuxWindowsRunnerKind.Proton, proton.ProtonExecutable);
+            AddRunnerItem("Custom command", LinuxWindowsRunnerKind.Custom);
+
+            ComboBoxItem? preferredItem = null;
+            foreach (var itemObj in runnerCombo.Items)
+            {
+                if (itemObj is not ComboBoxItem { Tag: ValueTuple<LinuxWindowsRunnerKind, string?> tag } item)
+                    continue;
+
+                var (kind, protonPath) = tag;
+                if (kind != initial.Kind)
+                    continue;
+
+                if (kind == LinuxWindowsRunnerKind.Proton &&
+                    !string.IsNullOrWhiteSpace(initial.ProtonPath) &&
+                    !string.Equals(protonPath, initial.ProtonPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    preferredItem ??= item;
+                    continue;
+                }
+
+                preferredItem = item;
+                if (kind != LinuxWindowsRunnerKind.Proton ||
+                    string.Equals(protonPath, initial.ProtonPath, StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(initial.ProtonPath))
+                {
+                    break;
+                }
+            }
+
+            runnerCombo.SelectedItem = preferredItem ?? runnerCombo.Items.OfType<ComboBoxItem>().FirstOrDefault();
+
+            var prefixBox = new TextBox
+            {
+                Text = initial.PrefixPath ?? string.Empty,
+                Watermark = "Prefix / compatdata folder",
+                MinWidth = 360,
+            };
+
+            var customBox = new TextBox
+            {
+                Text = initial.CustomLaunchCommand ?? string.Empty,
+                Watermark = "Example: flatpak run com.usebottles.bottles -e {exe}",
+                MinWidth = 360,
+                IsVisible = initial.Kind == LinuxWindowsRunnerKind.Custom,
+            };
+
+            var customLabel = new TextBlock
+            {
+                Text = "Custom launch command",
+                FontSize = 12,
+                Opacity = 0.8,
+                IsVisible = customBox.IsVisible,
+            };
+
+            var lastPrefixByKind = new Dictionary<LinuxWindowsRunnerKind, string>
+            {
+                [LinuxWindowsRunnerKind.Wine] = WindowsRunnerService.GetDefaultWinePrefixPath(gamePath),
+                [LinuxWindowsRunnerKind.Proton] = WindowsRunnerService.GetDefaultProtonCompatDataPath(gamePath),
+                [LinuxWindowsRunnerKind.Auto] = WindowsRunnerService.GetDefaultPrefixPathForKind(
+                    WindowsRunnerService.GetPreferredDefaultKind(), gamePath),
+                [LinuxWindowsRunnerKind.Custom] = initial.PrefixPath ?? string.Empty,
+            };
+            if (!string.IsNullOrWhiteSpace(initial.PrefixPath))
+                lastPrefixByKind[initial.Kind] = initial.PrefixPath;
+
+            runnerCombo.SelectionChanged += (_, _) =>
+            {
+                if (runnerCombo.SelectedItem is not ComboBoxItem { Tag: ValueTuple<LinuxWindowsRunnerKind, string?> tag })
+                    return;
+
+                var kind = tag.Item1;
+                var customWasVisible = customBox.IsVisible;
+                customBox.IsVisible = kind == LinuxWindowsRunnerKind.Custom;
+                customLabel.IsVisible = customBox.IsVisible;
+                if (customWasVisible != customBox.IsVisible)
+                    GamepadModalDialogNavigation.Instance.RefreshDialogButtons();
+
+                var effectiveKind = kind == LinuxWindowsRunnerKind.Auto
+                    ? WindowsRunnerService.GetPreferredDefaultKind()
+                    : kind;
+                if (kind is LinuxWindowsRunnerKind.Wine or LinuxWindowsRunnerKind.Proton or LinuxWindowsRunnerKind.Auto)
+                {
+                    var current = prefixBox.Text?.Trim() ?? string.Empty;
+                    var looksLikeDefault =
+                        string.IsNullOrWhiteSpace(current) ||
+                        lastPrefixByKind.Values.Any(v => string.Equals(v, current, StringComparison.OrdinalIgnoreCase));
+                    if (looksLikeDefault)
+                    {
+                        prefixBox.Text = WindowsRunnerService.GetDefaultPrefixPathForKind(effectiveKind, gamePath);
+                        lastPrefixByKind[kind] = prefixBox.Text;
+                    }
+                }
+            };
+
+            var confirmLabel = isInstall ? "Save & Download" : "Save";
+            var confirmButton = new Button
+            {
+                Content = confirmLabel,
+                Padding = new Thickness(16, 6),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+            };
+            var cancelButton = new Button
+            {
+                Content = "Cancel",
+                Padding = new Thickness(16, 6),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+            };
+
             var messageBox = new Window
             {
-                Title = "Windows Runner Required",
-                Width = 500,
-                Height = 200,
+                Title = "Windows Runner",
+                Width = 520,
+                Height = 420,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Content = new StackPanel
                 {
                     Margin = new Thickness(20),
+                    Spacing = 10,
                     Children =
                     {
                         new TextBlock
                         {
-                            Text = "This game requires a Linux Windows-runner to launch. A compatible runner was detected or configured and will be used.\n\nWant to download?",
+                            Text = isInstall
+                                ? "This Windows app needs Wine or Proton on Linux. Choose a runner and an isolated prefix folder for this app."
+                                : "Choose the Wine/Proton runner and prefix used when launching this Windows app.",
                             TextWrapping = TextWrapping.Wrap,
-                            Margin = new Thickness(0, 0, 0, 20),
+                        },
+                        new TextBlock { Text = "Runner", FontSize = 12, Opacity = 0.8 },
+                        runnerCombo,
+                        new TextBlock
+                        {
+                            Text = "Prefix / compatdata path",
+                            FontSize = 12,
+                            Opacity = 0.8,
+                        },
+                        prefixBox,
+                        customLabel,
+                        customBox,
+                        new TextBlock
+                        {
+                            Text = "A prefix is a private fake Windows environment for this app (registry, DLLs). Keeping one per app avoids conflicts.",
+                            FontSize = 11,
+                            Opacity = 0.7,
+                            TextWrapping = TextWrapping.Wrap,
+                            Margin = new Thickness(0, 4, 0, 0),
                         },
                         new StackPanel
                         {
                             Orientation = Orientation.Horizontal,
                             HorizontalAlignment = HorizontalAlignment.Center,
                             Spacing = 10,
-                            Children =
-                            {
-                                new Button { Content = "Yes", Width = 100 },
-                                new Button { Content = "No", Width = 100 },
-                            },
+                            Margin = new Thickness(0, 12, 0, 0),
+                            Children = { confirmButton, cancelButton },
                         },
                     },
                 },
             };
 
-            if (((StackPanel)messageBox.Content).Children[1] is StackPanel buttonPanel &&
-                buttonPanel.Children[0] is Button yesButton &&
-                buttonPanel.Children[1] is Button noButton)
+            confirmButton.Click += (_, _) =>
             {
+                if (runnerCombo.SelectedItem is not ComboBoxItem { Tag: ValueTuple<LinuxWindowsRunnerKind, string?> selected })
+                {
+                    messageBox.Close();
+                    return;
+                }
+
+                var (kind, protonPath) = selected;
+                result = new LinuxWindowsRunnerConfig
+                {
+                    Kind = kind,
+                    PrefixPath = string.IsNullOrWhiteSpace(prefixBox.Text) ? null : prefixBox.Text.Trim(),
+                    ProtonPath = kind == LinuxWindowsRunnerKind.Proton ? protonPath : null,
+                    CustomLaunchCommand = kind == LinuxWindowsRunnerKind.Custom
+                        ? (string.IsNullOrWhiteSpace(customBox.Text) ? null : customBox.Text.Trim())
+                        : null,
+                };
+                messageBox.Tag = true;
+                messageBox.Close();
+            };
+
+            cancelButton.Click += (_, _) =>
+            {
+                result = null;
                 messageBox.Tag = false;
-                yesButton.Click += (_, _) =>
-                {
-                    userChoice = true;
-                    messageBox.Tag = true;
-                    messageBox.Close();
-                };
-                noButton.Click += (_, _) =>
-                {
-                    userChoice = false;
-                    messageBox.Tag = false;
-                    messageBox.Close();
-                };
-            }
+                messageBox.Close();
+            };
 
             GamepadModalDialogNavigation.Attach(messageBox, accepted =>
             {
-                userChoice = accepted;
-                messageBox.Tag = accepted;
+                if (!accepted)
+                {
+                    result = null;
+                    messageBox.Tag = false;
+                    return;
+                }
+
+                if (runnerCombo.SelectedItem is ComboBoxItem { Tag: ValueTuple<LinuxWindowsRunnerKind, string?> selected })
+                {
+                    var (kind, protonPath) = selected;
+                    result = new LinuxWindowsRunnerConfig
+                    {
+                        Kind = kind,
+                        PrefixPath = string.IsNullOrWhiteSpace(prefixBox.Text) ? null : prefixBox.Text.Trim(),
+                        ProtonPath = kind == LinuxWindowsRunnerKind.Proton ? protonPath : null,
+                        CustomLaunchCommand = kind == LinuxWindowsRunnerKind.Custom
+                            ? (string.IsNullOrWhiteSpace(customBox.Text) ? null : customBox.Text.Trim())
+                            : null,
+                    };
+                    messageBox.Tag = true;
+                }
             });
 
             await messageBox.ShowDialog(mainWindow);
-            if (messageBox.Tag is bool tagResult)
-                userChoice = tagResult;
         });
 
-        return userChoice;
+        return result;
     }
 
     public static async Task ShowRateLimitErrorAsync()

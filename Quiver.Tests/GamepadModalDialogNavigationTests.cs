@@ -156,6 +156,99 @@ public class GamepadModalDialogNavigationTests
     }
 
     [AvaloniaFact]
+    public void Escape_while_editing_textbox_exits_edit_without_closing_dialog()
+    {
+        var locationBox = new TextBox
+        {
+            Watermark = "URL",
+            Focusable = true,
+            Text = "https://example.com/apps.json",
+        };
+        var addButton = new Button { Content = "Add", MinWidth = 80 };
+        var cancelButton = new Button { Content = "Cancel", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 420,
+            Height = 220,
+            Content = new StackPanel { Children = { locationBox, addButton, cancelButton } },
+        };
+        var nav = GamepadModalDialogNavigation.Instance;
+        var previousResolver = nav.ResolveKeyboardAction;
+
+        try
+        {
+            nav.ResolveKeyboardAction = (key, modifiers) =>
+                KeyboardBindingDefaults.FindAction(KeyboardBindingDefaults.Create(), key, modifiers);
+
+            GamepadFocusChrome.SetActive(true, dialog);
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog);
+            nav.RefreshDialogButtons();
+            nav.TryHandleNavigation(NavigationDirection.Up).Should().BeTrue();
+            nav.TryHandleConfirm().Should().BeTrue();
+            locationBox.IsFocused.Should().BeTrue();
+
+            nav.TryHandleDialogKeyDown(Key.Escape, KeyModifiers.None).Should().BeTrue();
+
+            dialog.IsVisible.Should().BeTrue();
+            locationBox.IsFocused.Should().BeFalse();
+            locationBox.Classes.Contains("gamepad-focused").Should().BeTrue();
+        }
+        finally
+        {
+            nav.ResolveKeyboardAction = previousResolver;
+            nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetActive(false);
+            if (dialog.IsVisible)
+                dialog.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Enter_while_editing_textbox_exits_edit_without_closing_dialog()
+    {
+        var locationBox = new TextBox
+        {
+            Watermark = "Prefix",
+            Focusable = true,
+            Text = "/tmp/prefix",
+        };
+        var saveButton = new Button { Content = "Save", MinWidth = 80 };
+        var cancelButton = new Button { Content = "Cancel", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 420,
+            Height = 220,
+            Content = new StackPanel { Children = { locationBox, saveButton, cancelButton } },
+        };
+        var nav = GamepadModalDialogNavigation.Instance;
+
+        try
+        {
+            GamepadFocusChrome.SetActive(true, dialog);
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog);
+            nav.RefreshDialogButtons();
+            nav.TryHandleNavigation(NavigationDirection.Up).Should().BeTrue();
+            nav.TryHandleConfirm().Should().BeTrue();
+            locationBox.IsFocused.Should().BeTrue();
+
+            nav.TryHandleDialogKeyDown(Key.Enter, KeyModifiers.None).Should().BeTrue();
+
+            dialog.IsVisible.Should().BeTrue();
+            locationBox.IsFocused.Should().BeFalse();
+            locationBox.Classes.Contains("gamepad-focused").Should().BeTrue();
+        }
+        finally
+        {
+            nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetActive(false);
+            if (dialog.IsVisible)
+                dialog.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void CollectDialogFocusableControls_includes_listbox()
     {
         var root = new StackPanel
@@ -214,6 +307,176 @@ public class GamepadModalDialogNavigationTests
         {
             if (window.IsVisible)
                 window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void CollectDialogFocusableControls_includes_combobox_not_nested_toggle()
+    {
+        var comboBox = new ComboBox
+        {
+            Focusable = true,
+            Items =
+            {
+                new ComboBoxItem { Content = "Auto" },
+                new ComboBoxItem { Content = "Wine" },
+            },
+            SelectedIndex = 0,
+        };
+        var prefixBox = new TextBox { Watermark = "Prefix", Focusable = true };
+        var saveButton = new Button { Content = "Save" };
+        var cancelButton = new Button { Content = "Cancel" };
+        var window = new Window
+        {
+            Width = 520,
+            Height = 420,
+            Content = new StackPanel
+            {
+                Children = { comboBox, prefixBox, saveButton, cancelButton },
+            },
+        };
+
+        try
+        {
+            window.Show();
+            var controls = GamepadModalDialogNavigation.CollectDialogFocusableControls(window);
+
+            controls.Should().Contain(comboBox);
+            controls.Should().Contain(prefixBox);
+            controls.OfType<Button>().Select(b => b.Content?.ToString())
+                .Should().BeEquivalentTo("Save", "Cancel");
+            controls.Should().NotContain(c =>
+                c is Button && GamepadModalDialogNavigation.IsNestedInsideNavigableHost(c));
+        }
+        finally
+        {
+            if (window.IsVisible)
+                window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleNavigation_moves_up_from_buttons_to_combobox()
+    {
+        var comboBox = new ComboBox
+        {
+            Focusable = true,
+            MinWidth = 200,
+            Items =
+            {
+                new ComboBoxItem { Content = "Auto" },
+                new ComboBoxItem { Content = "Wine" },
+            },
+            SelectedIndex = 0,
+        };
+        var prefixBox = new TextBox { Watermark = "Prefix", Focusable = true, MinWidth = 200 };
+        var saveButton = new Button { Content = "Save", MinWidth = 80 };
+        var cancelButton = new Button { Content = "Cancel", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 520,
+            Height = 420,
+            Content = new StackPanel
+            {
+                Spacing = 10,
+                Margin = new Avalonia.Thickness(20),
+                Children =
+                {
+                    comboBox,
+                    prefixBox,
+                    new StackPanel
+                    {
+                        Orientation = Avalonia.Layout.Orientation.Horizontal,
+                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                        Spacing = 10,
+                        Children = { saveButton, cancelButton },
+                    },
+                },
+            },
+        };
+        var nav = GamepadModalDialogNavigation.Instance;
+
+        try
+        {
+            GamepadFocusChrome.SetActive(true, dialog);
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog);
+            nav.RefreshDialogButtons();
+
+            // Default focus is Save; Cancel is to the right.
+            nav.TryHandleNavigation(NavigationDirection.Right).Should().BeTrue();
+            cancelButton.Classes.Contains("gamepad-focused").Should().BeTrue();
+
+            nav.TryHandleNavigation(NavigationDirection.Up).Should().BeTrue();
+            cancelButton.Classes.Contains("gamepad-focused").Should().BeFalse();
+            saveButton.Classes.Contains("gamepad-focused").Should().BeFalse();
+
+            // One or two Ups should reach the ComboBox (via prefix TextBox).
+            if (!comboBox.Classes.Contains("gamepad-focused"))
+                nav.TryHandleNavigation(NavigationDirection.Up).Should().BeTrue();
+
+            comboBox.Classes.Contains("gamepad-focused").Should().BeTrue();
+        }
+        finally
+        {
+            nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetActive(false);
+            if (dialog.IsVisible)
+                dialog.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleConfirm_on_combobox_opens_dropdown_without_closing()
+    {
+        var comboBox = new ComboBox
+        {
+            Focusable = true,
+            Items =
+            {
+                new ComboBoxItem { Content = "Auto" },
+                new ComboBoxItem { Content = "Wine" },
+            },
+            SelectedIndex = 0,
+        };
+        GamepadComboBoxNavigation.Attach(comboBox);
+        var saveButton = new Button { Content = "Save", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 420,
+            Height = 280,
+            Content = new StackPanel
+            {
+                Children = { comboBox, saveButton },
+            },
+        };
+        var nav = GamepadModalDialogNavigation.Instance;
+        var closed = false;
+        dialog.Closed += (_, _) => closed = true;
+
+        try
+        {
+            GamepadFocusChrome.SetActive(true, dialog);
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog);
+            nav.RefreshDialogButtons();
+            nav.TryHandleNavigation(NavigationDirection.Up).Should().BeTrue();
+            comboBox.Classes.Contains("gamepad-focused").Should().BeTrue();
+
+            nav.TryHandleConfirm().Should().BeTrue();
+
+            closed.Should().BeFalse();
+            dialog.IsVisible.Should().BeTrue();
+            GamepadComboBoxNavigation.Instance.HasActiveComboBox.Should().BeTrue();
+            comboBox.IsDropDownOpen.Should().BeTrue();
+        }
+        finally
+        {
+            GamepadComboBoxNavigation.Instance.Close(comboBox);
+            nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetActive(false);
+            if (dialog.IsVisible)
+                dialog.Close();
         }
     }
 
@@ -502,6 +765,80 @@ public class GamepadModalDialogNavigationTests
 
         GamepadModalDialogNavigation.ApplyDialogResultHint(dialog, new Button { Content = "Not now" });
         dialog.Tag.Should().Be(false);
+    }
+
+    [AvaloniaFact]
+    public void TryHandleDialogKeyDown_routes_to_open_combobox_not_dialog_fields()
+    {
+        var comboBox = new ComboBox
+        {
+            Focusable = true,
+            Items =
+            {
+                new ComboBoxItem { Content = "Auto" },
+                new ComboBoxItem { Content = "Custom command" },
+            },
+            SelectedIndex = 0,
+        };
+        GamepadComboBoxNavigation.Attach(comboBox);
+        var saveButton = new Button { Content = "Save", MinWidth = 80 };
+        var cancelButton = new Button { Content = "Cancel", MinWidth = 80 };
+        var dialog = new Window
+        {
+            Width = 520,
+            Height = 360,
+            Content = new StackPanel
+            {
+                Spacing = 10,
+                Children = { comboBox, saveButton, cancelButton },
+            },
+        };
+        var nav = GamepadModalDialogNavigation.Instance;
+        var previousResolver = nav.ResolveKeyboardAction;
+        var previousChromeCallback = nav.OnKeyboardNavigationActivated;
+
+        try
+        {
+            nav.ResolveKeyboardAction = (key, modifiers) =>
+                KeyboardBindingDefaults.FindAction(KeyboardBindingDefaults.Create(), key, modifiers);
+            nav.OnKeyboardNavigationActivated = () =>
+            {
+                GamepadFocusChrome.SetKeyboardNavigationActive(true);
+                GamepadFocusChrome.SetActive(true, dialog);
+            };
+
+            GamepadFocusChrome.SetActive(true, dialog);
+            dialog.Show();
+            GamepadModalDialogNavigation.Attach(dialog);
+            nav.RefreshDialogButtons();
+
+            GamepadComboBoxNavigation.Open(comboBox);
+            GamepadComboBoxNavigation.Instance.HasActiveComboBox.Should().BeTrue();
+            comboBox.SelectedIndex.Should().Be(0);
+
+            nav.TryHandleDialogKeyDown(Key.Down, KeyModifiers.None).Should().BeTrue();
+
+            // Must move the open list, not jump dialog focus to Save/Cancel.
+            comboBox.SelectedIndex.Should().Be(0); // selection updates on confirm; focus item moved
+            GamepadComboBoxNavigation.Instance.HasActiveComboBox.Should().BeTrue();
+            saveButton.Classes.Contains("gamepad-focused").Should().BeFalse();
+            cancelButton.Classes.Contains("gamepad-focused").Should().BeFalse();
+
+            nav.TryHandleDialogKeyDown(Key.Enter, KeyModifiers.None).Should().BeTrue();
+            comboBox.SelectedIndex.Should().Be(1);
+            comboBox.IsDropDownOpen.Should().BeFalse();
+        }
+        finally
+        {
+            GamepadComboBoxNavigation.Instance.Close(comboBox);
+            nav.ResolveKeyboardAction = previousResolver;
+            nav.OnKeyboardNavigationActivated = previousChromeCallback;
+            nav.UnregisterModalDialog(dialog);
+            GamepadFocusChrome.SetKeyboardNavigationActive(false);
+            GamepadFocusChrome.SetActive(false);
+            if (dialog.IsVisible)
+                dialog.Close();
+        }
     }
 
     [AvaloniaFact]

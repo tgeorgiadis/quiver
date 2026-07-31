@@ -94,6 +94,10 @@ namespace Quiver
         public bool IgnoreArticlesWhenSorting { get; set; } = true;
         public bool StartFullscreen { get; set; } = false;
         public bool CloseAfterLaunch {  get; set; } = false;
+        public bool CloseToTray { get; set; }
+        public bool BackgroundUpdateCheckEnabled { get; set; }
+        public int BackgroundUpdateCheckIntervalMinutes { get; set; } = BackgroundUpdateCheckIntervals.DefaultMinutes;
+        public bool AutoUpdateNewlyAddedApps { get; set; }
         public string BackgroundImagePath { get; set; } = string.Empty;
         public string LauncherMusicPath { get; set; } = string.Empty;
         public float MusicVolume { get; set; } = 0.2f;
@@ -141,6 +145,9 @@ namespace Quiver
                 SortBy = "Name";
             if (string.Equals(CatalogReviewSortBy, "NameIgnoreArticles", StringComparison.OrdinalIgnoreCase))
                 CatalogReviewSortBy = "Name";
+
+            BackgroundUpdateCheckIntervalMinutes =
+                BackgroundUpdateCheckIntervals.Normalize(BackgroundUpdateCheckIntervalMinutes);
         }
 
         public static AppSettings Load() => SettingsStoreProvider.Default.Load();

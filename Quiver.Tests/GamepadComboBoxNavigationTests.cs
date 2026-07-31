@@ -58,6 +58,31 @@ public class GamepadComboBoxNavigationTests
     }
 
     [AvaloniaFact]
+    public void Attach_registers_when_dropdown_opened_natively()
+    {
+        var comboBox = CreateSortComboBox();
+        GamepadComboBoxNavigation.Attach(comboBox);
+        var window = new Window { Content = comboBox, Width = 280, Height = 160 };
+
+        try
+        {
+            GamepadComboBoxNavigation.Instance.Close(comboBox);
+            window.Show();
+
+            comboBox.IsDropDownOpen = true;
+
+            GamepadComboBoxNavigation.Instance.HasActiveComboBox.Should().BeTrue();
+        }
+        finally
+        {
+            comboBox.IsDropDownOpen = false;
+            GamepadComboBoxNavigation.Instance.Close(comboBox);
+            if (window.IsVisible)
+                window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Open_expands_closed_dropdown()
     {
         var comboBox = CreateSortComboBox();
@@ -74,6 +99,71 @@ public class GamepadComboBoxNavigationTests
         {
             comboBox.IsDropDownOpen = false;
             GamepadComboBoxNavigation.Instance.Close(comboBox);
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleNavigation_applies_gamepad_focused_hover_class()
+    {
+        var comboBox = CreateSortComboBox();
+        comboBox.SelectedIndex = 0;
+        var window = new Window { Content = comboBox, Width = 280, Height = 180 };
+
+        try
+        {
+            window.Show();
+            GamepadComboBoxNavigation.Open(comboBox);
+
+            var first = (ComboBoxItem)comboBox.Items[0]!;
+            var second = (ComboBoxItem)comboBox.Items[1]!;
+            first.Classes.Contains("gamepad-focused").Should().BeTrue();
+
+            GamepadComboBoxNavigation.Instance.TryHandleNavigation(NavigationDirection.Down)
+                .Should().BeTrue();
+
+            first.Classes.Contains("gamepad-focused").Should().BeFalse();
+            second.Classes.Contains("gamepad-focused").Should().BeTrue();
+            // Browsing must not commit selection — only Confirm does.
+            comboBox.SelectedIndex.Should().Be(0);
+        }
+        finally
+        {
+            comboBox.IsDropDownOpen = false;
+            GamepadComboBoxNavigation.Instance.Close(comboBox);
+            if (window.IsVisible)
+                window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void TryHandleNavigation_does_not_commit_selection_until_confirm()
+    {
+        var comboBox = CreateSortComboBox();
+        comboBox.SelectedIndex = 0;
+        var window = new Window { Content = comboBox, Width = 280, Height = 180 };
+
+        try
+        {
+            window.Show();
+            GamepadComboBoxNavigation.Open(comboBox);
+
+            GamepadComboBoxNavigation.Instance.TryHandleNavigation(NavigationDirection.Down)
+                .Should().BeTrue();
+            comboBox.SelectedIndex.Should().Be(0);
+
+            GamepadComboBoxNavigation.Instance.TryHandleNavigation(NavigationDirection.Down)
+                .Should().BeTrue();
+            comboBox.SelectedIndex.Should().Be(0);
+
+            GamepadComboBoxNavigation.Instance.TryHandleConfirm().Should().BeTrue();
+            comboBox.SelectedIndex.Should().Be(2);
+        }
+        finally
+        {
+            comboBox.IsDropDownOpen = false;
+            GamepadComboBoxNavigation.Instance.Close(comboBox);
+            if (window.IsVisible)
+                window.Close();
         }
     }
 

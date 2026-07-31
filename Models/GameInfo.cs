@@ -47,6 +47,34 @@ namespace Quiver.Models
         public List<string> FilesToAdd { get; set; } = [];
         public string? ModsPath { get; set; }
         public List<GameModSource> ModsSources { get; set; } = [];
+
+        /// <summary>Per-app Linux Windows runner: auto, wine, proton, or custom. Null/empty = auto.</summary>
+        public string? LinuxRunner { get; set; }
+
+        /// <summary>Wine prefix or Proton compatdata directory for this app.</summary>
+        public string? LinuxPrefixPath { get; set; }
+
+        /// <summary>Optional path to a specific Proton executable.</summary>
+        public string? LinuxProtonPath { get; set; }
+
+        /// <summary>Per-app custom launch command (placeholders: {exe}, {gamePath}, {exeDir}).</summary>
+        public string? LinuxCustomLaunchCommand { get; set; }
+
+        private bool _autoUpdate;
+        /// <summary>When true, available updates install automatically without the review prompt.</summary>
+        public bool AutoUpdate
+        {
+            get => _autoUpdate;
+            set
+            {
+                if (_autoUpdate != value)
+                {
+                    _autoUpdate = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
         private bool _hasModUpdates;
         public bool HasModUpdates
         {
@@ -265,6 +293,15 @@ namespace Quiver.Models
 
         public bool HasMultipleDownloads => AvailableDownloads?.Count > 1;
 
+        /// <summary>
+        /// Clears a pending release-asset pick so the next NotInstalled install can re-prompt.
+        /// Leaves <see cref="AvailableDownloads"/> intact for the picker menu.
+        /// </summary>
+        public void ClearDownloadSelection()
+        {
+            SelectedDownload = null;
+        }
+
         public bool IsInstalled
         {
             get
@@ -282,6 +319,10 @@ namespace Quiver.Models
         public bool CanChangeVersion => IsInstalled && !string.IsNullOrWhiteSpace(Repository);
         public bool CanVersionOptions => CanSkipUpdate || CanChangeVersion || IsInstalled;
         public bool CanLaunchOptions => HasExecutableChoice || IsInstalled;
+
+        /// <summary>Linux-only: configure Wine/Proton runner and prefix for Windows executables.</summary>
+        public bool ShowWindowsRunnerOptions =>
+            IsInstalled && RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
         public bool CanInfoOptions => !string.IsNullOrWhiteSpace(Repository);
         public bool HasPreferredVersion => !string.IsNullOrWhiteSpace(PreferredVersion);
 
@@ -377,6 +418,7 @@ namespace Quiver.Models
                     DispatchPropertyChanged(nameof(CanVersionOptions));
                     DispatchPropertyChanged(nameof(HasExecutableChoice));
                     DispatchPropertyChanged(nameof(CanLaunchOptions));
+                    DispatchPropertyChanged(nameof(ShowWindowsRunnerOptions));
                     DispatchPropertyChanged(nameof(IsDownloading));
                     DispatchPropertyChanged(nameof(ProgressBarColor));
                 }

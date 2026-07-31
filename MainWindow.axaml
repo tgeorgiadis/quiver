@@ -129,6 +129,11 @@
 												  Click="UpdateNowMenu_Click"
 												  CommandParameter="{Binding}"
 												  IsVisible="{Binding CanUpdate}"/>
+										<MenuItem Header="Auto Update"
+												  ToggleType="CheckBox"
+												  IsChecked="{Binding AutoUpdate, Mode=OneWay}"
+												  Click="AutoUpdateMenu_Click"
+												  CommandParameter="{Binding}"/>
 										<MenuItem Header="Open Folder"
 												  Click="OpenFolder_Click"
 												  IsVisible="{Binding IsInstalled}"
@@ -154,6 +159,10 @@
 													  CommandParameter="{Binding}" 
 													  Click="SelectDifferentExecutable_Click"
 													  IsVisible="{Binding HasExecutableChoice}"/>
+											<MenuItem Header="Windows Runner…"
+													  Click="ConfigureWindowsRunner_Click"
+													  IsVisible="{Binding ShowWindowsRunnerOptions}"
+													  CommandParameter="{Binding}"/>
 											<MenuItem Header="Create Desktop Shortcut"
 													  Click="CreateShortcut_Click"
 													  IsVisible="{Binding IsInstalled}"
@@ -286,6 +295,11 @@
 											  Click="UpdateNowMenu_Click"
 											  CommandParameter="{Binding}"
 											  IsVisible="{Binding CanUpdate}"/>
+									<MenuItem Header="Auto Update"
+											  ToggleType="CheckBox"
+											  IsChecked="{Binding AutoUpdate, Mode=OneWay}"
+											  Click="AutoUpdateMenu_Click"
+											  CommandParameter="{Binding}"/>
 									<MenuItem Header="Open Folder"
 											  Click="OpenFolder_Click"
 											  IsVisible="{Binding IsInstalled}"
@@ -311,6 +325,10 @@
 												  CommandParameter="{Binding}" 
 												  Click="SelectDifferentExecutable_Click"
 												  IsVisible="{Binding HasExecutableChoice}"/>
+										<MenuItem Header="Windows Runner…"
+												  Click="ConfigureWindowsRunner_Click"
+												  IsVisible="{Binding ShowWindowsRunnerOptions}"
+												  CommandParameter="{Binding}"/>
 										<MenuItem Header="Create Desktop Shortcut"
 												  Click="CreateShortcut_Click"
 												  IsVisible="{Binding IsInstalled}"
@@ -524,6 +542,11 @@
 										  Click="UpdateNowMenu_Click"
 										  CommandParameter="{Binding}"
 										  IsVisible="{Binding CanUpdate}"/>
+								<MenuItem Header="Auto Update"
+										  ToggleType="CheckBox"
+										  IsChecked="{Binding AutoUpdate, Mode=OneWay}"
+										  Click="AutoUpdateMenu_Click"
+										  CommandParameter="{Binding}"/>
 								<MenuItem Header="Open Folder"
 										  Click="OpenFolder_Click"
 										  IsVisible="{Binding IsInstalled}"
@@ -549,6 +572,10 @@
 											  CommandParameter="{Binding}"
 											  Click="SelectDifferentExecutable_Click"
 											  IsVisible="{Binding HasExecutableChoice}"/>
+									<MenuItem Header="Windows Runner…"
+											  Click="ConfigureWindowsRunner_Click"
+											  IsVisible="{Binding ShowWindowsRunnerOptions}"
+											  CommandParameter="{Binding}"/>
 									<MenuItem Header="Create Desktop Shortcut"
 											  Click="CreateShortcut_Click"
 											  IsVisible="{Binding IsInstalled}"
@@ -2979,6 +3006,66 @@
 										</StackPanel>
 
 										<StackPanel Spacing="2" Margin="0,8,0,0">
+											<CheckBox x:Name="CloseToTrayCheckBox"
+													  Content="Close to system tray"
+													  Foreground="{DynamicResource ThemeText}"
+													  FontSize="13" FontWeight="SemiBold"
+													  Checked="CloseToTrayCheckBox_Checked"
+													  Unchecked="CloseToTrayCheckBox_Unchecked"/>
+											<TextBlock Text="Keep Quiver running in the notification area when the window is closed"
+													   FontSize="11"
+													   Foreground="{DynamicResource ThemeTextSecondary}"
+													   Margin="20,0,0,0"
+													   TextWrapping="Wrap"/>
+										</StackPanel>
+
+										<StackPanel Spacing="2" Margin="0,8,0,0">
+											<CheckBox x:Name="BackgroundUpdateCheckCheckBox"
+													  Content="Check for app updates in the background"
+													  Foreground="{DynamicResource ThemeText}"
+													  FontSize="13" FontWeight="SemiBold"
+													  Checked="BackgroundUpdateCheckCheckBox_Checked"
+													  Unchecked="BackgroundUpdateCheckCheckBox_Unchecked"/>
+											<TextBlock Text="Scan for updates on a schedule while Quiver is running (including in the tray)"
+													   FontSize="11"
+													   Foreground="{DynamicResource ThemeTextSecondary}"
+													   Margin="20,0,0,0"
+													   TextWrapping="Wrap"/>
+										</StackPanel>
+
+										<StackPanel Spacing="2" Margin="0,8,0,0">
+											<TextBlock Text="Background check interval"
+													   FontSize="13" FontWeight="SemiBold"
+													   Foreground="{DynamicResource ThemeText}"/>
+											<ComboBox x:Name="BackgroundUpdateIntervalComboBox"
+													  HorizontalAlignment="Stretch"
+													  Margin="0,4,0,0"
+													  SelectionChanged="BackgroundUpdateIntervalComboBox_SelectionChanged">
+												<ComboBoxItem Content="Every 15 minutes" Tag="15"/>
+												<ComboBoxItem Content="Every 30 minutes" Tag="30"/>
+												<ComboBoxItem Content="Every hour" Tag="60"/>
+												<ComboBoxItem Content="Every 3 hours" Tag="180"/>
+												<ComboBoxItem Content="Every 6 hours" Tag="360"/>
+												<ComboBoxItem Content="Every 12 hours" Tag="720"/>
+												<ComboBoxItem Content="Every day" Tag="1440"/>
+											</ComboBox>
+										</StackPanel>
+
+										<StackPanel Spacing="2" Margin="0,8,0,0">
+											<CheckBox x:Name="AutoUpdateNewlyAddedAppsCheckBox"
+													  Content="Enable Auto Update for newly added apps"
+													  Foreground="{DynamicResource ThemeText}"
+													  FontSize="13" FontWeight="SemiBold"
+													  Checked="AutoUpdateNewlyAddedAppsCheckBox_Checked"
+													  Unchecked="AutoUpdateNewlyAddedAppsCheckBox_Unchecked"/>
+											<TextBlock Text="New apps from the catalog or Add Entry start with Auto Update enabled"
+													   FontSize="11"
+													   Foreground="{DynamicResource ThemeTextSecondary}"
+													   Margin="20,0,0,0"
+													   TextWrapping="Wrap"/>
+										</StackPanel>
+
+										<StackPanel Spacing="2" Margin="0,8,0,0">
 											<CheckBox x:Name="IgnoreArticlesWhenSortingCheckBox"
 													  Content="Ignore The/A/An when sorting by name"
 													  Foreground="{DynamicResource ThemeText}"
@@ -3086,7 +3173,7 @@
 													 Watermark="Example: flatpak run com.usebottles.bottles -e {exe}"
 													 Text="{Binding Settings.LinuxWindowsLaunchCommand, Mode=TwoWay}"
 													 TextChanged="LinuxWindowsLaunchCommandTextBox_TextChanged"/>
-											<TextBlock Text="Optional override for Windows-only apps on Linux. Use {exe}, {appPath}, or {exeDir}. Leave blank to auto-detect Wine/Proton."
+											<TextBlock Text="Global override for Windows-only apps on Linux when an app uses Auto. Use {exe}, {gamePath}, or {exeDir}. Per-app runner/prefix is under Launch Options → Windows Runner. Leave blank to auto-detect Proton then Wine."
 													   FontSize="11"
 													   TextWrapping="Wrap"
 													   Foreground="{DynamicResource ThemeTextSecondary}"

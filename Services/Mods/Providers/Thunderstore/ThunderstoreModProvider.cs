@@ -1,3 +1,5 @@
+using Quiver.Services.Mods;
+
 namespace Quiver.Services.Mods.Providers.Thunderstore;
 
 public sealed class ThunderstoreModProvider : IModProvider
@@ -145,31 +147,13 @@ public sealed class ThunderstoreModProvider : IModProvider
         if (string.IsNullOrWhiteSpace(version.DownloadUrl))
             throw new InvalidOperationException("Download URL is missing.");
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, version.DownloadUrl);
-        using var response = await _httpClient
-            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+        return await ModArchiveDownload.DownloadToTempFileAsync(
+                _httpClient,
+                version.DownloadUrl,
+                version.FileSize,
+                progress,
+                cancellationToken)
             .ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-
-        var total = response.Content.Headers.ContentLength ?? version.FileSize;
-        await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-
-        var memory = new MemoryStream();
-        var buffer = new byte[81920];
-        long readTotal = 0;
-        int read;
-        while ((read = await contentStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)
-                   .ConfigureAwait(false)) > 0)
-        {
-            await memory.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-            readTotal += read;
-            if (progress != null && total > 0)
-                progress.Report(Math.Clamp(readTotal / (double)total, 0, 1));
-        }
-
-        progress?.Report(1);
-        memory.Position = 0;
-        return memory;
     }
 
     public IReadOnlySet<string> GetArchiveMetadataFileNames() => MetadataFiles;

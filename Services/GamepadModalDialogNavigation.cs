@@ -217,22 +217,24 @@ public sealed class GamepadModalDialogNavigation
         if (ActiveDialog == null)
             return false;
 
+        // Open ComboBox dropdowns own input; do not ActivateKeyboardChrome (that re-focuses
+        // the host ComboBox and steals Up/Down back to dialog field navigation).
+        if (TryHandleOpenComboBoxKey(key, modifiers))
+            return true;
+
+        // While typing in a dialog TextBox: Enter/A and Escape/B leave edit mode so the user
+        // can navigate other fields. A second Escape/B then cancels the dialog.
         var editingText = TopLevel.GetTopLevel(ActiveDialog)?.FocusManager?.GetFocusedElement() is TextBox;
         if (editingText)
         {
-            if (key == Key.Escape)
-            {
-                ActivateKeyboardChrome();
-                return TryHandleCancel();
-            }
+            if (key is Key.Escape or Key.Enter)
+                return TryExitTextBoxEditMode();
 
             var editingAction = ResolveKeyboardAction?.Invoke(key, modifiers);
-            if (editingAction == GamepadAction.Cancel)
-            {
-                ActivateKeyboardChrome();
-                return TryHandleCancel();
-            }
+            if (editingAction is GamepadAction.Cancel or GamepadAction.Confirm)
+                return TryExitTextBoxEditMode();
 
+            // Let typing / caret keys through to the TextBox.
             return false;
         }
 
@@ -274,6 +276,59 @@ public sealed class GamepadModalDialogNavigation
         }
     }
 
+    /// <summary>
+    /// Clears keyboard focus from a dialog TextBox and restores gamepad field highlight.
+    /// Returns false when no TextBox is being edited.
+    /// </summary>
+    internal bool TryExitTextBoxEditMode()
+    {
+        if (ActiveDialog == null)
+            return false;
+
+        var focusManager = TopLevel.GetTopLevel(ActiveDialog)?.FocusManager;
+        if (focusManager?.GetFocusedElement() is not TextBox textBox)
+            return false;
+
+        EnsureDialogControls();
+        var index = _dialogControls.FindIndex(c => ReferenceEquals(c, textBox));
+        if (index >= 0)
+            _focusedControlIndex = index;
+
+        OnKeyboardNavigationActivated?.Invoke();
+        if (!GamepadFocusChrome.IsActive)
+        {
+            GamepadFocusChrome.SetKeyboardNavigationActive(true);
+            GamepadFocusChrome.SetActive(true);
+            SyncChromeClass(true);
+        }
+
+        focusManager.ClearFocus();
+        FocusCurrentControl();
+        return true;
+    }
+
+    private bool TryHandleOpenComboBoxKey(Key key, KeyModifiers modifiers)
+    {
+        var comboNav = GamepadComboBoxNavigation.Instance;
+        if (!comboNav.HasActiveComboBox)
+            return false;
+
+        if (key == Key.Escape)
+            return comboNav.TryHandleCancel();
+
+        var action = ResolveKeyboardAction?.Invoke(key, modifiers);
+        return action switch
+        {
+            GamepadAction.Confirm => comboNav.TryHandleConfirm(),
+            GamepadAction.Cancel => comboNav.TryHandleCancel(),
+            GamepadAction.NavUp => comboNav.TryHandleNavigation(NavigationDirection.Up),
+            GamepadAction.NavDown => comboNav.TryHandleNavigation(NavigationDirection.Down),
+            GamepadAction.NavLeft => comboNav.TryHandleNavigation(NavigationDirection.Left),
+            GamepadAction.NavRight => comboNav.TryHandleNavigation(NavigationDirection.Right),
+            _ => false,
+        };
+    }
+
     private void ActivateKeyboardChrome()
     {
         OnKeyboardNavigationActivated?.Invoke();
@@ -298,6 +353,13 @@ public sealed class GamepadModalDialogNavigation
     {
         if (ActiveDialog == null)
             return false;
+
+        // Prefer open ComboBox item navigation over moving between dialog fields.
+        if (GamepadComboBoxNavigation.Instance.TryHandleNavigation(direction))
+            return true;
+
+        // Leave TextBox edit mode first, then move highlight to the next field.
+        TryExitTextBoxEditMode();
 
         EnsureDialogControls();
         if (_dialogControls.Count == 0)
@@ -363,6 +425,13 @@ public sealed class GamepadModalDialogNavigation
         if (activeDialog == null)
             return false;
 
+        if (GamepadComboBoxNavigation.Instance.TryHandleConfirm())
+            return true;
+
+        // A / Enter while typing: commit edit and return to field navigation (do not close).
+        if (TryExitTextBoxEditMode())
+            return true;
+
         EnsureDialogControls();
         if (_dialogControls.Count == 0)
         {
@@ -378,6 +447,12 @@ public sealed class GamepadModalDialogNavigation
         if (control is TextBox textBox)
         {
             GamepadControlActivation.ActivateTextBox(textBox);
+            return true;
+        }
+
+        if (control is ComboBox comboBox)
+        {
+            GamepadComboBoxNavigation.Open(comboBox);
             return true;
         }
 
@@ -411,6 +486,13 @@ public sealed class GamepadModalDialogNavigation
         var activeDialog = ActiveDialog;
         if (activeDialog == null)
             return false;
+
+        if (GamepadComboBoxNavigation.Instance.TryHandleCancel())
+            return true;
+
+        // Escape / B while typing: leave the TextBox first; second press cancels the dialog.
+        if (TryExitTextBoxEditMode())
+            return true;
 
         EnsureDialogControls();
 
@@ -492,6 +574,8 @@ public sealed class GamepadModalDialogNavigation
         "open settings",
         "update quiver",
         "update apps",
+        "save",
+        "save & download",
     ];
 
     private static readonly string[] DismissDialogLabels =
@@ -530,10 +614,26 @@ public sealed class GamepadModalDialogNavigation
                 control.IsVisible &&
                 control.IsEnabled &&
                 control.Focusable &&
-                (control is Button or TextBox or ListBox))
+                (control is Button or TextBox or ListBox or ComboBox) &&
+                !IsNestedInsideNavigableHost(control))
             .OrderBy(control => GetApproximateCenter(control)?.Y ?? 0)
             .ThenBy(control => GetApproximateCenter(control)?.X ?? 0)
             .ToList();
+    }
+
+    /// <summary>
+    /// Skips chrome inside ComboBox/ListBox (e.g. the ComboBox dropdown ToggleButton)
+    /// so navigation targets the host control instead.
+    /// </summary>
+    internal static bool IsNestedInsideNavigableHost(Control control)
+    {
+        for (var parent = control.GetVisualParent(); parent != null; parent = parent.GetVisualParent())
+        {
+            if (parent is ComboBox or ListBox)
+                return true;
+        }
+
+        return false;
     }
 
     public static int GetDefaultButtonIndex(IReadOnlyList<Button> buttons) =>

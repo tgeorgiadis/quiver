@@ -167,6 +167,69 @@ public class GameDownloadInstallServiceTests
         }
     }
 
+    [Fact]
+    public async Task DownloadAndInstallAsync_clears_selected_download_after_failed_install()
+    {
+        var gamesFolder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(gamesFolder);
+
+        try
+        {
+            var badAsset = new GitHubAsset
+            {
+                name = "app-android.apk",
+                browser_download_url = "https://example.com/app-android.apk",
+            };
+            var game = new GameInfo
+            {
+                Name = "Bad Asset",
+                Repository = "owner/bad-asset",
+                FolderName = "BadAsset",
+                SelectedDownload = badAsset,
+                AvailableDownloads =
+                [
+                    badAsset,
+                    new GitHubAsset { name = "app-win.zip", browser_download_url = "https://example.com/app-win.zip" },
+                ],
+            };
+
+            var release = new GitHubRelease
+            {
+                tag_name = "v1.0.0",
+                assets =
+                [
+                    badAsset,
+                    new GitHubAsset { name = "app-win.zip", browser_download_url = "https://example.com/app-win.zip" },
+                ],
+            };
+
+            var dialogs = new RecordingDialogs();
+            using var client = new HttpClient(new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([0x50, 0x4B, 0x03, 0x04]),
+            }));
+
+            await GameDownloadInstallService.DownloadAndInstallAsync(
+                game,
+                client,
+                gamesFolder,
+                release,
+                new AppSettings(),
+                GameStatus.NotInstalled,
+                dialogs);
+
+            game.Status.Should().Be(GameStatus.NotInstalled);
+            game.SelectedDownload.Should().BeNull();
+            game.DownloadProgress.Should().Be(0);
+            dialogs.LastError.Should().NotBeNullOrEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(gamesFolder))
+                Directory.Delete(gamesFolder, true);
+        }
+    }
+
     private static byte[] CreateMinimalZipWithExe()
     {
         using var ms = new MemoryStream();
@@ -186,7 +249,11 @@ public class GameDownloadInstallServiceTests
 
         public Task<bool> ConfirmDownloadWithoutRunnerAsync() => Task.FromResult(true);
 
-        public Task<bool> ConfirmDownloadWithRunnerAsync() => Task.FromResult(true);
+        public Task<LinuxWindowsRunnerConfig?> ConfigureWindowsRunnerAsync(
+            string gamePath,
+            LinuxWindowsRunnerConfig? existing = null,
+            bool isInstall = true) =>
+            HeadlessGameDownloadDialogs.Instance.ConfigureWindowsRunnerAsync(gamePath, existing, isInstall);
 
         public Task ShowRateLimitExceededAsync() => Task.CompletedTask;
 

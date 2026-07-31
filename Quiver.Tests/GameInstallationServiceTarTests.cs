@@ -66,6 +66,126 @@ public class GameInstallationServiceTarTests
         }
     }
 
+    [Fact]
+    public async Task InstallOrUpdateGameAsync_strips_single_root_directory_from_tar_gz()
+    {
+        var archivePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.tar.gz");
+        var gamePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            var binary = Encoding.UTF8.GetBytes("binary");
+            var readme = Encoding.UTF8.GetBytes("readme");
+            File.WriteAllBytes(archivePath, CreateTarGz(
+            [
+                ("LodRecomp-v0.2.26-linux-x64/LodRecomp", binary),
+                ("LodRecomp-v0.2.26-linux-x64/readme.txt", readme),
+            ]));
+
+            await GameInstallationService.InstallOrUpdateGameAsync(
+                archivePath,
+                gamePath,
+                "LodRecomp-v0.2.26-linux-x64.tar.gz",
+                "v0.2.26");
+
+            File.ReadAllBytes(Path.Combine(gamePath, "LodRecomp")).Should().Equal(binary);
+            File.ReadAllBytes(Path.Combine(gamePath, "readme.txt")).Should().Equal(readme);
+            Directory.Exists(Path.Combine(gamePath, "LodRecomp-v0.2.26-linux-x64")).Should().BeFalse();
+        }
+        finally
+        {
+            if (File.Exists(archivePath))
+                File.Delete(archivePath);
+            if (Directory.Exists(gamePath))
+                Directory.Delete(gamePath, true);
+        }
+    }
+
+    [Fact]
+    public async Task InstallOrUpdateGameAsync_does_not_strip_tar_gz_when_root_has_file_and_directory()
+    {
+        var archivePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.tar.gz");
+        var gamePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            var binary = Encoding.UTF8.GetBytes("nested-binary");
+            var rootFile = Encoding.UTF8.GetBytes("root-file");
+            File.WriteAllBytes(archivePath, CreateTarGz(
+            [
+                ("wrapper/game.bin", binary),
+                ("LICENSE", rootFile),
+            ]));
+
+            await GameInstallationService.InstallOrUpdateGameAsync(
+                archivePath,
+                gamePath,
+                "mixed-root.tar.gz",
+                "v1.0.0");
+
+            File.ReadAllBytes(Path.Combine(gamePath, "LICENSE")).Should().Equal(rootFile);
+            File.ReadAllBytes(Path.Combine(gamePath, "wrapper", "game.bin")).Should().Equal(binary);
+        }
+        finally
+        {
+            if (File.Exists(archivePath))
+                File.Delete(archivePath);
+            if (Directory.Exists(gamePath))
+                Directory.Delete(gamePath, true);
+        }
+    }
+
+    [Fact]
+    public async Task InstallOrUpdateGameAsync_strips_single_root_directory_from_zip()
+    {
+        var archivePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.zip");
+        var gamePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            var binary = Encoding.UTF8.GetBytes("zip-binary");
+            var readme = Encoding.UTF8.GetBytes("zip-readme");
+            File.WriteAllBytes(archivePath, CreateZip(
+            [
+                ("LodRecomp-v0.2.26-linux-x64/LodRecomp", binary),
+                ("LodRecomp-v0.2.26-linux-x64/readme.txt", readme),
+            ]));
+
+            await GameInstallationService.InstallOrUpdateGameAsync(
+                archivePath,
+                gamePath,
+                "LodRecomp-v0.2.26-linux-x64.zip",
+                "v0.2.26");
+
+            File.ReadAllBytes(Path.Combine(gamePath, "LodRecomp")).Should().Equal(binary);
+            File.ReadAllBytes(Path.Combine(gamePath, "readme.txt")).Should().Equal(readme);
+            Directory.Exists(Path.Combine(gamePath, "LodRecomp-v0.2.26-linux-x64")).Should().BeFalse();
+        }
+        finally
+        {
+            if (File.Exists(archivePath))
+                File.Delete(archivePath);
+            if (Directory.Exists(gamePath))
+                Directory.Delete(gamePath, true);
+        }
+    }
+
+    static byte[] CreateZip(IReadOnlyList<(string Path, byte[] Content)> entries)
+    {
+        using var zipStream = new MemoryStream();
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var (path, content) in entries)
+            {
+                var entry = archive.CreateEntry(path.Replace('\\', '/'), CompressionLevel.Optimal);
+                using var entryStream = entry.Open();
+                entryStream.Write(content);
+            }
+        }
+
+        return zipStream.ToArray();
+    }
+
     static byte[] CreateTarGz(IReadOnlyList<(string Path, byte[] Content)> entries)
     {
         using var tarStream = new MemoryStream();

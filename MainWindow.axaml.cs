@@ -85,6 +85,9 @@ namespace Quiver
         private int _pendingUpdatesCount;
         private DateTime? _lastUpdateCheckTime;
         private string? _lastLauncherCheckNote;
+        private bool _forceExit;
+        private DispatcherTimer? _backgroundUpdateTimer;
+        private bool _isBackgroundUpdateTickRunning;
 
         public bool IsCheckingUpdates
         {
@@ -180,6 +183,7 @@ namespace Quiver
             OnPropertyChanged(nameof(UpdatesBadgeText));
             OnPropertyChanged(nameof(CheckForUpdatesIconOpacity));
             OnPropertyChanged(nameof(CheckForUpdatesToolTip));
+            _app?.UpdateTrayTooltip(PendingUpdatesCount, IsCheckingUpdates);
         }
 
         private void RefreshUpdateCheckStatus(DateTime? manualCheckTime = null)
@@ -194,7 +198,7 @@ namespace Quiver
             }
 
             var launcherPending = _launcherUpdateService.IsLauncherUpdatePending();
-            var gamePending = Games.Count(g => g.Status == GameStatus.UpdateAvailable);
+            var gamePending = AppUpdateSelection.CountManualPendingUpdates(Games);
             PendingUpdatesCount = LauncherUpdateService.ComputePendingUpdatesCount(launcherPending, gamePending);
         }
 
@@ -549,6 +553,7 @@ namespace Quiver
             GamepadComboBoxNavigation.Attach(ModsSortByComboBox);
             GamepadComboBoxNavigation.Attach(DisplayFilterMatchModeComboBox);
             GamepadComboBoxNavigation.Attach(DisplayFilterExcludeMatchModeComboBox);
+            GamepadComboBoxNavigation.Attach(BackgroundUpdateIntervalComboBox);
 
             // Tunnel: handle arrows/confirm before Avalonia focus walker or CheckBox Space toggle.
             AddHandler(InputElement.KeyDownEvent, MainWindow_KeyDown, RoutingStrategies.Tunnel);
@@ -1578,6 +1583,9 @@ namespace Quiver
                         return;
                     }
 
+                    if (game.Status == GameStatus.NotInstalled)
+                        game.ClearDownloadSelection();
+
                     launched = await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
                     // Re-resolve after async: the action button can be recycled when Status
@@ -1717,7 +1725,7 @@ namespace Quiver
             };
             cancelItem.Click += (s, e) =>
             {
-                game.SelectedDownload = null;
+                game.ClearDownloadSelection();
             };
             contextMenu.Items.Add(cancelItem);
 
@@ -1884,7 +1892,12 @@ namespace Quiver
             e.Handled = true;
         }
 
-        private async Task HandleUpdateNowAsync(Control anchor, GameInfo game, bool preferAutoPlatform = false)
+        /// <returns>True when an install was started/completed; false when cancelled or deferred to a picker.</returns>
+        private async Task<bool> HandleUpdateNowAsync(
+            Control anchor,
+            GameInfo game,
+            bool preferAutoPlatform = false,
+            bool allowAssetPicker = true)
         {
             try
             {
@@ -1893,8 +1906,9 @@ namespace Quiver
                 var latestRelease = releases.FirstOrDefault();
                 if (latestRelease == null)
                 {
-                    await ShowMessageBoxAsync($"No downloadable releases were found for {game.Name}.", "No Releases");
-                    return;
+                    if (allowAssetPicker)
+                        await ShowMessageBoxAsync($"No downloadable releases were found for {game.Name}.", "No Releases");
+                    return false;
                 }
 
                 var availableAssets = latestRelease.assets?
@@ -1903,8 +1917,9 @@ namespace Quiver
 
                 if (availableAssets.Count == 0)
                 {
-                    await ShowMessageBoxAsync($"No downloadable files were found for {game.Name}.", "No Assets");
-                    return;
+                    if (allowAssetPicker)
+                        await ShowMessageBoxAsync($"No downloadable files were found for {game.Name}.", "No Assets");
+                    return false;
                 }
 
                 if (availableAssets.Count == 1)
@@ -1915,7 +1930,7 @@ namespace Quiver
                     UpdateContinueButtonState();
                     if (_isAppUpdatesReviewOpen)
                         CloseAppUpdatesReviewIfEmpty();
-                    return;
+                    return true;
                 }
 
                 if (preferAutoPlatform)
@@ -1936,17 +1951,25 @@ namespace Quiver
                         UpdateContinueButtonState();
                         if (_isAppUpdatesReviewOpen)
                             CloseAppUpdatesReviewIfEmpty();
-                        return;
+                        return true;
                     }
                 }
+
+                if (!allowAssetPicker)
+                    return false;
 
                 await ShowReleaseDownloadSelectionMenuAsync(anchor, game, latestRelease, null, latestRelease.tag_name);
                 if (_isAppUpdatesReviewOpen)
                     CloseAppUpdatesReviewIfEmpty();
+                return false;
             }
             catch (Exception ex)
             {
-                await ShowMessageBoxAsync($"Failed to update {game.Name}: {ex.Message}", "Update Error");
+                if (allowAssetPicker)
+                    await ShowMessageBoxAsync($"Failed to update {game.Name}: {ex.Message}", "Update Error");
+                else
+                    throw;
+                return false;
             }
             finally
             {
@@ -2610,6 +2633,30 @@ namespace Quiver
                 if (CloseAfterLaunchCheckBox != null)
                     CloseAfterLaunchCheckBox.IsChecked = _settings.CloseAfterLaunch;
 
+                if (CloseToTrayCheckBox != null)
+                    CloseToTrayCheckBox.IsChecked = _settings.CloseToTray;
+
+                if (BackgroundUpdateCheckCheckBox != null)
+                    BackgroundUpdateCheckCheckBox.IsChecked = _settings.BackgroundUpdateCheckEnabled;
+
+                if (AutoUpdateNewlyAddedAppsCheckBox != null)
+                    AutoUpdateNewlyAddedAppsCheckBox.IsChecked = _settings.AutoUpdateNewlyAddedApps;
+
+                if (BackgroundUpdateIntervalComboBox != null)
+                {
+                    var interval = BackgroundUpdateCheckIntervals.Normalize(
+                        _settings.BackgroundUpdateCheckIntervalMinutes);
+                    foreach (var entry in BackgroundUpdateIntervalComboBox.Items)
+                    {
+                        if (entry is ComboBoxItem item &&
+                            item.Tag as string == interval.ToString())
+                        {
+                            BackgroundUpdateIntervalComboBox.SelectedItem = item;
+                            break;
+                        }
+                    }
+                }
+
                 if (IgnoreArticlesWhenSortingCheckBox != null)
                     IgnoreArticlesWhenSortingCheckBox.IsChecked = _settings.IgnoreArticlesWhenSorting;
 
@@ -3202,6 +3249,8 @@ namespace Quiver
 
         private async Task<bool> TryPromptAppUpdatesReviewAsync()
         {
+            // After auto-updates run, anything still pending needs review (including auto apps
+            // that could not resolve a platform asset).
             var pendingGames = GetPendingAppUpdates();
             if (pendingGames.Count == 0)
                 return false;
@@ -3215,6 +3264,62 @@ namespace Quiver
                 OpenAppUpdatesReview();
 
             return true;
+        }
+
+        /// <summary>
+        /// Silently installs updates for apps with AutoUpdate enabled.
+        /// Returns how many installs completed. Unresolved multi-asset apps are left pending.
+        /// </summary>
+        private async Task<int> ApplyAutoUpdatesAsync(bool showFailureSummary)
+        {
+            var autoGames = AppUpdateSelection.GetAutoPendingUpdates(Games);
+            if (autoGames.Count == 0)
+                return 0;
+
+            var updated = 0;
+            var failures = new List<string>();
+
+            foreach (var game in autoGames)
+            {
+                if (game.Status != GameStatus.UpdateAvailable)
+                    continue;
+
+                try
+                {
+                    var installed = await HandleUpdateNowAsync(
+                        this,
+                        game,
+                        preferAutoPlatform: true,
+                        allowAssetPicker: false);
+                    if (installed)
+                        updated++;
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{game.Name}: {ex.Message}");
+                }
+            }
+
+            if (updated > 0)
+            {
+                ApplySorting();
+                UpdateContinueButtonState();
+            }
+
+            RefreshUpdateCheckStatus();
+            NotifyUpdateCheckUiProperties();
+
+            if (showFailureSummary &&
+                failures.Count > 0 &&
+                IsVisible &&
+                WindowState != WindowState.Minimized)
+            {
+                await ShowMessageBoxAsync(
+                    "Some automatic updates could not be completed:\n\n" + string.Join('\n', failures),
+                    "Auto Update");
+            }
+
+            return updated;
         }
 
         private enum CombinedUpdateChoice
@@ -3572,7 +3677,10 @@ namespace Quiver
         private async void CatalogSyncAddAll_Click(object? sender, RoutedEventArgs e)
         {
             var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
-            var updated = CatalogCompareService.ApplyAddAllExternalOnly(localApps, GetActionableCatalogSyncRows());
+            var updated = CatalogCompareService.ApplyAddAllExternalOnly(
+                localApps,
+                GetActionableCatalogSyncRows(),
+                _settings.AutoUpdateNewlyAddedApps);
             await ApplyCatalogSyncLocalAppsAsync(updated);
         }
 
@@ -3644,7 +3752,10 @@ namespace Quiver
                 return;
 
             var localApps = await _gameManager.CatalogService.LoadLocalAppsAsync();
-            var updated = CatalogCompareService.ApplyRowAdd(localApps, row);
+            var updated = CatalogCompareService.ApplyRowAdd(
+                localApps,
+                row,
+                _settings.AutoUpdateNewlyAddedApps);
             CatalogCompareService.ClearIgnoredChange(_activeCatalogSyncSource!, row.Repository);
             await ApplyCatalogSyncLocalAppsAsync(updated);
         }
@@ -4045,56 +4156,85 @@ namespace Quiver
             }
         }
 
-        private async void CheckforUpdates_Click(object sender, RoutedEventArgs e)
+        private async void CheckforUpdates_Click(object sender, RoutedEventArgs e) =>
+            await RunUpdateCheckAsync(promptForReview: true, isManualCheck: true);
+
+        /// <summary>
+        /// Shared update check used by the toolbar button, tray menu, and background timer.
+        /// </summary>
+        public async Task RunUpdateCheckAsync(bool promptForReview, bool isManualCheck)
         {
+            if (IsCheckingUpdates)
+                return;
+
             IsCheckingUpdates = true;
             try
             {
-                ManualLauncherCheckResult launcherResult = _app != null
-                    ? await _app.CheckForAppUpdatesManually()
-                    : new ManualLauncherCheckResult
+                ManualLauncherCheckResult launcherResult;
+                if (isManualCheck && _app != null)
+                {
+                    launcherResult = await _app.CheckForAppUpdatesManually();
+                }
+                else
+                {
+                    var info = _launcherUpdateService.LoadUpdateCheckInfo();
+                    launcherResult = new ManualLauncherCheckResult
                     {
                         InstalledVersion = LauncherVersionService.ReadInstalledVersion(
                             AppDomain.CurrentDomain.BaseDirectory),
-                        CheckSucceeded = false,
-                        ErrorMessage = "Launcher is not initialized.",
+                        CheckSucceeded = true,
+                        LauncherUpdatePending = _launcherUpdateService.IsLauncherUpdatePending(),
+                        AvailableLauncherVersion = info.LastKnownVersion,
                     };
+                }
 
                 await _gameManager.CheckAllUpdatesAsync();
                 await RefreshAllModUpdateBadgesAsync();
                 ApplySorting();
+
+                var autoUpdated = await ApplyAutoUpdatesAsync(showFailureSummary: promptForReview && IsVisible);
                 RefreshUpdateCheckStatus(DateTime.Now);
 
                 _lastLauncherCheckNote = launcherResult.CheckSucceeded ? null : "Could not check Quiver";
                 NotifyUpdateCheckUiProperties();
 
-                var pendingApps = GetPendingAppUpdates();
-                var app = _app;
-                var launcherPending = launcherResult.LauncherUpdatePending && app != null;
+                if (!promptForReview || !IsVisible)
+                    return;
 
-                if (launcherPending && pendingApps.Count > 0)
+                var pendingApps = GetPendingAppUpdates();
+                var launcherApp = _app;
+                var launcherPending = launcherResult.LauncherUpdatePending && launcherApp != null;
+
+                if (launcherPending && launcherApp != null && pendingApps.Count > 0)
                 {
                     var choice = await PromptCombinedUpdatesAsync(
                         launcherResult.AvailableLauncherVersion,
                         pendingApps);
 
                     if (choice == CombinedUpdateChoice.UpdateQuiver)
-                        await app.ApplyPendingLauncherUpdateAsync();
+                        await launcherApp.ApplyPendingLauncherUpdateAsync();
                     else if (choice == CombinedUpdateChoice.UpdateApps)
                         OpenAppUpdatesReview();
                 }
-                else if (launcherPending)
+                else if (launcherPending && launcherApp != null)
                 {
-                    await app.PromptForPendingLauncherUpdateAsync();
+                    await launcherApp.PromptForPendingLauncherUpdateAsync();
                 }
                 else if (pendingApps.Count > 0)
                 {
                     await TryPromptAppUpdatesReviewAsync();
                 }
+                else if (autoUpdated > 0 && isManualCheck)
+                {
+                    await ShowMessageBoxAsync(
+                        AppUpdateReviewMessages.FormatAutoUpdatedSummary(autoUpdated),
+                        "App Updates");
+                }
             }
             catch (Exception ex)
             {
-                await ShowMessageBoxAsync($"Failed to check for updates: {ex.Message}", "Error");
+                if (promptForReview && IsVisible)
+                    await ShowMessageBoxAsync($"Failed to check for updates: {ex.Message}", "Error");
                 RefreshUpdateCheckStatus();
             }
             finally
@@ -4184,6 +4324,54 @@ namespace Quiver
             }
         }
 
+        private async void ConfigureWindowsRunner_Click(object? sender, RoutedEventArgs e)
+        {
+            var game = (sender as MenuItem)?.CommandParameter as GameInfo;
+            if (game == null || string.IsNullOrWhiteSpace(game.FolderName))
+            {
+                await ShowMessageBoxAsync("Unable to identify the selected app.", "Error");
+                return;
+            }
+
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                await ShowMessageBoxAsync("Windows runner settings are only used on Linux.", "Windows Runner");
+                return;
+            }
+
+            try
+            {
+                var gamePath = game.GetInstallPath(_gameManager.GamesFolder);
+                var config = await GameDialogService.ShowLinuxWindowsRunnerDialogAsync(
+                    gamePath,
+                    LinuxWindowsRunnerConfig.FromGame(game),
+                    isInstall: false);
+
+                if (config == null)
+                    return;
+
+                config.ApplyTo(game);
+
+                var allGames = await LoadGamesFromJsonAsync();
+                var matchingGame = allGames.FirstOrDefault(g =>
+                    !string.IsNullOrWhiteSpace(g.Repository) &&
+                    g.Repository.Equals(game.Repository, StringComparison.OrdinalIgnoreCase));
+
+                if (matchingGame != null)
+                {
+                    matchingGame.LinuxRunner = game.LinuxRunner;
+                    matchingGame.LinuxPrefixPath = game.LinuxPrefixPath;
+                    matchingGame.LinuxProtonPath = game.LinuxProtonPath;
+                    matchingGame.LinuxCustomLaunchCommand = game.LinuxCustomLaunchCommand;
+                    await SaveGamesToJsonAsync(allGames);
+                }
+            }
+            catch (Exception ex)
+            {
+                await ShowMessageBoxAsync($"Failed to save Windows runner settings: {ex.Message}", "Windows Runner");
+            }
+        }
+
         private void DiscordButton_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -4209,6 +4397,9 @@ namespace Quiver
 
             try
             {
+                if (game.Status == GameStatus.NotInstalled)
+                    game.ClearDownloadSelection();
+
                 var launched = await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
                 var anchor = ResolveDownloadMenuAnchor(
@@ -4285,6 +4476,20 @@ namespace Quiver
             }
 
             await HandleUpdateNowAsync(anchor, game);
+        }
+
+        private async void AutoUpdateMenu_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem menuItem || menuItem.CommandParameter is not GameInfo game)
+                return;
+
+            game.AutoUpdate = !game.AutoUpdate;
+            await PersistAutoUpdatePreferenceAsync(game);
+            RefreshUpdateCheckStatus();
+            NotifyUpdateCheckUiProperties();
+
+            if (game.AutoUpdate && game.Status == GameStatus.UpdateAvailable)
+                await ApplyAutoUpdatesAsync(showFailureSummary: true);
         }
 
         private async void SkipUpdate_Click(object sender, RoutedEventArgs e)
@@ -5939,6 +6144,81 @@ namespace Quiver
             }
         }
 
+        private void CloseToTrayCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            _settings.CloseToTray = true;
+            OnSettingChanged();
+            ApplyTrayAndBackgroundUpdateSettings();
+        }
+
+        private void CloseToTrayCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            _settings.CloseToTray = false;
+            OnSettingChanged();
+            ApplyTrayAndBackgroundUpdateSettings();
+        }
+
+        private void AutoUpdateNewlyAddedAppsCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            _settings.AutoUpdateNewlyAddedApps = true;
+            OnSettingChanged();
+        }
+
+        private void AutoUpdateNewlyAddedAppsCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            _settings.AutoUpdateNewlyAddedApps = false;
+            OnSettingChanged();
+        }
+
+        private void BackgroundUpdateCheckCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            _settings.BackgroundUpdateCheckEnabled = true;
+            OnSettingChanged();
+            ApplyTrayAndBackgroundUpdateSettings();
+        }
+
+        private void BackgroundUpdateCheckCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            _settings.BackgroundUpdateCheckEnabled = false;
+            OnSettingChanged();
+            ApplyTrayAndBackgroundUpdateSettings();
+        }
+
+        private void BackgroundUpdateIntervalComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            if (BackgroundUpdateIntervalComboBox?.SelectedItem is not ComboBoxItem item ||
+                item.Tag is not string tag ||
+                !int.TryParse(tag, out var minutes))
+            {
+                return;
+            }
+
+            _settings.BackgroundUpdateCheckIntervalMinutes = BackgroundUpdateCheckIntervals.Normalize(minutes);
+            OnSettingChanged();
+            ApplyTrayAndBackgroundUpdateSettings();
+        }
+
         private void IgnoreArticlesWhenSortingCheckBox_Checked(object sender, RoutedEventArgs e)
         {
             SetIgnoreArticlesWhenSorting(true);
@@ -6286,7 +6566,22 @@ namespace Quiver
 
             matchingGame.PreferredVersion = game.PreferredVersion;
             matchingGame.SkippedUpdateVersion = game.SkippedUpdateVersion;
+            matchingGame.AutoUpdate = game.AutoUpdate;
 
+            await SaveGamesToJsonAsync(allGames);
+        }
+
+        private async Task PersistAutoUpdatePreferenceAsync(GameInfo game)
+        {
+            var allGames = await LoadGamesFromJsonAsync();
+            var matchingGame = allGames.FirstOrDefault(g =>
+                !string.IsNullOrWhiteSpace(g.Repository) &&
+                g.Repository.Equals(game.Repository, StringComparison.OrdinalIgnoreCase));
+
+            if (matchingGame == null)
+                return;
+
+            matchingGame.AutoUpdate = game.AutoUpdate;
             await SaveGamesToJsonAsync(allGames);
         }
 
@@ -6532,6 +6827,7 @@ namespace Quiver
                         FilesToAdd = filesToAdd,
                         ModsPath = modsPath.Length > 0 ? modsPath : null,
                         ModsSources = modsSources,
+                        AutoUpdate = _settings.AutoUpdateNewlyAddedApps,
                         IsCustom = true,
                         IsExperimental = false
                     };
@@ -9614,10 +9910,85 @@ namespace Quiver
 
             DismissTextInputFocus();
 
+            if (_settings.CloseToTray)
+            {
+                HideToTray();
+                return;
+            }
+
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 Hide();
 
             Close();
+        }
+
+        public void HideToTray()
+        {
+            DismissTextInputFocus();
+            Hide();
+            _app?.SetTrayVisible(true);
+            RefreshUpdateCheckStatus();
+        }
+
+        public void RestoreFromTray()
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+            _app?.SetTrayVisible(_settings.CloseToTray || _settings.BackgroundUpdateCheckEnabled);
+            RefreshUpdateCheckStatus();
+        }
+
+        public void RequestExit()
+        {
+            _forceExit = true;
+            if (!IsVisible)
+                Show();
+            Close();
+        }
+
+        /// <summary>Called from App after tray wiring is ready.</summary>
+        public void ApplyTraySettingsFromApp() => ApplyTrayAndBackgroundUpdateSettings();
+
+        private void ApplyTrayAndBackgroundUpdateSettings()
+        {
+            var showTray = _settings.CloseToTray || _settings.BackgroundUpdateCheckEnabled;
+            _app?.SetTrayVisible(showTray);
+            ConfigureBackgroundUpdateTimer();
+            RefreshUpdateCheckStatus();
+        }
+
+        private void ConfigureBackgroundUpdateTimer()
+        {
+            _backgroundUpdateTimer?.Stop();
+
+            if (!_settings.BackgroundUpdateCheckEnabled)
+                return;
+
+            var minutes = BackgroundUpdateCheckIntervals.Normalize(
+                _settings.BackgroundUpdateCheckIntervalMinutes);
+
+            _backgroundUpdateTimer ??= new DispatcherTimer();
+            _backgroundUpdateTimer.Tick -= BackgroundUpdateTimer_Tick;
+            _backgroundUpdateTimer.Tick += BackgroundUpdateTimer_Tick;
+            _backgroundUpdateTimer.Interval = TimeSpan.FromMinutes(minutes);
+            _backgroundUpdateTimer.Start();
+        }
+
+        private async void BackgroundUpdateTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_isBackgroundUpdateTickRunning || IsCheckingUpdates)
+                return;
+
+            _isBackgroundUpdateTickRunning = true;
+            try
+            {
+                await RunUpdateCheckAsync(promptForReview: false, isManualCheck: false);
+            }
+            finally
+            {
+                _isBackgroundUpdateTickRunning = false;
+            }
         }
 
         private void ApplyCatalogReviewFilterSelection(int index)
@@ -10231,6 +10602,9 @@ namespace Quiver
                     ShowUpdateActionMenu(updateAnchor, game);
                     return;
                 }
+
+                if (game.Status == GameStatus.NotInstalled)
+                    game.ClearDownloadSelection();
 
                 launched = await game.PerformActionAsync(_gameManager.HttpClient, _gameManager.GamesFolder, _settings);
 
@@ -10876,8 +11250,17 @@ namespace Quiver
 
         protected override void OnClosing(WindowClosingEventArgs e)
         {
+            if (!_forceExit && _settings.CloseToTray)
+            {
+                e.Cancel = true;
+                HideToTray();
+                return;
+            }
+
+            _backgroundUpdateTimer?.Stop();
             _fadeTaskCts?.Cancel();
             StopLauncherMusic();
+            _app?.SetTrayVisible(false);
             base.OnClosing(e);
         }
 

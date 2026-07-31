@@ -1,3 +1,5 @@
+using Quiver.Services.Mods;
+
 namespace Quiver.Services.Mods.Providers.GameBanana;
 
 public sealed class GameBananaModProvider : IModProvider
@@ -180,38 +182,34 @@ public sealed class GameBananaModProvider : IModProvider
         }
 
         var total = response.Content.Headers.ContentLength ?? version.FileSize;
-        await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken)
+        var fileStream = await ModArchiveDownload.CopyContentToTempFileAsync(
+                response.Content,
+                total,
+                progress,
+                cancellationToken)
             .ConfigureAwait(false);
 
-        var memory = new MemoryStream();
-        var buffer = new byte[81920];
-        long readTotal = 0;
-        int read;
-        while ((read = await contentStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)
-                   .ConfigureAwait(false)) > 0)
+        try
         {
-            await memory.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-            readTotal += read;
-            if (progress != null && total > 0)
-                progress.Report(Math.Clamp(readTotal / (double)total, 0, 1));
-        }
-
-        progress?.Report(1);
-        memory.Position = 0;
-
-        if (memory.Length >= 4)
-        {
-            Span<byte> header = stackalloc byte[4];
-            _ = memory.Read(header);
-            memory.Position = 0;
-            if (!IsZipOrSevenZipHeader(header))
+            if (fileStream.Length >= 4)
             {
-                throw new InvalidOperationException(
-                    "Downloaded file is not a zip or 7z archive. Quiver only installs zip/7z mods.");
+                Span<byte> header = stackalloc byte[4];
+                _ = fileStream.Read(header);
+                fileStream.Position = 0;
+                if (!IsZipOrSevenZipHeader(header))
+                {
+                    throw new InvalidOperationException(
+                        "Downloaded file is not a zip or 7z archive. Quiver only installs zip/7z mods.");
+                }
             }
-        }
 
-        return memory;
+            return fileStream;
+        }
+        catch
+        {
+            await fileStream.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     public IReadOnlySet<string> GetArchiveMetadataFileNames() => MetadataFiles;

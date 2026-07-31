@@ -6,6 +6,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using System;
 using System.ComponentModel;
@@ -125,6 +126,10 @@ public class App : Application, INotifyPropertyChanged
     private static readonly object _updateLock = new object();
     private static readonly SemaphoreSlim _updateCheckSemaphore = new(1, 1);
     private readonly TaskCompletionSource _startupSelfUpdatePromptCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TrayIcon? _trayIcon;
+    private NativeMenuItem? _trayOpenItem;
+    private NativeMenuItem? _trayCheckUpdatesItem;
+    private NativeMenuItem? _trayExitItem;
 
     /// <summary>
     /// Completes when the startup Quiver self-update check (and any prompt) finishes or is skipped.
@@ -161,9 +166,14 @@ public class App : Application, INotifyPropertyChanged
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
+
             var mainWindow = new MainWindow();
             mainWindow._app = this;
             desktop.MainWindow = mainWindow;
+
+            InitializeTrayIcon();
+            mainWindow.ApplyTraySettingsFromApp();
         }
 
         base.OnFrameworkInitializationCompleted();
@@ -190,6 +200,116 @@ public class App : Application, INotifyPropertyChanged
                 _startupSelfUpdatePromptCompleted.TrySetResult();
             }
         }
+    }
+
+    private void InitializeTrayIcon()
+    {
+        if (_trayIcon != null)
+            return;
+
+        _trayOpenItem = new NativeMenuItem("Open Quiver");
+        _trayOpenItem.Click += (_, _) => RestoreMainWindowFromTray();
+
+        _trayCheckUpdatesItem = new NativeMenuItem("Check for updates");
+        _trayCheckUpdatesItem.Click += (_, _) => _ = CheckUpdatesFromTrayAsync();
+
+        _trayExitItem = new NativeMenuItem("Exit");
+        _trayExitItem.Click += (_, _) => ExitFromTray();
+
+        var menu = new NativeMenu();
+        menu.Items.Add(_trayOpenItem);
+        menu.Items.Add(_trayCheckUpdatesItem);
+        menu.Items.Add(new NativeMenuItemSeparator());
+        menu.Items.Add(_trayExitItem);
+
+        _trayIcon = new TrayIcon
+        {
+            Icon = CreateTrayWindowIcon(),
+            ToolTipText = "Quiver",
+            IsVisible = false,
+            Menu = menu,
+        };
+        _trayIcon.Clicked += (_, _) => RestoreMainWindowFromTray();
+
+        var icons = new TrayIcons { _trayIcon };
+        TrayIcon.SetIcons(this, icons);
+    }
+
+    private static WindowIcon CreateTrayWindowIcon()
+    {
+        var icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
+        if (File.Exists(icoPath))
+            return new WindowIcon(icoPath);
+
+        using var stream = AssetLoader.Open(new Uri("avares://Quiver/Assets/app.png"));
+        return new WindowIcon(stream);
+    }
+
+    public void SetTrayVisible(bool visible)
+    {
+        if (_trayIcon == null)
+            InitializeTrayIcon();
+
+        if (_trayIcon != null)
+            _trayIcon.IsVisible = visible;
+    }
+
+    public void UpdateTrayTooltip(int pendingUpdatesCount, bool isChecking)
+    {
+        if (_trayIcon == null)
+            return;
+
+        if (isChecking)
+        {
+            _trayIcon.ToolTipText = "Quiver · Checking for updates…";
+            return;
+        }
+
+        if (pendingUpdatesCount <= 0)
+        {
+            _trayIcon.ToolTipText = "Quiver";
+            return;
+        }
+
+        _trayIcon.ToolTipText = pendingUpdatesCount == 1
+            ? "Quiver · 1 app needs review"
+            : $"Quiver · {pendingUpdatesCount} apps need review";
+    }
+
+    private void RestoreMainWindowFromTray()
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+            desktop.MainWindow is MainWindow mainWindow)
+        {
+            mainWindow.RestoreFromTray();
+        }
+    }
+
+    private async Task CheckUpdatesFromTrayAsync()
+    {
+        if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop ||
+            desktop.MainWindow is not MainWindow mainWindow)
+        {
+            return;
+        }
+
+        if (!mainWindow.IsVisible)
+            mainWindow.RestoreFromTray();
+
+        await mainWindow.RunUpdateCheckAsync(promptForReview: true, isManualCheck: true);
+    }
+
+    private void ExitFromTray()
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+            desktop.MainWindow is MainWindow mainWindow)
+        {
+            mainWindow.RequestExit();
+            return;
+        }
+
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime lifetime)
+            lifetime.Shutdown();
     }
 
     private static void ConfigureAsyncImageLoaderCache()

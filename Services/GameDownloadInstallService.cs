@@ -59,8 +59,7 @@ public static class GameDownloadInstallService
                     if (releaseResult.Releases.Count == 0)
                     {
                         await dialogs.ShowErrorAsync($"No releases found for {game.Name}.", "No Releases");
-                        game.Status = GameStatus.NotInstalled;
-                        game.DownloadProgress = 0;
+                        ResetNotInstalled(game);
                         return;
                     }
 
@@ -69,8 +68,7 @@ public static class GameDownloadInstallService
                     if (latestRelease == null)
                     {
                         await dialogs.ShowErrorAsync($"No valid releases found for {game.Name}.", "No Releases");
-                        game.Status = GameStatus.NotInstalled;
-                        game.DownloadProgress = 0;
+                        ResetNotInstalled(game);
                         return;
                     }
 
@@ -102,8 +100,7 @@ public static class GameDownloadInstallService
             if (availableAssets.Count == 0)
             {
                 await dialogs.ShowErrorAsync($"No download files found for {game.Name}.", "No Assets");
-                game.Status = GameStatus.NotInstalled;
-                game.DownloadProgress = 0;
+                ResetNotInstalled(game);
                 return;
             }
 
@@ -122,20 +119,31 @@ public static class GameDownloadInstallService
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
                 PlatformAssetMatcher.IsWindowsAsset(asset.name))
             {
-                if (!WindowsRunnerService.IsWindowsRunnerAvailable(settings))
+                var gamePathForRunner = game.GetInstallPath(gamesFolder);
+
+                if (!WindowsRunnerService.IsWindowsRunnerAvailable(settings, game))
                 {
                     if (!await dialogs.ConfirmDownloadWithoutRunnerAsync())
                     {
-                        game.Status = GameStatus.NotInstalled;
-                        game.DownloadProgress = 0;
+                        ResetNotInstalled(game);
                         return;
                     }
                 }
-                else if (!await dialogs.ConfirmDownloadWithRunnerAsync())
+                else
                 {
-                    game.Status = GameStatus.NotInstalled;
-                    game.DownloadProgress = 0;
-                    return;
+                    var runnerConfig = await dialogs.ConfigureWindowsRunnerAsync(
+                        gamePathForRunner,
+                        LinuxWindowsRunnerConfig.FromGame(game),
+                        isInstall: true).ConfigureAwait(false);
+
+                    if (runnerConfig == null)
+                    {
+                        ResetNotInstalled(game);
+                        return;
+                    }
+
+                    runnerConfig.ApplyTo(game);
+                    await PersistLinuxRunnerSettingsAsync(game).ConfigureAwait(false);
                 }
             }
 
@@ -196,7 +204,7 @@ public static class GameDownloadInstallService
 
                 game.Status = GameStatus.Installed;
                 game.DownloadProgress = 0;
-                game.SelectedDownload = null;
+                game.ClearDownloadSelection();
                 game.AvailableDownloads = null;
             }
             finally
@@ -241,24 +249,56 @@ public static class GameDownloadInstallService
                     "Network Error");
             }
 
-            game.Status = GameStatus.NotInstalled;
-            game.DownloadProgress = 0;
+            ResetNotInstalled(game);
         }
         catch (UnauthorizedAccessException ex)
         {
             await dialogs.ShowErrorAsync(
                 $"Permission error installing {game.Name}: {ex.Message}\n\nPlease check folder permissions.",
                 "Permission Error");
-            game.Status = GameStatus.NotInstalled;
-            game.DownloadProgress = 0;
+            ResetNotInstalled(game);
         }
         catch (Exception ex)
         {
             await dialogs.ShowErrorAsync(
                 InstallationErrorMessages.FormatInstallationError(game.Name, ex.Message),
                 "Installation Error");
-            game.Status = GameStatus.NotInstalled;
-            game.DownloadProgress = 0;
+            ResetNotInstalled(game);
+        }
+    }
+
+    static void ResetNotInstalled(GameInfo game)
+    {
+        game.Status = GameStatus.NotInstalled;
+        game.DownloadProgress = 0;
+        game.ClearDownloadSelection();
+    }
+
+    static async Task PersistLinuxRunnerSettingsAsync(GameInfo game)
+    {
+        var catalog = game.GameManager?.CatalogService;
+        if (catalog == null || string.IsNullOrWhiteSpace(game.Repository))
+            return;
+
+        try
+        {
+            var allGames = await catalog.LoadLocalAppsAsync().ConfigureAwait(false);
+            var matchingGame = allGames.FirstOrDefault(g =>
+                !string.IsNullOrWhiteSpace(g.Repository) &&
+                g.Repository.Equals(game.Repository, StringComparison.OrdinalIgnoreCase));
+
+            if (matchingGame == null)
+                return;
+
+            matchingGame.LinuxRunner = game.LinuxRunner;
+            matchingGame.LinuxPrefixPath = game.LinuxPrefixPath;
+            matchingGame.LinuxProtonPath = game.LinuxProtonPath;
+            matchingGame.LinuxCustomLaunchCommand = game.LinuxCustomLaunchCommand;
+            await catalog.SaveLocalAppsAsync(allGames).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to persist Linux runner settings: {ex.Message}");
         }
     }
 }

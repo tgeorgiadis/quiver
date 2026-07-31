@@ -180,7 +180,7 @@ namespace Quiver.Services
             return changed;
         }
 
-        public static GameInfo CloneForLocal(GameInfo external) =>
+        public static GameInfo CloneForLocal(GameInfo external, bool autoUpdate = false) =>
             new()
             {
                 Name = external.Name,
@@ -190,6 +190,7 @@ namespace Quiver.Services
                 GameIconUrl = external.GameIconUrl,
                 PreferredVersion = external.PreferredVersion,
                 SkippedUpdateVersion = external.SkippedUpdateVersion,
+                AutoUpdate = autoUpdate,
                 Tags = TagHelper.NormalizeTags(external.Tags),
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 ModsPath = GameModsConfig.NormalizePath(external.ModsPath) is { Length: > 0 } path ? path : null,
@@ -210,6 +211,7 @@ namespace Quiver.Services
                 GameIconUrl = external.GameIconUrl,
                 PreferredVersion = external.PreferredVersion,
                 SkippedUpdateVersion = external.SkippedUpdateVersion,
+                AutoUpdate = local.AutoUpdate,
                 Tags = TagHelper.NormalizeTags(external.Tags),
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 ModsPath = GameModsConfig.NormalizePath(external.ModsPath) is { Length: > 0 } path ? path : null,
@@ -243,6 +245,7 @@ namespace Quiver.Services
                 GameIconUrl = external.GameIconUrl,
                 PreferredVersion = external.PreferredVersion,
                 SkippedUpdateVersion = local.SkippedUpdateVersion,
+                AutoUpdate = local.AutoUpdate,
                 Tags = mergedTags,
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 ModsPath = modsPath.Length > 0 ? modsPath : null,
@@ -256,7 +259,8 @@ namespace Quiver.Services
 
         public static List<GameInfo> ApplyAddAllExternalOnly(
             List<GameInfo> localApps,
-            IReadOnlyList<CatalogSyncRowItem> rows)
+            IReadOnlyList<CatalogSyncRowItem> rows,
+            bool autoUpdateNewlyAdded = false)
         {
             var result = new List<GameInfo>(localApps);
             var localRepos = new HashSet<string>(
@@ -268,7 +272,7 @@ namespace Quiver.Services
             foreach (var row in rows.Where(r => r.Status == CatalogSyncStatus.InExternalOnly && r.External != null))
             {
                 if (localRepos.Add(row.Repository))
-                    result.Add(CloneForLocal(row.External!));
+                    result.Add(CloneForLocal(row.External!, autoUpdateNewlyAdded));
             }
 
             return result;
@@ -294,7 +298,10 @@ namespace Quiver.Services
                 .ToList();
         }
 
-        public static List<GameInfo> ApplyRowAdd(List<GameInfo> localApps, CatalogSyncRowItem row)
+        public static List<GameInfo> ApplyRowAdd(
+            List<GameInfo> localApps,
+            CatalogSyncRowItem row,
+            bool autoUpdateNewlyAdded = false)
         {
             if (row.External == null || row.Status != CatalogSyncStatus.InExternalOnly)
                 return localApps;
@@ -306,7 +313,7 @@ namespace Quiver.Services
             if (exists)
                 return localApps;
 
-            var result = new List<GameInfo>(localApps) { CloneForLocal(row.External) };
+            var result = new List<GameInfo>(localApps) { CloneForLocal(row.External, autoUpdateNewlyAdded) };
             return result;
         }
 

@@ -212,6 +212,51 @@ public class AppCatalogServiceTests
     }
 
     [Fact]
+    public void SerializeApp_round_trips_autoUpdate()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "quiver-auto-update-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var (service, _) = TestFixtures.CreateIsolatedCatalogService(dataDirectory: tempDir);
+            var apps = new List<GameInfo>
+            {
+                new()
+                {
+                    Name = "Auto App",
+                    Repository = "owner/auto",
+                    FolderName = "Auto",
+                    AutoUpdate = true,
+                },
+                new()
+                {
+                    Name = "Manual App",
+                    Repository = "owner/manual",
+                    FolderName = "Manual",
+                    AutoUpdate = false,
+                },
+            };
+
+            service.SaveLocalApps(apps);
+            var json = File.ReadAllText(Path.Combine(tempDir, "apps.json"));
+            json.Should().Contain("\"autoUpdate\": true");
+            json.Should().Contain("owner/manual");
+            // false autoUpdate is omitted from JSON and defaults to false on load
+            json.Should().NotContain("\"autoUpdate\": false");
+
+            var loaded = service.ParseAppsFromJson(json);
+            loaded.Should().ContainSingle(a => a.Repository == "owner/auto" && a.AutoUpdate);
+            loaded.Should().ContainSingle(a => a.Repository == "owner/manual" && !a.AutoUpdate);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task FetchSourceAsync_applies_name_and_description_from_list_json()
     {
         var sourceId = Guid.NewGuid().ToString();

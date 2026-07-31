@@ -18,12 +18,14 @@ public sealed class GamepadComboBoxNavigation
 
     public static void Attach(ComboBox comboBox)
     {
+        // Mouse / native open must register too — otherwise Up/Down stay on the dialog.
+        comboBox.DropDownOpened += (_, _) => Instance.RegisterOpen(comboBox, openIfNeeded: false);
         comboBox.DropDownClosed += (_, _) => Instance.Close(comboBox);
     }
 
-    public static void Open(ComboBox comboBox) => Instance.RegisterOpen(comboBox);
+    public static void Open(ComboBox comboBox) => Instance.RegisterOpen(comboBox, openIfNeeded: true);
 
-    public void RegisterOpen(ComboBox comboBox)
+    public void RegisterOpen(ComboBox comboBox, bool openIfNeeded = true)
     {
         _activeComboBox = comboBox;
         _items = CollectNavigableItems(comboBox);
@@ -34,9 +36,12 @@ public sealed class GamepadComboBoxNavigation
         if (_focusedItemIndex < 0)
             _focusedItemIndex = _items.Count > 0 ? 0 : -1;
 
-        if (!comboBox.IsDropDownOpen)
+        if (openIfNeeded && !comboBox.IsDropDownOpen)
             comboBox.IsDropDownOpen = true;
 
+        // Apply immediately so keyboard/gamepad hover is visible; post again after the
+        // popup finishes layout (items may not be realized yet on the first pass).
+        FocusCurrentItem();
         Dispatcher.UIThread.Post(FocusCurrentItem, DispatcherPriority.Loaded);
     }
 
@@ -45,6 +50,7 @@ public sealed class GamepadComboBoxNavigation
         if (!ReferenceEquals(_activeComboBox, comboBox))
             return;
 
+        ClearItemHighlights();
         _activeComboBox = null;
         _items = [];
         _focusedItemIndex = -1;
@@ -119,7 +125,22 @@ public sealed class GamepadComboBoxNavigation
 
     private void FocusCurrentItem()
     {
-        GetFocusedItem()?.Focus();
+        ClearItemHighlights();
+
+        var focused = GetFocusedItem();
+        if (focused == null)
+            return;
+
+        // Highlight only — do not change SelectedItem until Confirm (A / Enter).
+        // Cancel restores _originalSelectedIndex if the user browsed away.
+        focused.Classes.Set("gamepad-focused", true);
+        focused.Focus();
+    }
+
+    private void ClearItemHighlights()
+    {
+        foreach (var item in _items)
+            item.Classes.Set("gamepad-focused", false);
     }
 
     private ComboBoxItem? GetFocusedItem()
