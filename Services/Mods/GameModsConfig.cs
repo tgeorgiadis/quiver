@@ -3,6 +3,9 @@ namespace Quiver.Services.Mods;
 /// <summary>Helpers for normalizing and comparing an app's mods catalog config.</summary>
 public static class GameModsConfig
 {
+    public const string LayoutFlat = "flat";
+    public const string LayoutFolderPerMod = "folderPerMod";
+
     public static string NormalizePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -17,6 +20,60 @@ public static class GameModsConfig
             return string.Empty;
 
         return string.Join('/', segments);
+    }
+
+    public static string NormalizeLayout(string? layout)
+    {
+        if (string.IsNullOrWhiteSpace(layout))
+            return LayoutFlat;
+
+        var trimmed = layout.Trim();
+        if (string.Equals(trimmed, LayoutFolderPerMod, StringComparison.OrdinalIgnoreCase))
+            return LayoutFolderPerMod;
+
+        return LayoutFlat;
+    }
+
+    public static bool IsFolderPerMod(string? layout) =>
+        string.Equals(NormalizeLayout(layout), LayoutFolderPerMod, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Returns a filesystem-safe folder name for wrapping a flat mod archive.
+    /// Priority: download filename (no extension), package name, package id, then "mod".
+    /// </summary>
+    public static string ResolveWrapFolderName(
+        string? downloadFileName,
+        string? packageName,
+        string? packageId)
+    {
+        if (!string.IsNullOrWhiteSpace(downloadFileName))
+        {
+            var fromFile = SanitizeFolderName(Path.GetFileNameWithoutExtension(downloadFileName.Trim()));
+            if (fromFile.Length > 0)
+                return fromFile;
+        }
+
+        var fromName = SanitizeFolderName(packageName);
+        if (fromName.Length > 0)
+            return fromName;
+
+        var fromId = SanitizeFolderName(packageId);
+        return fromId.Length > 0 ? fromId : "mod";
+    }
+
+    public static string SanitizeFolderName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return string.Empty;
+
+        var trimmed = name.Trim();
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = trimmed.Select(c => invalid.Contains(c) || c is '/' or '\\' ? '_' : c).ToArray();
+        var sanitized = new string(chars).Trim('.', ' ');
+        if (sanitized is "." or "..")
+            return string.Empty;
+
+        return sanitized;
     }
 
     public static string NormalizeProvider(string? provider)
@@ -63,9 +120,21 @@ public static class GameModsConfig
         string? pathA,
         IEnumerable<GameModSource>? sourcesA,
         string? pathB,
-        IEnumerable<GameModSource>? sourcesB)
+        IEnumerable<GameModSource>? sourcesB) =>
+        AreEquivalent(pathA, sourcesA, null, pathB, sourcesB, null);
+
+    public static bool AreEquivalent(
+        string? pathA,
+        IEnumerable<GameModSource>? sourcesA,
+        string? layoutA,
+        string? pathB,
+        IEnumerable<GameModSource>? sourcesB,
+        string? layoutB)
     {
         if (!string.Equals(NormalizePath(pathA), NormalizePath(pathB), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.Equals(NormalizeLayout(layoutA), NormalizeLayout(layoutB), StringComparison.OrdinalIgnoreCase))
             return false;
 
         var a = NormalizeSources(sourcesA)
@@ -80,20 +149,25 @@ public static class GameModsConfig
         return a.SequenceEqual(b, StringComparer.OrdinalIgnoreCase);
     }
 
-    public static string FormatForDisplay(string? path, IEnumerable<GameModSource>? sources)
+    public static string FormatForDisplay(string? path, IEnumerable<GameModSource>? sources, string? layout = null)
     {
         var normalizedPath = NormalizePath(path);
         var normalizedSources = NormalizeSources(sources);
-        if (normalizedPath.Length == 0 && normalizedSources.Count == 0)
+        var normalizedLayout = NormalizeLayout(layout);
+        if (normalizedPath.Length == 0 && normalizedSources.Count == 0 && normalizedLayout == LayoutFlat)
             return string.Empty;
 
-        var sourceText = string.Join("; ", normalizedSources.Select(s => $"{s.Provider}: {s.SourceUrl}"));
-        if (normalizedPath.Length == 0)
-            return sourceText;
-        if (sourceText.Length == 0)
-            return $"path={normalizedPath}";
+        var parts = new List<string>();
+        if (normalizedPath.Length > 0)
+            parts.Add($"path={normalizedPath}");
+        if (normalizedLayout != LayoutFlat)
+            parts.Add($"layout={normalizedLayout}");
 
-        return $"path={normalizedPath}; {sourceText}";
+        var sourceText = string.Join("; ", normalizedSources.Select(s => $"{s.Provider}: {s.SourceUrl}"));
+        if (sourceText.Length > 0)
+            parts.Add(sourceText);
+
+        return string.Join("; ", parts);
     }
 
     public static bool HasUsableConfig(string? path, IEnumerable<GameModSource>? sources, ModProviderRegistry? registry = null)

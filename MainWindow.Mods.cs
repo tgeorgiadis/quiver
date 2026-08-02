@@ -984,7 +984,8 @@ public partial class MainWindow
                 _modsCatalog,
                 provider,
                 selectedFile,
-                progress).ConfigureAwait(true);
+                progress,
+                modsLayout: _modsGame.ModsLayout).ConfigureAwait(true);
 
             ApplyInstalledStateToMatchingItems(package);
             ApplyModsFiltersToUi();

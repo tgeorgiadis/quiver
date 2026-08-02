@@ -155,7 +155,7 @@ public static class CatalogSyncFieldDiffBuilder
             });
         }
 
-        var modsDisplay = GameModsConfig.FormatForDisplay(external.ModsPath, external.ModsSources);
+        var modsDisplay = GameModsConfig.FormatForDisplay(external.ModsPath, external.ModsSources, external.ModsLayout);
         if (!string.IsNullOrWhiteSpace(modsDisplay))
         {
             diffs.Add(new CatalogSyncFieldDiffItem
@@ -231,7 +231,7 @@ public static class CatalogSyncFieldDiffBuilder
             "preferredVersion" => app.PreferredVersion ?? "",
             "tags" => TagHelper.FormatTagsForDisplay(app.Tags),
             "filesToAdd" => AppFilesToAddService.FormatForDisplay(app.FilesToAdd),
-            "mods" => GameModsConfig.FormatForDisplay(app.ModsPath, app.ModsSources),
+            "mods" => GameModsConfig.FormatForDisplay(app.ModsPath, app.ModsSources, app.ModsLayout),
             _ => "",
         };
 }

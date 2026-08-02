@@ -48,6 +48,11 @@ namespace Quiver.Models
         public string? ModsPath { get; set; }
         public List<GameModSource> ModsSources { get; set; } = [];
 
+        /// <summary>
+        /// Mod archive install layout: <c>flat</c> (default) or <c>folderPerMod</c>.
+        /// </summary>
+        public string? ModsLayout { get; set; }
+
         /// <summary>Per-app Linux Windows runner: auto, wine, proton, or custom. Null/empty = auto.</summary>
         public string? LinuxRunner { get; set; }
 
@@ -205,6 +210,7 @@ namespace Quiver.Models
                     DispatchPropertyChanged(nameof(HasMultipleExecutables));
                     DispatchPropertyChanged(nameof(HasExecutableChoice));
                     DispatchPropertyChanged(nameof(CanLaunchOptions));
+                    DispatchPropertyChanged(nameof(ShowWindowsRunnerOptions));
                 }
             }
         }
@@ -228,38 +234,11 @@ namespace Quiver.Models
         {
             get
             {
-                if (!IsInstalled || string.IsNullOrWhiteSpace(FolderName) || GameManager == null)
-                    return false;
-
                 if (HasMultipleExecutables)
                     return true;
 
-                try
-                {
-                    var gamePath = GetInstallPath(GameManager.GamesFolder);
-                    if (!Directory.Exists(gamePath))
-                        return false;
-
-                    var executables = GameInstallationService.FindExecutableCandidates(
-                        gamePath,
-                        SearchOption.TopDirectoryOnly,
-                        GetInstallationOptions(),
-                        out _);
-                    if (executables.Count <= 1)
-                    {
-                        executables = GameInstallationService.FindExecutableCandidates(
-                            gamePath,
-                            SearchOption.AllDirectories,
-                            GetInstallationOptions(),
-                            out _);
-                    }
-
-                    return executables.Count > 1;
-                }
-                catch
-                {
-                    return false;
-                }
+                return TryFindExecutableCandidates(out var executables, out _, expandWhenSingleCandidate: true)
+                       && executables.Count > 1;
             }
         }
 
@@ -320,9 +299,11 @@ namespace Quiver.Models
         public bool CanVersionOptions => CanSkipUpdate || CanChangeVersion || IsInstalled;
         public bool CanLaunchOptions => HasExecutableChoice || IsInstalled;
 
-        /// <summary>Linux-only: configure Wine/Proton runner and prefix for Windows executables.</summary>
+        /// <summary>Linux-only: configure Wine/Proton runner and prefix for Windows-only installs.</summary>
         public bool ShowWindowsRunnerOptions =>
-            IsInstalled && RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
+            RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+            && TryFindExecutableCandidates(out _, out var needsWine)
+            && needsWine;
         public bool CanInfoOptions => !string.IsNullOrWhiteSpace(Repository);
         public bool HasPreferredVersion => !string.IsNullOrWhiteSpace(PreferredVersion);
 
@@ -586,6 +567,60 @@ namespace Quiver.Models
             GameManager = gameManager;
             DispatchPropertyChanged(nameof(HasExecutableChoice));
             DispatchPropertyChanged(nameof(CanLaunchOptions));
+            DispatchPropertyChanged(nameof(ShowWindowsRunnerOptions));
+        }
+
+        /// <summary>
+        /// Scans the install folder for launch candidates (top-level first, then recursive if needed).
+        /// </summary>
+        /// <param name="expandWhenSingleCandidate">
+        /// When true, recurse if the top-level scan found at most one candidate (executable-choice UI).
+        /// When false, recurse only if the top-level scan found none (matches launch).
+        /// </param>
+        private bool TryFindExecutableCandidates(
+            out List<string> executables,
+            out bool needsWine,
+            bool expandWhenSingleCandidate = false)
+        {
+            executables = [];
+            needsWine = false;
+
+            if (!IsInstalled || string.IsNullOrWhiteSpace(FolderName) || GameManager == null)
+                return false;
+
+            try
+            {
+                var gamePath = GetInstallPath(GameManager.GamesFolder);
+                if (!Directory.Exists(gamePath))
+                    return false;
+
+                executables = GameInstallationService.FindExecutableCandidates(
+                    gamePath,
+                    SearchOption.TopDirectoryOnly,
+                    GetInstallationOptions(),
+                    out needsWine);
+
+                var shouldExpand = expandWhenSingleCandidate
+                    ? executables.Count <= 1
+                    : executables.Count == 0;
+
+                if (shouldExpand)
+                {
+                    executables = GameInstallationService.FindExecutableCandidates(
+                        gamePath,
+                        SearchOption.AllDirectories,
+                        GetInstallationOptions(),
+                        out needsWine);
+                }
+
+                return true;
+            }
+            catch
+            {
+                executables = [];
+                needsWine = false;
+                return false;
+            }
         }
 
         private void DispatchPropertyChanged([CallerMemberName] string propertyName = "")

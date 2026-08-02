@@ -46,6 +46,25 @@ public class ModsSystemTests
 
         GameModsConfig.AreEquivalent("mods", a, "mods", b).Should().BeTrue();
         GameModsConfig.AreEquivalent("mods", a, "Mods/Extra", b).Should().BeFalse();
+        GameModsConfig.AreEquivalent(
+            "mods", a, GameModsConfig.LayoutFolderPerMod,
+            "mods", b, null).Should().BeFalse();
+        GameModsConfig.AreEquivalent(
+            "mods", a, "FolderPerMod",
+            "mods", b, GameModsConfig.LayoutFolderPerMod).Should().BeTrue();
+    }
+
+    [Fact]
+    public void GameModsConfig_resolves_wrap_folder_name_from_archive_then_package()
+    {
+        GameModsConfig.ResolveWrapFolderName("Music-FRLG.zip", "Other", "id")
+            .Should().Be("Music-FRLG");
+        GameModsConfig.ResolveWrapFolderName(null, "My Mod", "id")
+            .Should().Be("My Mod");
+        GameModsConfig.ResolveWrapFolderName(null, "bad/name", "safe-id")
+            .Should().Be("bad_name");
+        GameModsConfig.ResolveWrapFolderName(null, null, null)
+            .Should().Be("mod");
     }
 
     [Fact]
@@ -501,6 +520,7 @@ public class ModsSystemTests
                     Repository = "owner/banjo",
                     FolderName = "Banjo",
                     ModsPath = "mods",
+                    ModsLayout = GameModsConfig.LayoutFolderPerMod,
                     ModsSources =
                     [
                         new GameModSource
@@ -516,9 +536,11 @@ public class ModsSystemTests
             var json = File.ReadAllText(Path.Combine(tempDir, "apps.json"));
             json.Should().Contain("\"mods\"");
             json.Should().Contain("banjo-recompiled");
+            json.Should().Contain("folderPerMod");
 
             var loaded = service.ParseAppsFromJson(json);
             loaded.Single().ModsPath.Should().Be("mods");
+            loaded.Single().ModsLayout.Should().Be(GameModsConfig.LayoutFolderPerMod);
             loaded.Single().ModsSources.Should().ContainSingle()
                 .Which.SourceUrl.Should().Contain("banjo-recompiled");
             loaded.Single().CanOpenMods.Should().BeTrue();
@@ -545,6 +567,7 @@ public class ModsSystemTests
             Repository = "owner/repo",
             FolderName = "App",
             ModsPath = "mods",
+            ModsLayout = GameModsConfig.LayoutFolderPerMod,
             ModsSources =
             [
                 new GameModSource { Provider = "thunderstore", SourceUrl = "banjo-recompiled" },
@@ -556,6 +579,7 @@ public class ModsSystemTests
 
         var replaced = CatalogCompareService.ReplaceFromExternal(local, external);
         replaced.ModsPath.Should().Be("mods");
+        replaced.ModsLayout.Should().Be(GameModsConfig.LayoutFolderPerMod);
         replaced.ModsSources.Should().ContainSingle();
     }
 
@@ -619,6 +643,128 @@ public class ModsSystemTests
             File.Exists(Path.Combine(root, "README.md")).Should().BeFalse();
             File.Exists(Path.Combine(root, "nested", "data.txt")).Should().BeTrue();
             File.ReadAllText(Path.Combine(root, "payload.nrm")).Should().Be("modbytes");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ModInstallService_folderPerMod_wraps_flat_zip_into_named_folder()
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddZipEntry(zip, "track.ogg", "audio");
+            AddZipEntry(zip, "config.json", "{}");
+            AddZipEntry(zip, "nested/extra.txt", "x");
+        }
+
+        ms.Position = 0;
+        var root = Path.Combine(Path.GetTempPath(), "quiver-mod-wrap-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var files = ModInstallService.ExtractPayloadFiles(
+                ms,
+                root,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                GameModsConfig.LayoutFolderPerMod,
+                "Music-FRLG");
+
+            files.Should().BeEquivalentTo([
+                "Music-FRLG/track.ogg",
+                "Music-FRLG/config.json",
+                "Music-FRLG/nested/extra.txt",
+            ]);
+            File.Exists(Path.Combine(root, "Music-FRLG", "track.ogg")).Should().BeTrue();
+            File.Exists(Path.Combine(root, "track.ogg")).Should().BeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ModInstallService_folderPerMod_leaves_single_top_level_folder_unchanged()
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddZipEntry(zip, "Music-FRLG/track.ogg", "audio");
+            AddZipEntry(zip, "Music-FRLG/config.json", "{}");
+        }
+
+        ms.Position = 0;
+        var root = Path.Combine(Path.GetTempPath(), "quiver-mod-nested-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var files = ModInstallService.ExtractPayloadFiles(
+                ms,
+                root,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                GameModsConfig.LayoutFolderPerMod,
+                "Music-FRLG");
+
+            files.Should().BeEquivalentTo([
+                "Music-FRLG/track.ogg",
+                "Music-FRLG/config.json",
+            ]);
+            File.Exists(Path.Combine(root, "Music-FRLG", "track.ogg")).Should().BeTrue();
+            // Must not double-wrap into Music-FRLG/Music-FRLG/...
+            File.Exists(Path.Combine(root, "Music-FRLG", "Music-FRLG", "track.ogg")).Should().BeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ModInstallService_folderPerMod_skips_metadata_then_wraps_payload()
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddZipEntry(zip, "manifest.json", "{}");
+            AddZipEntry(zip, "icon.png", "png");
+            AddZipEntry(zip, "README.md", "# hi");
+            AddZipEntry(zip, "Token_Tracker.nrm", "modbytes");
+            AddZipEntry(zip, "nested/data.txt", "data");
+        }
+
+        ms.Position = 0;
+        var root = Path.Combine(Path.GetTempPath(), "quiver-mod-wrap-meta-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var metadata = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "manifest.json", "icon.png", "README.md", "CHANGELOG.md",
+            };
+            var files = ModInstallService.ExtractPayloadFiles(
+                ms,
+                root,
+                metadata,
+                GameModsConfig.LayoutFolderPerMod,
+                "Mumbo_Token_Tracker");
+
+            files.Should().BeEquivalentTo([
+                "Mumbo_Token_Tracker/Token_Tracker.nrm",
+                "Mumbo_Token_Tracker/nested/data.txt",
+            ]);
+            File.Exists(Path.Combine(root, "Mumbo_Token_Tracker", "Token_Tracker.nrm")).Should().BeTrue();
+            File.Exists(Path.Combine(root, "manifest.json")).Should().BeFalse();
+            File.Exists(Path.Combine(root, "Mumbo_Token_Tracker", "manifest.json")).Should().BeFalse();
         }
         finally
         {

@@ -173,6 +173,9 @@ namespace Quiver.Services
 
         private void InitializeSDL()
         {
+            // Desktop Mode: avoid Steam HIDAPI so lizard mode / Steam+X keep working.
+            SteamDeckSdlHints.ApplyBeforeInit((name, value) => SDL.SDL_SetHint(name, value));
+
             if (SDL.SDL_Init(SDL.SDL_INIT_GAMECONTROLLER) < 0)
             {
                 System.Diagnostics.Debug.WriteLine($"SDL initialization failed: {SDL.SDL_GetError()}");

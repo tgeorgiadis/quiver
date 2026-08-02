@@ -105,6 +105,15 @@ Community catalog lists are loaded from the remote index on startup and **Refres
 
 Apps can expose a **Mods** browser when `mods.path` and `mods.sources` are set in the catalog entry (or via **+ Add New Entry**).
 
+Optional `mods.layout`:
+
+| Value | Behavior |
+|-------|----------|
+| *(omitted)* / `flat` | Extract archive paths as-is into the mods folder (default; typical for Thunderstore `.nrm` packs). |
+| `folderPerMod` | If the archive has payload files at its root, wrap everything in a folder named from the download filename (e.g. `Music-FRLG.zip` → `mods/Music-FRLG/`). Archives that already use a top-level folder are left unchanged. |
+
+Use `folderPerMod` for apps that expect each mod in its own subfolder (e.g. Pokemon Gen 1 Recomp). Enable it in the catalog JSON or with **Install each mod into its own folder** when editing an entry.
+
 **Source URL formats** (one per line in Mod Sources):
 
 | Provider | Examples |

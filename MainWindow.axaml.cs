@@ -3824,9 +3824,11 @@ namespace Quiver
                 Watermark = "URL or file path to apps.json",
                 Margin = new Thickness(0, 0, 0, 8),
             };
-            locationBox.GotFocus += (_, _) =>
+            locationBox.GotFocus += (_, e) =>
             {
-                GamepadControlActivation.MoveCaretToEnd(locationBox);
+                // Pointer focus keeps click position / selection; gamepad/tab append at end.
+                if (e.NavigationMethod != NavigationMethod.Pointer)
+                    GamepadControlActivation.MoveCaretToEnd(locationBox);
                 SteamOnScreenKeyboard.TryOpen();
             };
 
@@ -5645,8 +5647,10 @@ namespace Quiver
             if (e.Source is not TextBox textBox || !SteamOnScreenKeyboard.ShouldOffer())
                 return;
 
-            // Place caret at end before OSK opens so typing appends instead of inserting at index 0.
-            GamepadControlActivation.MoveCaretToEnd(textBox);
+            // Pointer focus keeps click position / selection for copy-paste.
+            // Gamepad/tab: caret at end so OSK typing appends instead of inserting at index 0.
+            if (e.NavigationMethod != NavigationMethod.Pointer)
+                GamepadControlActivation.MoveCaretToEnd(textBox);
             SteamOnScreenKeyboard.TryOpen();
         }
 
@@ -6671,6 +6675,8 @@ namespace Quiver
                 NewGameFilesToAddTextBox.Text = AppFilesToAddService.FormatForDisplay(game.FilesToAdd);
             if (NewGameModsPathTextBox != null)
                 NewGameModsPathTextBox.Text = GameModsConfig.NormalizePath(game.ModsPath);
+            if (NewGameModsFolderPerModCheckBox != null)
+                NewGameModsFolderPerModCheckBox.IsChecked = GameModsConfig.IsFolderPerMod(game.ModsLayout);
             if (NewGameModsSourcesTextBox != null)
                 NewGameModsSourcesTextBox.Text = GameModsFormHelper.FormatSourcesForEditor(game.ModsSources);
             CreateEditButton.Content = "Update Entry";
@@ -6753,6 +6759,9 @@ namespace Quiver
                 var filesToAdd = AppFilesToAddService.ParseCommaSeparated(NewGameFilesToAddTextBox?.Text);
                 var modsPath = GameModsConfig.NormalizePath(NewGameModsPathTextBox?.Text);
                 var modsSources = GameModsFormHelper.ParseSourcesFromEditor(NewGameModsSourcesTextBox?.Text);
+                var modsLayout = NewGameModsFolderPerModCheckBox?.IsChecked == true
+                    ? GameModsConfig.LayoutFolderPerMod
+                    : null;
 
                 if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(repository) || string.IsNullOrEmpty(folderName))
                 {
@@ -6804,6 +6813,7 @@ namespace Quiver
                     appToUpdate.FilesToAdd = filesToAdd;
                     appToUpdate.ModsPath = modsPath.Length > 0 ? modsPath : null;
                     appToUpdate.ModsSources = modsSources;
+                    appToUpdate.ModsLayout = modsLayout;
 
                     await SaveGamesToJsonAsync(games);
                     AppFilesToAddService.SyncForGame(appToUpdate, _gameManager.GamesFolder, previousFilesToAdd);
@@ -6827,6 +6837,7 @@ namespace Quiver
                         FilesToAdd = filesToAdd,
                         ModsPath = modsPath.Length > 0 ? modsPath : null,
                         ModsSources = modsSources,
+                        ModsLayout = modsLayout,
                         AutoUpdate = _settings.AutoUpdateNewlyAddedApps,
                         IsCustom = true,
                         IsExperimental = false
@@ -6984,6 +6995,7 @@ namespace Quiver
             if (NewGameTagsTextBox != null) NewGameTagsTextBox.Text = "";
             if (NewGameFilesToAddTextBox != null) NewGameFilesToAddTextBox.Text = "";
             if (NewGameModsPathTextBox != null) NewGameModsPathTextBox.Text = "";
+            if (NewGameModsFolderPerModCheckBox != null) NewGameModsFolderPerModCheckBox.IsChecked = false;
             if (NewGameModsSourcesTextBox != null) NewGameModsSourcesTextBox.Text = "";
             if (CreateEditButton != null) CreateEditButton.Content = "Create Entry";
             if (FormTitleText != null) FormTitleText.Text = "Create New Entry";
@@ -7676,6 +7688,7 @@ namespace Quiver
             Add(NewGameIconTextBox);
             Add(NewGameFilesToAddTextBox);
             Add(NewGameModsPathTextBox);
+            Add(NewGameModsFolderPerModCheckBox);
             Add(NewGameModsSourcesTextBox);
             Add(CancelButton);
             Add(CreateEditButton);

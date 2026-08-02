@@ -31,7 +31,8 @@ public sealed class ModInstallService
         IModProvider provider,
         ModDownloadFile? selectedFile = null,
         IProgress<double>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? modsLayout = null)
     {
         ArgumentNullException.ThrowIfNull(package);
         ArgumentNullException.ThrowIfNull(provider);
@@ -52,10 +53,16 @@ public sealed class ModInstallService
         var modsDir = GetModsDirectory(installRoot, modsPath);
         Directory.CreateDirectory(modsDir);
 
+        var wrapFolderName = GameModsConfig.IsFolderPerMod(modsLayout)
+            ? GameModsConfig.ResolveWrapFolderName(selectedFile?.FileName, package.Name, package.Id)
+            : null;
+
         var installedFiles = ExtractPayloadFiles(
             archiveStream,
             modsDir,
-            provider.GetArchiveMetadataFileNames());
+            provider.GetArchiveMetadataFileNames(),
+            modsLayout,
+            wrapFolderName);
 
         var record = new InstalledModRecord
         {
@@ -87,7 +94,8 @@ public sealed class ModInstallService
         IModProvider provider,
         ModDownloadFile? selectedFile = null,
         IProgress<double>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? modsLayout = null)
     {
         var document = _store.Load(installRoot);
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -102,7 +110,8 @@ public sealed class ModInstallService
             visited,
             selectedFile,
             progress,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            modsLayout).ConfigureAwait(false);
     }
 
     private async Task InstallRecursiveAsync(
@@ -115,7 +124,8 @@ public sealed class ModInstallService
         HashSet<string> visited,
         ModDownloadFile? selectedFile,
         IProgress<double>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? modsLayout)
     {
         if (!visited.Add(package.FullName))
             return;
@@ -156,7 +166,8 @@ public sealed class ModInstallService
                 visited,
                 selectedFile: null,
                 progress,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                modsLayout).ConfigureAwait(false);
 
             document = _store.Load(installRoot);
         }
@@ -169,7 +180,15 @@ public sealed class ModInstallService
 
         // Only apply the selected file to the root package being installed, not dependencies.
         var fileForThis = selectedFile;
-        await InstallAsync(installRoot, modsPath, package, provider, fileForThis, progress, cancellationToken)
+        await InstallAsync(
+                installRoot,
+                modsPath,
+                package,
+                provider,
+                fileForThis,
+                progress,
+                cancellationToken,
+                modsLayout)
             .ConfigureAwait(false);
     }
 
@@ -289,9 +308,18 @@ public sealed class ModInstallService
         IModProvider provider,
         ModDownloadFile? selectedFile = null,
         IProgress<double>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? modsLayout = null)
     {
-        await InstallAsync(installRoot, modsPath, package, provider, selectedFile, progress, cancellationToken)
+        await InstallAsync(
+                installRoot,
+                modsPath,
+                package,
+                provider,
+                selectedFile,
+                progress,
+                cancellationToken,
+                modsLayout)
             .ConfigureAwait(false);
     }
 
@@ -300,17 +328,23 @@ public sealed class ModInstallService
     /// <summary>
     /// Extracts non-metadata entries from a zip or 7z archive into <paramref name="modsDir"/>.
     /// Returns relative paths that were written (forward-slash normalized).
+    /// When <paramref name="modsLayout"/> is folderPerMod and the archive has root-level payload
+    /// files, all payload paths are prefixed with <paramref name="wrapFolderName"/>.
     /// </summary>
     public static List<string> ExtractPayloadFiles(
         Stream archiveStream,
         string modsDir,
-        IReadOnlySet<string> metadataFileNames)
+        IReadOnlySet<string> metadataFileNames,
+        string? modsLayout = null,
+        string? wrapFolderName = null)
     {
         Directory.CreateDirectory(modsDir);
         var installed = new List<string>();
         var modsRootFull = Path.GetFullPath(modsDir);
 
         using var archive = ArchiveFactory.OpenArchive(archiveStream);
+        var payloadEntries = new List<(IArchiveEntry Entry, string Relative)>();
+
         foreach (var entry in archive.Entries)
         {
             if (entry.IsDirectory)
@@ -325,8 +359,24 @@ public sealed class ModInstallService
             if (!relative.Contains('/') && metadataFileNames.Contains(relative))
                 continue;
 
+            payloadEntries.Add((entry, relative));
+        }
+
+        var shouldWrap = GameModsConfig.IsFolderPerMod(modsLayout) &&
+                         payloadEntries.Any(e => !e.Relative.Contains('/'));
+        var prefix = shouldWrap
+            ? GameModsConfig.SanitizeFolderName(wrapFolderName)
+            : string.Empty;
+        if (shouldWrap && prefix.Length == 0)
+            prefix = "mod";
+
+        foreach (var (entry, relative) in payloadEntries)
+        {
+            var destRelative = prefix.Length > 0 ? $"{prefix}/{relative}" : relative;
+
             // Zip-slip protection
-            var destination = Path.GetFullPath(Path.Combine(modsDir, relative.Replace('/', Path.DirectorySeparatorChar)));
+            var destination = Path.GetFullPath(
+                Path.Combine(modsDir, destRelative.Replace('/', Path.DirectorySeparatorChar)));
             if (!destination.StartsWith(modsRootFull, StringComparison.OrdinalIgnoreCase))
                 continue;
 
@@ -339,7 +389,7 @@ public sealed class ModInstallService
                 Overwrite = true,
                 ExtractFullPath = false,
             });
-            installed.Add(relative);
+            installed.Add(destRelative);
         }
 
         return installed;

@@ -496,7 +496,9 @@ namespace Quiver.Services
             string.Equals(a.PreferredVersion ?? "", b.PreferredVersion ?? "", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(TagHelper.FormatTagsForDisplay(a.Tags), TagHelper.FormatTagsForDisplay(b.Tags), StringComparison.OrdinalIgnoreCase) &&
             AppFilesToAddService.AreEquivalent(a.FilesToAdd, b.FilesToAdd) &&
-            GameModsConfig.AreEquivalent(a.ModsPath, a.ModsSources, b.ModsPath, b.ModsSources);
+            GameModsConfig.AreEquivalent(
+                a.ModsPath, a.ModsSources, a.ModsLayout,
+                b.ModsPath, b.ModsSources, b.ModsLayout);
 
         private async Task ApplyCachedVersionMetadataAsync(AppCatalogSource source)
         {
@@ -687,6 +689,7 @@ namespace Quiver.Services
                         FilesToAdd = ParseFilesToAddProperty(appElement),
                         ModsPath = ParseModsPathProperty(appElement),
                         ModsSources = ParseModsSourcesProperty(appElement),
+                        ModsLayout = ParseModsLayoutProperty(appElement),
                         LinuxRunner = appElement.TryGetProperty("linuxRunner", out var linuxRunnerElement)
                             ? linuxRunnerElement.GetString()
                             : null,
@@ -832,6 +835,24 @@ namespace Quiver.Services
             return GameModsConfig.NormalizeSources(sources);
         }
 
+        private static string? ParseModsLayoutProperty(JsonElement appElement)
+        {
+            if (!appElement.TryGetProperty("mods", out var modsElement) ||
+                modsElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (!modsElement.TryGetProperty("layout", out var layoutElement) ||
+                layoutElement.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var normalized = GameModsConfig.NormalizeLayout(layoutElement.GetString());
+            return normalized == GameModsConfig.LayoutFlat ? null : normalized;
+        }
+
         private static object SerializeApp(GameInfo app)
         {
             var payload = new Dictionary<string, object?>
@@ -873,11 +894,14 @@ namespace Quiver.Services
 
             var modsPath = GameModsConfig.NormalizePath(app.ModsPath);
             var modsSources = GameModsConfig.NormalizeSources(app.ModsSources);
-            if (modsPath.Length > 0 || modsSources.Count > 0)
+            var modsLayout = GameModsConfig.NormalizeLayout(app.ModsLayout);
+            if (modsPath.Length > 0 || modsSources.Count > 0 || modsLayout != GameModsConfig.LayoutFlat)
             {
                 var modsPayload = new Dictionary<string, object?>();
                 if (modsPath.Length > 0)
                     modsPayload["path"] = modsPath;
+                if (modsLayout != GameModsConfig.LayoutFlat)
+                    modsPayload["layout"] = modsLayout;
                 if (modsSources.Count > 0)
                 {
                     modsPayload["sources"] = modsSources.Select(s => new Dictionary<string, object?>

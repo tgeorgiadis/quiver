@@ -174,7 +174,9 @@ namespace Quiver.Services
                 changed.Add("tags");
             if (!AppFilesToAddService.AreEquivalent(local.FilesToAdd, external.FilesToAdd))
                 changed.Add("filesToAdd");
-            if (!GameModsConfig.AreEquivalent(local.ModsPath, local.ModsSources, external.ModsPath, external.ModsSources))
+            if (!GameModsConfig.AreEquivalent(
+                    local.ModsPath, local.ModsSources, local.ModsLayout,
+                    external.ModsPath, external.ModsSources, external.ModsLayout))
                 changed.Add("mods");
 
             return changed;
@@ -195,6 +197,10 @@ namespace Quiver.Services
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 ModsPath = GameModsConfig.NormalizePath(external.ModsPath) is { Length: > 0 } path ? path : null,
                 ModsSources = GameModsConfig.NormalizeSources(external.ModsSources),
+                ModsLayout = GameModsConfig.NormalizeLayout(external.ModsLayout) is { } layout &&
+                             layout != GameModsConfig.LayoutFlat
+                    ? layout
+                    : null,
                 IsExperimental = false,
                 IsCustom = true,
                 GameManager = external.GameManager,
@@ -216,6 +222,10 @@ namespace Quiver.Services
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 ModsPath = GameModsConfig.NormalizePath(external.ModsPath) is { Length: > 0 } path ? path : null,
                 ModsSources = GameModsConfig.NormalizeSources(external.ModsSources),
+                ModsLayout = GameModsConfig.NormalizeLayout(external.ModsLayout) is { } layout &&
+                             layout != GameModsConfig.LayoutFlat
+                    ? layout
+                    : null,
                 IsExperimental = local.IsExperimental,
                 IsCustom = local.IsCustom,
                 GameManager = local.GameManager,
@@ -235,6 +245,8 @@ namespace Quiver.Services
             var modsSources = externalHasMods
                 ? GameModsConfig.NormalizeSources(external.ModsSources)
                 : GameModsConfig.NormalizeSources(local.ModsSources);
+            var modsLayout = GameModsConfig.NormalizeLayout(
+                externalHasMods ? external.ModsLayout : local.ModsLayout);
 
             return new GameInfo
             {
@@ -250,6 +262,7 @@ namespace Quiver.Services
                 FilesToAdd = AppFilesToAddService.Normalize(external.FilesToAdd),
                 ModsPath = modsPath.Length > 0 ? modsPath : null,
                 ModsSources = modsSources,
+                ModsLayout = modsLayout != GameModsConfig.LayoutFlat ? modsLayout : null,
                 IsExperimental = local.IsExperimental,
                 IsCustom = local.IsCustom,
                 GameManager = local.GameManager,

@@ -79,6 +79,75 @@ public class SteamOnScreenKeyboardTests
         attempted.Should().BeFalse();
     }
 
+    [Fact]
+    public void OpenUriOnLinux_uses_xdg_open_when_successful()
+    {
+        var calls = new List<(string File, string Arg)>();
+
+        SteamOnScreenKeyboard.OpenUriOnLinux(
+            SteamOnScreenKeyboard.OpenKeyboardUri,
+            (file, arg) =>
+            {
+                calls.Add((file, arg));
+                return 0;
+            });
+
+        calls.Should().Equal(("xdg-open", SteamOnScreenKeyboard.OpenKeyboardUri));
+    }
+
+    [Fact]
+    public void OpenUriOnLinux_falls_back_to_steam_when_xdg_open_fails_exit()
+    {
+        var calls = new List<(string File, string Arg)>();
+
+        SteamOnScreenKeyboard.OpenUriOnLinux(
+            SteamOnScreenKeyboard.OpenKeyboardUri,
+            (file, arg) =>
+            {
+                calls.Add((file, arg));
+                return file == "xdg-open" ? 1 : 0;
+            });
+
+        calls.Should().Equal(
+            ("xdg-open", SteamOnScreenKeyboard.OpenKeyboardUri),
+            ("steam", SteamOnScreenKeyboard.OpenKeyboardUri));
+    }
+
+    [Fact]
+    public void OpenUriOnLinux_falls_back_to_steam_when_xdg_open_throws()
+    {
+        var calls = new List<(string File, string Arg)>();
+
+        SteamOnScreenKeyboard.OpenUriOnLinux(
+            SteamOnScreenKeyboard.OpenKeyboardUri,
+            (file, arg) =>
+            {
+                if (file == "xdg-open")
+                    throw new InvalidOperationException("missing xdg-open");
+
+                calls.Add((file, arg));
+                return 0;
+            });
+
+        calls.Should().Equal(("steam", SteamOnScreenKeyboard.OpenKeyboardUri));
+    }
+
+    [Fact]
+    public void OpenUriOnLinux_skips_steam_when_xdg_open_still_running()
+    {
+        var calls = new List<(string File, string Arg)>();
+
+        SteamOnScreenKeyboard.OpenUriOnLinux(
+            SteamOnScreenKeyboard.OpenKeyboardUri,
+            (file, arg) =>
+            {
+                calls.Add((file, arg));
+                return null; // still running / handed off
+            });
+
+        calls.Should().Equal(("xdg-open", SteamOnScreenKeyboard.OpenKeyboardUri));
+    }
+
     [AvaloniaFact]
     public void ActivateTextBox_does_not_throw_for_enabled_textbox()
     {

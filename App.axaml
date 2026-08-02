@@ -20,6 +20,13 @@
 	<Application.Styles>
 		<FluentTheme />
 
+		<!-- Visible selection on dark ThemeBase TextBoxes (Steam Deck / themed inputs). -->
+		<Style Selector="TextBox">
+			<Setter Property="SelectionBrush" Value="{DynamicResource ThemeAccent}"/>
+			<Setter Property="SelectionForegroundBrush" Value="{DynamicResource ThemeDarker}"/>
+			<Setter Property="CaretBrush" Value="{DynamicResource ThemeText}"/>
+		</Style>
+
 		<Style Selector="ContextMenu">
 			<Setter Property="Background" Value="{DynamicResource ThemeBase}"/>
 			<Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
