@@ -46,6 +46,20 @@ public class ReleasePackagingTests
     }
 
     [Fact]
+    public void Release_workflow_publishes_and_requires_windows_updater()
+    {
+        var workflowPath = Path.Combine(RepoRoot, ".github", "workflows", "dotnet-desktop.yml");
+        var workflow = File.ReadAllText(workflowPath);
+
+        workflow.Should().Contain("Quiver.Updater/Quiver.Updater.csproj");
+        workflow.Should().Contain("Quiver.Updater.exe");
+        workflow.Should().Contain("azure/artifact-signing-action@v2");
+        workflow.Should().Contain("AZURE_TRUSTED_SIGNING_ENABLED");
+        workflow.Should().Contain("prerelease:");
+        workflow.Should().Contain("contains(github.ref_name, '-')");
+    }
+
+    [Fact]
     public void Project_does_not_copy_apps_json_to_publish_output()
     {
         var csprojPath = Path.Combine(RepoRoot, "Quiver.csproj");
@@ -83,62 +97,82 @@ public class ReleasePackagingTests
                 : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx-x64"
                 : "linux-x64";
 
-            var startInfo = new ProcessStartInfo
+            var publishCommands = new List<string>
             {
-                FileName = "dotnet",
-                Arguments = $"publish \"{Path.Combine(RepoRoot, "Quiver.csproj")}\" -c Release -r {runtimeIdentifier} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o \"{publishDir}\"",
-                WorkingDirectory = RepoRoot,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
+                $"publish \"{Path.Combine(RepoRoot, "Quiver.csproj")}\" -c Release -r {runtimeIdentifier} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:SkipUpdaterCopy=true -o \"{publishDir}\"",
             };
-
-            _output.WriteLine($"Starting publish (timeout {PublishTimeout.TotalMinutes:F0} minutes)...");
-            _output.WriteLine(startInfo.FileName + " " + startInfo.Arguments);
-
-            process = Process.Start(startInfo);
-            process.Should().NotBeNull();
-
-            var stdout = new StringBuilder();
-            var stderr = new StringBuilder();
-
-            process!.OutputDataReceived += (_, e) =>
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                if (e.Data == null)
-                    return;
-
-                stdout.AppendLine(e.Data);
-                _output.WriteLine("[stdout] " + e.Data);
-            };
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data == null)
-                    return;
-
-                stderr.AppendLine(e.Data);
-                _output.WriteLine("[stderr] " + e.Data);
-            };
-
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+                publishCommands.Add(
+                    $"publish \"{Path.Combine(RepoRoot, "Quiver.Updater", "Quiver.Updater.csproj")}\" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o \"{publishDir}\"");
+            }
 
             using var timeoutCts = new CancellationTokenSource(PublishTimeout);
 
-            try
+            foreach (var publishArgs in publishCommands)
             {
-                await process.WaitForExitAsync(timeoutCts.Token);
-            }
-            catch (OperationCanceledException) when (!process.HasExited)
-            {
-                throw new TimeoutException(
-                    $"dotnet publish did not finish within {PublishTimeout.TotalMinutes:F0} minutes.");
-            }
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "dotnet",
+                    Arguments = publishArgs,
+                    WorkingDirectory = RepoRoot,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
 
-            process.ExitCode.Should().Be(0, because: stderr.ToString());
+                _output.WriteLine($"Starting publish (timeout {PublishTimeout.TotalMinutes:F0} minutes)...");
+                _output.WriteLine(startInfo.FileName + " " + startInfo.Arguments);
+
+                process?.Dispose();
+                process = Process.Start(startInfo);
+                process.Should().NotBeNull();
+
+                var stdout = new StringBuilder();
+                var stderr = new StringBuilder();
+
+                process!.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data == null)
+                        return;
+
+                    stdout.AppendLine(e.Data);
+                    _output.WriteLine("[stdout] " + e.Data);
+                };
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data == null)
+                        return;
+
+                    stderr.AppendLine(e.Data);
+                    _output.WriteLine("[stderr] " + e.Data);
+                };
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                try
+                {
+                    await process.WaitForExitAsync(timeoutCts.Token);
+                }
+                catch (OperationCanceledException) when (!process.HasExited)
+                {
+                    throw new TimeoutException(
+                        $"dotnet publish did not finish within {PublishTimeout.TotalMinutes:F0} minutes.");
+                }
+
+                process.ExitCode.Should().Be(0, because: stderr.ToString());
+            }
 
             File.Exists(Path.Combine(publishDir, "apps.json")).Should().BeFalse(
                 "release publish output must not ship a blank apps.json that could wipe user libraries on update");
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                File.Exists(Path.Combine(publishDir, "Quiver.Updater.exe")).Should().BeTrue(
+                    "Windows releases must ship Quiver.Updater.exe for Defender-safer self-updates");
+            }
         }
         finally
         {

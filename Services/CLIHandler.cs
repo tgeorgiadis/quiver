@@ -869,7 +869,17 @@ namespace Quiver
                 : "Quiver";
 
             string executablePath = Path.Combine(updateDirectory, executableName);
-            return File.Exists(executablePath) && new FileInfo(executablePath).Length > 1024;
+            if (!File.Exists(executablePath) || new FileInfo(executablePath).Length <= 1024)
+                return false;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                string updaterPath = Path.Combine(updateDirectory, LauncherUpdateApplier.WindowsUpdaterFileName);
+                if (!File.Exists(updaterPath) || new FileInfo(updaterPath).Length <= 1024)
+                    return false;
+            }
+
+            return true;
         }
 
         private static async Task<int> ExtractTarGzAsync(string tarGzPath, string extractPath)
@@ -902,86 +912,14 @@ namespace Quiver
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                string updaterScriptPath = Path.Combine(Path.GetTempPath(), "Quiver_Updater.cmd");
-                var preservedEntryCheckSubroutine = UpdaterUserDataPreservation.BuildWindowsPreservedEntryCheckSubroutine();
-                string scriptContent = $@"@echo off
-echo Quiver Updater - Version {release.tag_name}
-echo.
-echo Waiting for Quiver CLI to close...
-set /A waitCount=0
-:wait_loop
-tasklist /FI ""PID eq {currentProcessId}"" 2>NUL | find /I ""{currentProcessId}"">NUL
-if ""%ERRORLEVEL%""==""0"" (
-    if %waitCount% GEQ {UpdaterProcessExitTimeoutSeconds} (
-        echo Launcher did not close in time. Aborting update to avoid replacing files while the app is still running.
-        pause
-        goto cleanup
-    )
-    set /A waitCount+=1
-    timeout /T 1 >NUL
-    goto wait_loop
-)
-
-set ""appDir={currentAppDirectory}""
-set ""backupDir={backupDir}""
-set ""updateDir={tempUpdateFolder}""
-if not exist ""%backupDir%"" mkdir ""%backupDir%""
-
-echo Backing up files replaced by this update...
-for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
-    call :IsPreservedUserDataEntry %%i
-    if errorlevel 1 (
-        if exist ""%appDir%\%%i\\"" (
-            xcopy ""%appDir%\%%i"" ""%backupDir%\%%i\\"" /S /E /Y /I >nul 2>&1
-        ) else if exist ""%appDir%\%%i"" (
-            copy /Y ""%appDir%\%%i"" ""%backupDir%\"" >nul 2>&1
-        )
-    )
-)
-
-echo Applying update...
-set ""updateFailed=0""
-for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
-    call :IsPreservedUserDataEntry %%i
-    if errorlevel 1 (
-        if exist ""%updateDir%\%%i\\"" (
-            xcopy ""%updateDir%\%%i"" ""%appDir%\%%i\\"" /S /E /Y /I >nul 2>&1
-            if errorlevel 1 set ""updateFailed=1""
-        ) else (
-            copy /Y ""%updateDir%\%%i"" ""%appDir%\"" >nul 2>&1
-            if errorlevel 1 set ""updateFailed=1""
-        )
-    )
-)
-if ""%updateFailed%""==""1"" (
-    echo Update failed! Restoring backup...
-    xcopy ""%backupDir%\*"" ""%appDir%"" /S /E /Y /I >nul 2>&1
-    pause
-    goto cleanup
-)
-
-echo {{""CurrentVersion"":""{release.tag_name}"",""LastCheckTime"":""{DateTime.UtcNow:o}"",""LastKnownVersion"":""{release.tag_name}"",""ETag"":"""",""UpdateAvailable"":false}} > ""{updateCheckFilePath}""
-echo Update completed successfully.
-start """" ""{applicationExecutable}""
-goto cleanup
-
-{preservedEntryCheckSubroutine}
-
-:cleanup
-if exist ""%backupDir%"" rmdir /S /Q ""%backupDir%"" >nul 2>&1
-if exist ""{tempDownloadPath}"" del ""{tempDownloadPath}"" >nul 2>&1
-if exist ""%updateDir%"" rmdir /S /Q ""%updateDir%"" >nul 2>&1
-del ""%~f0""
-";
-                await File.WriteAllTextAsync(updaterScriptPath, scriptContent);
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/C \"\"{updaterScriptPath}\"\"",
-                    WindowStyle = ProcessWindowStyle.Normal,
-                    CreateNoWindow = false,
-                    UseShellExecute = true
-                });
+                WindowsLauncherUpdateStarter.StartFromUpdatePackage(
+                    tempUpdateFolder,
+                    currentProcessId,
+                    currentAppDirectory,
+                    applicationExecutable,
+                    release.tag_name,
+                    tempDownloadPath,
+                    UpdaterProcessExitTimeoutSeconds);
             }
             else
             {

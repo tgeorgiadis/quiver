@@ -21,6 +21,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Quiver.Core.Models;
+using Quiver.Core.Services;
 using Quiver.Services;
 
 namespace Quiver;
@@ -1167,6 +1168,12 @@ public class App : Application, INotifyPropertyChanged
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 mainExecutable = Path.Combine(updateDirectory, "Quiver.exe");
+                var updaterExecutable = Path.Combine(updateDirectory, LauncherUpdateApplier.WindowsUpdaterFileName);
+                if (!File.Exists(updaterExecutable) || new FileInfo(updaterExecutable).Length < 1024)
+                {
+                    Trace.WriteLine($"Windows updater not found or too small in update package: {updaterExecutable}");
+                    return false;
+                }
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
@@ -1228,109 +1235,23 @@ public class App : Application, INotifyPropertyChanged
         }
     }
 
-    private async Task CreateWindowsUpdaterScript(GitHubRelease latestRelease, string tempUpdateFolder, string tempDownloadPath, string currentAppDirectory, UpdateCheckInfo updateCheckInfo, string applicationExecutable, string backupDir, int currentProcessId)
+    private Task CreateWindowsUpdaterScript(GitHubRelease latestRelease, string tempUpdateFolder, string tempDownloadPath, string currentAppDirectory, UpdateCheckInfo updateCheckInfo, string applicationExecutable, string backupDir, int currentProcessId)
     {
-        string updaterScriptPath = Path.Combine(Path.GetTempPath(), "Quiver_Updater.cmd");
-        string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
-        var preservedEntryCheckSubroutine = UpdaterUserDataPreservation.BuildWindowsPreservedEntryCheckSubroutine();
+        WindowsLauncherUpdateStarter.StartFromUpdatePackage(
+            tempUpdateFolder,
+            currentProcessId,
+            currentAppDirectory,
+            applicationExecutable,
+            latestRelease.tag_name,
+            tempDownloadPath,
+            UpdaterProcessExitTimeoutSeconds);
 
-        string scriptContent = $@"@echo off
-echo Quiver Updater - Version {latestRelease.tag_name}
-echo.
-
-echo Waiting for Quiver to close...
-set /A waitCount=0
-:wait_loop
-tasklist /FI ""PID eq {currentProcessId}"" 2>NUL | find /I ""{currentProcessId}"">NUL
-if ""%ERRORLEVEL%""==""0"" (
-    if %waitCount% GEQ {UpdaterProcessExitTimeoutSeconds} (
-        echo Launcher did not close in time. Aborting update to avoid replacing files while the app is still running.
-        pause
-        goto cleanup
-    )
-    set /A waitCount+=1
-    timeout /T 1 >NUL
-    goto wait_loop
-)
-
-echo Creating backup...
-set ""appDir={currentAppDirectory}""
-set ""backupDir={backupDir}""
-set ""updateDir={tempUpdateFolder}""
-
-if not exist ""%backupDir%"" mkdir ""%backupDir""
-
-echo Backing up current version...
-for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
-    call :IsPreservedUserDataEntry %%i
-    if errorlevel 1 (
-        if exist ""%appDir%\%%i\\"" (
-            xcopy ""%appDir%\%%i"" ""%backupDir%\%%i\\"" /S /E /Y /I >nul 2>&1
-        ) else if exist ""%appDir%\%%i"" (
-            copy /Y ""%appDir%\%%i"" ""%backupDir%\"" >nul 2>&1
-        )
-    )
-)
-
-echo Applying update...
-set ""updateFailed=0""
-for /F ""delims="" %%i in ('dir /B ""%updateDir%""') do (
-    call :IsPreservedUserDataEntry %%i
-    if errorlevel 1 (
-        if exist ""%updateDir%\%%i\\"" (
-            xcopy ""%updateDir%\%%i"" ""%appDir%\%%i\\"" /S /E /Y /I >nul 2>&1
-            if errorlevel 1 set ""updateFailed=1""
-        ) else (
-            copy /Y ""%updateDir%\%%i"" ""%appDir%\"" >nul 2>&1
-            if errorlevel 1 set ""updateFailed=1""
-        )
-    )
-)
-if ""%updateFailed%""==""1"" (
-    echo Update failed! Restoring backup...
-    xcopy ""%backupDir%\*"" ""%appDir%"" /S /E /Y /I >nul 2>&1
-    echo Backup restored. Update failed.
-    pause
-    goto cleanup
-)
-
-echo Updating version info...
-echo {{""CurrentVersion"":""{latestRelease.tag_name}"",""LastCheckTime"":""{DateTime.UtcNow:o}"",""LastKnownVersion"":""{latestRelease.tag_name}"",""ETag"":"""",""UpdateAvailable"":false}} > ""{updateCheckFilePath}""
-
-echo Update completed successfully!
-echo Restarting Quiver...
-start """" ""{applicationExecutable}""
-goto cleanup
-
-{preservedEntryCheckSubroutine}
-
-:cleanup
-echo Cleaning up temporary files...
-if exist ""%backupDir%"" (
-    echo Deleting backup...
-    rmdir /S /Q ""%backupDir%"" >nul 2>&1
-)
-if exist ""{tempDownloadPath}"" del ""{tempDownloadPath}"" >nul 2>&1
-if exist ""%updateDir%"" rmdir /S /Q ""%updateDir%"" >nul 2>&1
-
-del ""%~f0""
-";
-
-        await File.WriteAllTextAsync(updaterScriptPath, scriptContent);
-
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = "cmd.exe",
-            Arguments = $"/C \"\"{updaterScriptPath}\"\"",
-            WindowStyle = ProcessWindowStyle.Normal,
-            CreateNoWindow = false,
-            UseShellExecute = true
-        });
-
-        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime)
         {
             ShutdownForUpdate();
         }
+
+        return Task.CompletedTask;
     }
 
     private async Task CreateUnixUpdaterScript(GitHubRelease latestRelease, string tempUpdateFolder, string tempDownloadPath, string currentAppDirectory, UpdateCheckInfo updateCheckInfo, string applicationExecutable, string backupDir, int currentProcessId)

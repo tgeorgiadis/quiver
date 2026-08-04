@@ -43,9 +43,14 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
-    
+    permissions:
+      contents: read
+      id-token: write
+
     env:
       Solution_Name: Quiver.sln
+      # Set repository variable AZURE_TRUSTED_SIGNING_ENABLED=true after Artifact Signing is configured.
+      TRUSTED_SIGNING_ENABLED: ${{ vars.AZURE_TRUSTED_SIGNING_ENABLED }}
 
     steps:
     - name: Checkout
@@ -62,7 +67,9 @@ jobs:
       run: dotnet restore Quiver.sln
 
     - name: Publish Windows x64
-      run: dotnet publish Quiver.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/win-x64
+      run: |
+        dotnet publish Quiver.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:SkipUpdaterCopy=true -o publish/win-x64
+        dotnet publish Quiver.Updater/Quiver.Updater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/win-x64
 
     - name: Upload Windows x64
       uses: actions/upload-artifact@v4
@@ -71,16 +78,102 @@ jobs:
         path: publish/win-x64
         retention-days: 14
 
-    - name: Package Windows release archive
+    - name: Package Windows release archive (unsigned staging)
       if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
       shell: pwsh
       run: |
         Copy-Item version.txt -Destination publish/win-x64/
         Remove-Item publish/win-x64/apps.json -ErrorAction SilentlyContinue
+        if (-not (Test-Path "publish\win-x64\Quiver.Updater.exe")) {
+          throw "Quiver.Updater.exe missing from Windows publish output"
+        }
         Compress-Archive -Path publish/win-x64/* -DestinationPath Quiver-Windows-x64.zip
 
     - name: Upload Windows release archive
-      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+      if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')) && env.TRUSTED_SIGNING_ENABLED != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-Quiver-Windows-x64
+        path: Quiver-Windows-x64.zip
+        retention-days: 1
+
+    - name: Upload Windows publish folder for signing
+      if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')) && env.TRUSTED_SIGNING_ENABLED == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-publish-for-signing
+        path: publish/win-x64
+        retention-days: 1
+
+    - name: Warn when release signing is skipped
+      if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')) && env.TRUSTED_SIGNING_ENABLED != 'true'
+      shell: pwsh
+      run: |
+        Write-Warning "AZURE_TRUSTED_SIGNING_ENABLED is not 'true'. Windows release binaries will be UNSIGNED."
+
+  sign-windows:
+    needs: build-windows
+    if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')) && vars.AZURE_TRUSTED_SIGNING_ENABLED == 'true'
+    runs-on: windows-latest
+    # Matches Entra federated credential: repo:tgeorgiadis/quiver:environment:signing
+    environment: signing
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Download Windows publish folder
+      uses: actions/download-artifact@v4
+      with:
+        name: windows-publish-for-signing
+        path: publish/win-x64
+
+    - name: Azure login for Artifact Signing
+      uses: azure/login@v3
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Sign Windows binaries with Artifact Signing
+      uses: azure/artifact-signing-action@v2
+      with:
+        endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+        signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+        certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
+        files-folder: ${{ github.workspace }}\publish\win-x64
+        files-folder-filter: exe
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+
+    - name: Verify Authenticode signatures
+      shell: pwsh
+      run: |
+        $files = @(
+          "publish\win-x64\Quiver.exe",
+          "publish\win-x64\Quiver.Updater.exe"
+        )
+        foreach ($file in $files) {
+          if (-not (Test-Path $file)) { throw "Missing file to verify: $file" }
+          $sig = Get-AuthenticodeSignature $file
+          Write-Host "$file => $($sig.Status) ($($sig.SignerCertificate.Subject))"
+          if ($sig.Status -ne "Valid") {
+            throw "Authenticode signature invalid for $file : $($sig.StatusMessage)"
+          }
+        }
+
+    - name: Package signed Windows release archive
+      shell: pwsh
+      run: |
+        Copy-Item version.txt -Destination publish/win-x64/ -Force
+        Remove-Item publish/win-x64/apps.json -ErrorAction SilentlyContinue
+        Compress-Archive -Path publish/win-x64/* -DestinationPath Quiver-Windows-x64.zip -Force
+
+    - name: Upload signed Windows release archive
       uses: actions/upload-artifact@v4
       with:
         name: release-Quiver-Windows-x64
@@ -204,9 +297,9 @@ jobs:
             <key>CFBundleName</key>
             <string>${{ env.App_Name }}</string>
             <key>CFBundleVersion</key>
-            <string>2.4.2</string>
+            <string>2.4.3</string>
             <key>CFBundleShortVersionString</key>
-            <string>2.4.2</string>
+            <string>2.4.3</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>LSMinimumSystemVersion</key>
@@ -239,8 +332,15 @@ jobs:
         retention-days: 1
 
   publish-release:
-    needs: [ test, build-windows, build-linux, build-macos ]
-    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    needs: [ test, build-windows, sign-windows, build-linux, build-macos ]
+    if: |
+      always()
+      && (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v'))
+      && needs.test.result == 'success'
+      && needs.build-windows.result == 'success'
+      && needs.build-linux.result == 'success'
+      && needs.build-macos.result == 'success'
+      && (needs.sign-windows.result == 'success' || needs.sign-windows.result == 'skipped')
     runs-on: ubuntu-latest
 
     steps:
@@ -259,3 +359,6 @@ jobs:
       with:
         body_path: RELEASE_NOTES.md
         files: release-assets/*
+        # SemVer: tags with a hyphen (e.g. v2.4.3-rc.1) are prereleases and must not become /releases/latest.
+        prerelease: ${{ contains(github.ref_name, '-') }}
+        make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}

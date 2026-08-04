@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Quiver.csproj" />
+    <ProjectReference Include="..\Quiver.Updater\Quiver.Updater.csproj" />
   </ItemGroup>
 
   <ItemGroup>

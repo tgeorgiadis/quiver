@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net9.0</TargetFramework>
+		<AssemblyName>Quiver.Updater</AssemblyName>
+		<RootNamespace>Quiver.Updater</RootNamespace>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<InvariantGlobalization>true</InvariantGlobalization>
+		<Version>2.4.3-rc.1</Version>
+		<AssemblyVersion>2.4.3.0</AssemblyVersion>
+		<FileVersion>2.4.3.0</FileVersion>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\lib\Quiver.Core\Quiver.Core.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Quiver.Tests" />
+	</ItemGroup>
+</Project>

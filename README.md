@@ -30,6 +30,8 @@ A modern launcher for downloading, installing, and running apps from GitHub rele
 2. Extract the downloaded archive to your preferred location
 3. Run the executable.
 
+**Windows:** Official release builds include `Quiver.exe` and `Quiver.Updater.exe`. When Azure Artifact Signing is enabled for the repo, those EXEs are Authenticode-signed. To verify: right-click → Properties → Digital Signatures, or run `Get-AuthenticodeSignature .\Quiver.exe` in PowerShell.
+
 ## Usage
 
 1. Launch the application

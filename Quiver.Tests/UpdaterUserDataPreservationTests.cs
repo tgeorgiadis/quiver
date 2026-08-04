@@ -1,5 +1,5 @@
 using FluentAssertions;
-using Quiver.Services;
+using Quiver.Core.Services;
 
 namespace Quiver.Tests;
 

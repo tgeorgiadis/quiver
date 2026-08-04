@@ -7,9 +7,9 @@
 		<RootNamespace>Quiver</RootNamespace>
 		<AssemblyTitle>Quiver</AssemblyTitle>
 		<AssemblyDescription>Download and manage GitHub-hosted game ports</AssemblyDescription>
-		<Version>2.4.2</Version>
-		<AssemblyVersion>2.4.2.0</AssemblyVersion>
-		<FileVersion>2.4.2.0</FileVersion>
+		<Version>2.4.3-rc.1</Version>
+		<AssemblyVersion>2.4.3.0</AssemblyVersion>
+		<FileVersion>2.4.3.0</FileVersion>
 		<Configurations>Debug;Release</Configurations>
 		<Platforms>AnyCPU;x64</Platforms>
 		<Nullable>enable</Nullable>
@@ -61,12 +61,27 @@
 	<ItemGroup>
 		<Compile Remove="lib\Quiver.Core\**\*.cs" />
 		<Compile Remove="Quiver.Tests\**\*.cs" />
+		<Compile Remove="Quiver.Updater\**\*.cs" />
 		<Compile Remove="_test_build\**\*.cs" />
 		<EmbeddedResource Remove="lib\Quiver.Core\**\*.*" />
 		<EmbeddedResource Remove="Quiver.Tests\**\*.*" />
+		<EmbeddedResource Remove="Quiver.Updater\**\*.*" />
 		<EmbeddedResource Remove="_test_build\**\*.*" />
 		<None Remove="lib\Quiver.Core\**\*.*" />
 		<None Remove="Quiver.Tests\**\*.*" />
+		<None Remove="Quiver.Updater\**\*.*" />
 		<None Remove="_test_build\**\*.*" />
 	</ItemGroup>
+
+	<!-- Ship Quiver.Updater.exe next to Quiver on Windows local builds so self-update can be tested. -->
+	<Target Name="CopyWindowsUpdater" AfterTargets="Build" Condition="'$(SkipUpdaterCopy)' != 'true' AND $([MSBuild]::IsOSPlatform('Windows'))">
+		<MSBuild Projects="$(MSBuildThisFileDirectory)Quiver.Updater\Quiver.Updater.csproj" Targets="Build" Properties="Configuration=$(Configuration)" />
+		<PropertyGroup>
+			<_UpdaterOutDir>$(MSBuildThisFileDirectory)Quiver.Updater\bin\$(Configuration)\net9.0\</_UpdaterOutDir>
+		</PropertyGroup>
+		<ItemGroup>
+			<_UpdaterFiles Include="$(_UpdaterOutDir)**\*.*" Exclude="$(_UpdaterOutDir)**\*.pdb;$(_UpdaterOutDir)**\*.deps.json;$(_UpdaterOutDir)**\*.runtimeconfig.json" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_UpdaterFiles)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+	</Target>
 </Project>

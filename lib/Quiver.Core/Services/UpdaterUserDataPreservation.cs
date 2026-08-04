@@ -1,4 +1,4 @@
-namespace Quiver.Services;
+namespace Quiver.Core.Services;
 
 /// <summary>
 /// Top-level install-folder entries that self-update must never overwrite.
