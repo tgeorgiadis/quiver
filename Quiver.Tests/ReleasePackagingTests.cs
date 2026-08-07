@@ -56,8 +56,10 @@ public class ReleasePackagingTests
         workflow.Should().Contain("AZURE_TRUSTED_SIGNING_ENABLED");
         workflow.Should().Contain("VELOPACK_VERSION");
         workflow.Should().Contain("Assets/quiver-icon.png");
+        workflow.Should().Contain("Quiver.icns");
         workflow.Should().Contain("chmod +x releases/");
         workflow.Should().Contain("rm -rf publish/${{ matrix.rid }}/Apps");
+        workflow.Should().Contain("continue-on-error: true");
     }
 
     [Fact]
