@@ -202,7 +202,6 @@ jobs:
           --icon Assets/quiver-icon.png \
           --runtime ${{ matrix.rid }} \
           --channel ${{ matrix.rid }} \
-          --noInst true \
           --outputDir releases/${{ matrix.rid }}
         chmod +x releases/${{ matrix.rid }}/*.AppImage
 
@@ -327,26 +326,6 @@ jobs:
 
     - name: Install vpk
       run: dotnet tool install -g vpk --version ${{ env.VELOPACK_VERSION }}
-
-    - name: Create GitHub Release shell
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        TAG="${GITHUB_REF_NAME}"
-        NOTES="RELEASE_NOTES.md"
-        if [[ ! -f "$NOTES" ]]; then
-          NOTES="$(mktemp)"
-          echo "Quiver ${{ steps.ver.outputs.version }}" > "$NOTES"
-        fi
-        PRE_ARGS=()
-        if [[ "${{ steps.ver.outputs.prerelease }}" == "true" ]]; then
-          PRE_ARGS+=(--prerelease)
-        fi
-        gh release view "$TAG" >/dev/null 2>&1 || \
-          gh release create "$TAG" \
-            --title "Quiver v${{ steps.ver.outputs.version }}" \
-            --notes-file "$NOTES" \
-            "${PRE_ARGS[@]}"
 
     - name: Strip legacy RELEASES from pack outputs
       run: |
