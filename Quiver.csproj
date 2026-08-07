@@ -7,7 +7,7 @@
 		<RootNamespace>Quiver</RootNamespace>
 		<AssemblyTitle>Quiver</AssemblyTitle>
 		<AssemblyDescription>Download and manage GitHub-hosted game ports</AssemblyDescription>
-		<Version>2.4.3-rc.2</Version>
+		<Version>2.4.3-rc.3</Version>
 		<AssemblyVersion>2.4.3.0</AssemblyVersion>
 		<FileVersion>2.4.3.0</FileVersion>
 		<Configurations>Debug;Release</Configurations>
@@ -54,6 +54,15 @@
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
+
+	<!-- Keep version.txt in sync with $(Version) so the UI header cannot drift. -->
+	<Target Name="WriteVersionTxt" BeforeTargets="BeforeBuild;BeforePublish">
+		<WriteLinesToFile
+			File="$(MSBuildProjectDirectory)\version.txt"
+			Lines="v$(Version)"
+			Overwrite="true"
+			Encoding="UTF-8" />
+	</Target>
 
 	<ItemGroup>
 		<ProjectReference Include="lib\Quiver.Core\Quiver.Core.csproj" />

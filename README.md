@@ -26,7 +26,7 @@ A modern launcher for downloading, installing, and running apps from GitHub rele
 
 ### Installation
 
-Quiver uses [Velopack](https://docs.velopack.io/) for packaging and self-updates. Prerelease Quiver updates are opt-in via Settings → **Include prerelease Quiver updates** (development only); installs whose version already contains `-` (e.g. `2.4.3-rc.2`) follow GitHub prereleases automatically.
+Quiver uses [Velopack](https://docs.velopack.io/) for packaging and self-updates. Prerelease Quiver updates are opt-in via Settings → Advanced → **Include prerelease Quiver updates** (development only); installs whose version already contains `-` (e.g. `2.4.3-rc.3`) follow GitHub prereleases automatically.
 
 **Windows (portable-first — recommended)**
 
@@ -85,7 +85,7 @@ MyFolder/
 └── Cache/
 ```
 
-When Azure Artifact Signing is enabled, Windows packages are Authenticode-signed. To verify a signed `Quiver.exe`: right-click → Properties → Digital Signatures, or `Get-AuthenticodeSignature .\Quiver.exe` in PowerShell.
+When Azure Artifact Signing is enabled, Windows packages are Authenticode-signed via the GitHub Environment **`signing`** (OIDC subject `repo:…/quiver:environment:signing`, so tag builds can sign the same way as `main`). To verify a signed `Quiver.exe`: right-click → Properties → Digital Signatures, or `Get-AuthenticodeSignature .\Quiver.exe` in PowerShell.
 
 ## Usage
 

@@ -3034,20 +3034,6 @@
 										</StackPanel>
 
 										<StackPanel Spacing="2" Margin="0,8,0,0">
-											<CheckBox x:Name="AllowPrereleaseLauncherUpdatesCheckBox"
-													  Content="Include prerelease Quiver updates"
-													  Foreground="{DynamicResource ThemeText}"
-													  FontSize="13" FontWeight="SemiBold"
-													  Checked="AllowPrereleaseLauncherUpdatesCheckBox_Checked"
-													  Unchecked="AllowPrereleaseLauncherUpdatesCheckBox_Unchecked"/>
-											<TextBlock Text="For development — allow updates from GitHub prereleases. Not for normal users; use at your own risk."
-													   FontSize="11"
-													   Foreground="{DynamicResource ThemeTextSecondary}"
-													   Margin="20,0,0,0"
-													   TextWrapping="Wrap"/>
-										</StackPanel>
-
-										<StackPanel Spacing="2" Margin="0,8,0,0">
 											<TextBlock Text="Background check interval"
 													   FontSize="13" FontWeight="SemiBold"
 													   Foreground="{DynamicResource ThemeText}"/>
@@ -3729,6 +3715,20 @@
 												   Foreground="{DynamicResource ThemeTextSecondary}"
 												   FontStyle="Italic"
 												   TextWrapping="Wrap"/>
+
+										<StackPanel Spacing="2" Margin="0,12,0,0">
+											<CheckBox x:Name="AllowPrereleaseLauncherUpdatesCheckBox"
+													  Content="Include prerelease Quiver updates"
+													  Foreground="{DynamicResource ThemeText}"
+													  FontSize="13" FontWeight="SemiBold"
+													  Checked="AllowPrereleaseLauncherUpdatesCheckBox_Checked"
+													  Unchecked="AllowPrereleaseLauncherUpdatesCheckBox_Unchecked"/>
+											<TextBlock Text="For development — allow updates from GitHub prereleases. Not for normal users; use at your own risk."
+													   FontSize="11"
+													   Foreground="{DynamicResource ThemeTextSecondary}"
+													   Margin="20,0,0,0"
+													   TextWrapping="Wrap"/>
+										</StackPanel>
 
 									</StackPanel>
 								</TabItem>

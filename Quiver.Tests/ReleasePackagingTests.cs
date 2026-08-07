@@ -60,6 +60,12 @@ public class ReleasePackagingTests
         workflow.Should().Contain("chmod +x releases/");
         workflow.Should().Contain("rm -rf publish/${{ matrix.rid }}/Apps");
         workflow.Should().Contain("continue-on-error: true");
+        workflow.Should().Contain("--noInst true");
+        workflow.Should().Contain("environment: signing");
+        workflow.Should().Contain("Strip legacy RELEASES");
+        workflow.Should().Contain("Rewrite release notes with Downloads section");
+        workflow.Should().Contain("## Downloads");
+        workflow.Should().Contain("Quiver-win-Portable.zip");
     }
 
     [Fact]

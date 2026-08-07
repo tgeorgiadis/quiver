@@ -47,6 +47,8 @@ jobs:
   pack-windows:
     needs: test
     runs-on: windows-latest
+    # Stable OIDC subject for tags and branches: repo:…/quiver:environment:signing
+    environment: signing
     permissions:
       contents: read
       id-token: write
@@ -117,6 +119,7 @@ jobs:
           --icon icon.ico `
           --runtime win-x64 `
           --channel win `
+          --noInst true `
           --outputDir releases/win-x64 `
           --azureTrustedSignFile "$PWD/signing-metadata.json"
 
@@ -125,7 +128,7 @@ jobs:
       shell: pwsh
       run: |
         if ("${{ env.TRUSTED_SIGNING_ENABLED }}" -eq "true") {
-          Write-Warning "Azure login failed (often tag OIDC subject mismatch). Windows Velopack packages will be UNSIGNED."
+          Write-Warning "Azure login failed. Windows Velopack packages will be UNSIGNED."
         } else {
           Write-Warning "AZURE_TRUSTED_SIGNING_ENABLED is not 'true'. Windows Velopack packages will be UNSIGNED."
         }
@@ -137,6 +140,7 @@ jobs:
           --icon icon.ico `
           --runtime win-x64 `
           --channel win `
+          --noInst true `
           --outputDir releases/win-x64
 
     - name: Upload Windows Velopack artifacts
@@ -198,6 +202,7 @@ jobs:
           --icon Assets/quiver-icon.png \
           --runtime ${{ matrix.rid }} \
           --channel ${{ matrix.rid }} \
+          --noInst true \
           --outputDir releases/${{ matrix.rid }}
         chmod +x releases/${{ matrix.rid }}/*.AppImage
 
@@ -271,6 +276,7 @@ jobs:
           --icon Quiver.icns \
           --runtime ${{ matrix.rid }} \
           --channel ${{ matrix.rid }} \
+          --noInst true \
           --outputDir releases/${{ matrix.rid }}
 
     - name: Upload macOS Velopack artifacts
@@ -342,6 +348,40 @@ jobs:
             --notes-file "$NOTES" \
             "${PRE_ARGS[@]}"
 
+    - name: Strip legacy RELEASES from pack outputs
+      run: |
+        set -euo pipefail
+        # Squirrel leftover; Velopack clients use releases.{channel}.json.
+        find release-assets -type f -name 'RELEASES' -delete
+        python3 - <<'PY'
+        import json, pathlib
+
+        def entry_name(entry):
+            if not isinstance(entry, dict):
+                return str(entry)
+            return str(
+                entry.get("FileName")
+                or entry.get("fileName")
+                or entry.get("RelativeFileName")
+                or entry.get("relativeFileName")
+                or ""
+            )
+
+        for path in pathlib.Path("release-assets").rglob("assets.*.json"):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                continue
+            key = "Files" if "Files" in data else ("files" if "files" in data else None)
+            if key is None or not isinstance(data.get(key), list):
+                continue
+            files = data[key]
+            filtered = [f for f in files if pathlib.Path(entry_name(f)).name != "RELEASES"]
+            if len(filtered) != len(files):
+                data[key] = filtered
+                path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                print(f"Updated {path}")
+        PY
+
     - name: Upload Velopack channels to GitHub Release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -382,3 +422,34 @@ jobs:
             --releaseName "Quiver v${{ steps.ver.outputs.version }}" \
             --targetCommitish "$GITHUB_SHA"
         done
+
+    - name: Rewrite release notes with Downloads section
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        TAG="${GITHUB_REF_NAME}"
+        VERSION="${{ steps.ver.outputs.version }}"
+        REPO="${{ github.repository }}"
+        BASE="https://github.com/${REPO}/releases/download/${TAG}"
+        NOTES_BODY="$(mktemp)"
+        {
+          echo "## Downloads"
+          echo ""
+          echo "Install these (portable-first). Other assets on this release are Velopack update feed files."
+          echo ""
+          echo "- **Windows:** [${BASE}/Quiver-win-Portable.zip](${BASE}/Quiver-win-Portable.zip)"
+          echo "- **Linux x64:** [${BASE}/Quiver-linux-x64.AppImage](${BASE}/Quiver-linux-x64.AppImage)"
+          echo "- **Linux ARM64:** [${BASE}/Quiver-linux-arm64.AppImage](${BASE}/Quiver-linux-arm64.AppImage)"
+          echo "- **macOS x64:** [${BASE}/Quiver-osx-x64-Portable.zip](${BASE}/Quiver-osx-x64-Portable.zip)"
+          echo "- **macOS ARM64:** [${BASE}/Quiver-osx-arm64-Portable.zip](${BASE}/Quiver-osx-arm64-Portable.zip)"
+          echo ""
+          echo "---"
+          echo ""
+          if [[ -f RELEASE_NOTES.md ]]; then
+            cat RELEASE_NOTES.md
+          else
+            echo "Quiver v${VERSION}"
+          fi
+        } > "$NOTES_BODY"
+        gh release edit "$TAG" --notes-file "$NOTES_BODY"

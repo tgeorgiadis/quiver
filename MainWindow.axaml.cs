@@ -1183,6 +1183,15 @@ namespace Quiver
         {
             try
             {
+                var velopackVersion = _velopackUpdateService.CurrentVersion;
+                if (!string.IsNullOrWhiteSpace(velopackVersion))
+                {
+                    currentVersionString = velopackVersion.StartsWith("v", StringComparison.OrdinalIgnoreCase)
+                        ? velopackVersion
+                        : $"v{velopackVersion}";
+                    return;
+                }
+
                 string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
                 currentVersionString = LauncherVersionService.ReadInstalledVersion(currentAppDirectory);
             }
