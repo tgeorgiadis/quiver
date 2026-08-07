@@ -319,90 +319,7 @@ jobs:
         path: release-assets
         merge-multiple: false
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: 9.0.x
-
-    - name: Install vpk
-      run: dotnet tool install -g vpk --version ${{ env.VELOPACK_VERSION }}
-
-    - name: Strip legacy RELEASES from pack outputs
-      run: |
-        set -euo pipefail
-        # Squirrel leftover; Velopack clients use releases.{channel}.json.
-        find release-assets -type f -name 'RELEASES' -delete
-        python3 - <<'PY'
-        import json, pathlib
-
-        def entry_name(entry):
-            if not isinstance(entry, dict):
-                return str(entry)
-            return str(
-                entry.get("FileName")
-                or entry.get("fileName")
-                or entry.get("RelativeFileName")
-                or entry.get("relativeFileName")
-                or ""
-            )
-
-        for path in pathlib.Path("release-assets").rglob("assets.*.json"):
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                continue
-            key = "Files" if "Files" in data else ("files" if "files" in data else None)
-            if key is None or not isinstance(data.get(key), list):
-                continue
-            files = data[key]
-            filtered = [f for f in files if pathlib.Path(entry_name(f)).name != "RELEASES"]
-            if len(filtered) != len(files):
-                data[key] = filtered
-                path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-                print(f"Updated {path}")
-        PY
-
-    - name: Upload Velopack channels to GitHub Release
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        set -euo pipefail
-        PRE_FLAG="false"
-        if [[ "${{ steps.ver.outputs.prerelease }}" == "true" ]]; then
-          PRE_FLAG="true"
-        fi
-        TAG="${GITHUB_REF_NAME}"
-        # Each pack job wrote into its own artifact folder (velopack-<rid>/...).
-        mapfile -t CHANNEL_DIRS < <(find release-assets -mindepth 1 -maxdepth 1 -type d | sort)
-        if [[ ${#CHANNEL_DIRS[@]} -eq 0 ]]; then
-          echo "No Velopack artifact directories found under release-assets/"
-          ls -laR release-assets || true
-          exit 1
-        fi
-        for dir in "${CHANNEL_DIRS[@]}"; do
-          echo "Uploading Velopack assets from $dir"
-          # Infer channel from releases.*.json / assets.*.json produced by vpk pack.
-          channel_file="$(find "$dir" -maxdepth 1 -name 'releases.*.json' | head -n1 || true)"
-          if [[ -z "$channel_file" ]]; then
-            echo "No releases.*.json in $dir — skipping"
-            ls -la "$dir" || true
-            continue
-          fi
-          channel="$(basename "$channel_file" | sed -E 's/^releases\.(.+)\.json$/\1/')"
-          echo "Channel: $channel"
-          vpk upload github \
-            --outputDir "$dir" \
-            --channel "$channel" \
-            --repoUrl "${{ env.REPO_URL }}" \
-            --token "$GH_TOKEN" \
-            --publish true \
-            --pre "$PRE_FLAG" \
-            --merge true \
-            --tag "$TAG" \
-            --releaseName "Quiver v${{ steps.ver.outputs.version }}" \
-            --targetCommitish "$GITHUB_SHA"
-        done
-
-    - name: Rewrite release notes with Downloads section
+    - name: Publish GitHub Release with user + Velopack feed assets
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
@@ -411,6 +328,26 @@ jobs:
         VERSION="${{ steps.ver.outputs.version }}"
         REPO="${{ github.repository }}"
         BASE="https://github.com/${REPO}/releases/download/${TAG}"
+
+        # Drop Squirrel leftover; clients use releases.{channel}.json.
+        find release-assets -type f -name 'RELEASES' -delete
+        # Drop Setup installers if any slipped through (portable-first).
+        find release-assets -type f \( -name '*-Setup.exe' -o -name '*-Setup.pkg' -o -name 'assets.*.json' \) -delete
+
+        mapfile -t FILES < <(
+          find release-assets -type f \( \
+            -name '*.nupkg' -o \
+            -name 'releases.*.json' -o \
+            -name '*Portable.zip' -o \
+            -name '*.AppImage' \
+          \) | sort
+        )
+        if [[ ${#FILES[@]} -eq 0 ]]; then
+          echo "No release assets found under release-assets/"
+          ls -laR release-assets || true
+          exit 1
+        fi
+
         NOTES_BODY="$(mktemp)"
         {
           echo "## Downloads"
@@ -431,4 +368,20 @@ jobs:
             echo "Quiver v${VERSION}"
           fi
         } > "$NOTES_BODY"
-        gh release edit "$TAG" --notes-file "$NOTES_BODY"
+
+        # Clean up any leftover draft from a previous failed publish.
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          gh release delete "$TAG" --yes || true
+        fi
+
+        PRE_ARGS=()
+        if [[ "${{ steps.ver.outputs.prerelease }}" == "true" ]]; then
+          PRE_ARGS+=(--prerelease)
+        fi
+
+        gh release create "$TAG" \
+          --title "Quiver v${VERSION}" \
+          --notes-file "$NOTES_BODY" \
+          --target "$GITHUB_SHA" \
+          "${PRE_ARGS[@]}" \
+          "${FILES[@]}"

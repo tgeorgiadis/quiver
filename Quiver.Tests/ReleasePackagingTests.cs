@@ -41,7 +41,7 @@ public class ReleasePackagingTests
         var workflow = File.ReadAllText(workflowPath);
 
         workflow.Should().Contain("vpk pack");
-        workflow.Should().Contain("vpk upload github");
+        workflow.Should().Contain("gh release create");
         workflow.Should().Contain("--packId");
         workflow.Should().Contain("--channel");
         workflow.Should().Contain("PACK_ID: Quiver");
@@ -62,10 +62,9 @@ public class ReleasePackagingTests
         workflow.Should().Contain("continue-on-error: true");
         workflow.Should().Contain("--noInst true");
         workflow.Should().Contain("environment: signing");
-        workflow.Should().Contain("Strip legacy RELEASES");
-        workflow.Should().Contain("Rewrite release notes with Downloads section");
         workflow.Should().Contain("## Downloads");
         workflow.Should().Contain("Quiver-win-Portable.zip");
+        workflow.Should().Contain("releases.*.json");
     }
 
     [Fact]
