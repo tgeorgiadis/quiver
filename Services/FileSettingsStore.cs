@@ -13,7 +13,7 @@ public class FileSettingsStore : ISettingsStore
 
     public FileSettingsStore(string? settingsPath = null)
     {
-        _settingsPath = settingsPath ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.json");
+        _settingsPath = settingsPath ?? QuiverPaths.SettingsJsonPath;
         _current = ReadFromDisk();
     }
 

@@ -36,11 +36,44 @@ public class AppCatalogServiceTests
     }
 
     [Fact]
-    public void ResolveLocalPath_combines_relative_paths_with_base_directory()
+    public void ResolveLocalPath_combines_relative_paths_with_user_data_root()
     {
-        var resolved = AppCatalogService.ResolveLocalPath("Fixtures/index.json");
+        var previous = QuiverPaths.OverrideUserDataRoot;
+        var temp = Path.Combine(Path.GetTempPath(), "QuiverCatalogPaths_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            QuiverPaths.OverrideUserDataRoot = temp;
+            var resolved = AppCatalogService.ResolveLocalPath("Fixtures/index.json");
+            resolved.Should().Be(Path.Combine(Path.GetFullPath(temp), "Fixtures/index.json"));
+        }
+        finally
+        {
+            QuiverPaths.OverrideUserDataRoot = previous;
+        }
+    }
 
-        resolved.Should().Be(Path.Combine(AppContext.BaseDirectory, "Fixtures/index.json"));
+    [Fact]
+    public void MigrateLegacyCatalogSources_defaults_to_quiver_paths_cache()
+    {
+        var previous = QuiverPaths.OverrideUserDataRoot;
+        var temp = Path.Combine(Path.GetTempPath(), "QuiverCatalogMigrate_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temp);
+        try
+        {
+            QuiverPaths.OverrideUserDataRoot = temp;
+            var settings = new AppSettings();
+            settings.EnsureInitialized();
+
+            AppCatalogService.MigrateLegacyCatalogSources(settings);
+
+            Directory.Exists(Path.Combine(Path.GetFullPath(temp), "Cache", "CatalogSources")).Should().BeTrue();
+        }
+        finally
+        {
+            QuiverPaths.OverrideUserDataRoot = previous;
+            if (Directory.Exists(temp))
+                Directory.Delete(temp, recursive: true);
+        }
     }
 
     [Fact]

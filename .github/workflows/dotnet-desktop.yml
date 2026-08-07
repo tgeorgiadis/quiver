@@ -6,12 +6,15 @@ on:
     tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
-  release:
-    types: [ published ]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  VELOPACK_VERSION: "1.2.0"
+  PACK_ID: Quiver
+  REPO_URL: https://github.com/${{ github.repository }}
 
 jobs:
   test:
@@ -41,15 +44,13 @@ jobs:
         path: ${{ runner.temp }}/coverage/**/coverage.cobertura.xml
         retention-days: 14
 
-  build-windows:
+  pack-windows:
+    needs: test
     runs-on: windows-latest
     permissions:
       contents: read
       id-token: write
-
     env:
-      Solution_Name: Quiver.sln
-      # Set repository variable AZURE_TRUSTED_SIGNING_ENABLED=true after Artifact Signing is configured.
       TRUSTED_SIGNING_ENABLED: ${{ vars.AZURE_TRUSTED_SIGNING_ENABLED }}
 
     steps:
@@ -61,130 +62,93 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: 9.0.x
+        dotnet-version: |
+          9.0.x
+          8.0.x
 
-    - name: Restore dependencies
-      run: dotnet restore Quiver.sln
+    - name: Resolve pack version
+      id: ver
+      shell: bash
+      run: |
+        VERSION=$(grep -oE '<Version>[^<]+' Quiver.csproj | head -n1 | sed 's/<Version>//')
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "Pack version: $VERSION"
 
     - name: Publish Windows x64
       run: |
-        dotnet publish Quiver.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:SkipUpdaterCopy=true -o publish/win-x64
-        dotnet publish Quiver.Updater/Quiver.Updater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/win-x64
-
-    - name: Upload Windows x64
-      uses: actions/upload-artifact@v4
-      with:
-        name: Quiver-Windows-x64
-        path: publish/win-x64
-        retention-days: 14
-
-    - name: Package Windows release archive (unsigned staging)
-      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-      shell: pwsh
-      run: |
-        Copy-Item version.txt -Destination publish/win-x64/
+        dotnet publish Quiver.csproj -c Release -r win-x64 --self-contained true -p:PublishTrimmed=false -o publish/win-x64
         Remove-Item publish/win-x64/apps.json -ErrorAction SilentlyContinue
-        if (-not (Test-Path "publish\win-x64\Quiver.Updater.exe")) {
-          throw "Quiver.Updater.exe missing from Windows publish output"
-        }
-        Compress-Archive -Path publish/win-x64/* -DestinationPath Quiver-Windows-x64.zip
 
-    - name: Upload Windows release archive
-      if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')) && env.TRUSTED_SIGNING_ENABLED != 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-Quiver-Windows-x64
-        path: Quiver-Windows-x64.zip
-        retention-days: 1
-
-    - name: Upload Windows publish folder for signing
-      if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')) && env.TRUSTED_SIGNING_ENABLED == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: windows-publish-for-signing
-        path: publish/win-x64
-        retention-days: 1
-
-    - name: Warn when release signing is skipped
-      if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')) && env.TRUSTED_SIGNING_ENABLED != 'true'
-      shell: pwsh
-      run: |
-        Write-Warning "AZURE_TRUSTED_SIGNING_ENABLED is not 'true'. Windows release binaries will be UNSIGNED."
-
-  sign-windows:
-    needs: build-windows
-    if: (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')) && vars.AZURE_TRUSTED_SIGNING_ENABLED == 'true'
-    runs-on: windows-latest
-    # Matches Entra federated credential: repo:tgeorgiadis/quiver:environment:signing
-    environment: signing
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Download Windows publish folder
-      uses: actions/download-artifact@v4
-      with:
-        name: windows-publish-for-signing
-        path: publish/win-x64
+    - name: Install vpk
+      run: dotnet tool install -g vpk --version ${{ env.VELOPACK_VERSION }}
 
     - name: Azure login for Artifact Signing
+      if: env.TRUSTED_SIGNING_ENABLED == 'true'
       uses: azure/login@v3
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-    - name: Sign Windows binaries with Artifact Signing
-      uses: azure/artifact-signing-action@v2
-      with:
-        endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-        signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-        certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
-        files-folder: ${{ github.workspace }}\publish\win-x64
-        files-folder-filter: exe
-        file-digest: SHA256
-        timestamp-rfc3161: http://timestamp.acs.microsoft.com
-        timestamp-digest: SHA256
-
-    - name: Verify Authenticode signatures
+    - name: Write Azure Trusted Signing metadata
+      if: env.TRUSTED_SIGNING_ENABLED == 'true'
       shell: pwsh
       run: |
-        $files = @(
-          "publish\win-x64\Quiver.exe",
-          "publish\win-x64\Quiver.Updater.exe"
-        )
-        foreach ($file in $files) {
-          if (-not (Test-Path $file)) { throw "Missing file to verify: $file" }
-          $sig = Get-AuthenticodeSignature $file
-          Write-Host "$file => $($sig.Status) ($($sig.SignerCertificate.Subject))"
-          if ($sig.Status -ne "Valid") {
-            throw "Authenticode signature invalid for $file : $($sig.StatusMessage)"
-          }
+        $json = @"
+        {
+          "Endpoint": "${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}",
+          "CodeSigningAccountName": "${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}",
+          "CertificateProfileName": "${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}"
         }
+        "@
+        [System.IO.File]::WriteAllText("$PWD/signing-metadata.json", $json.Trim(), [System.Text.UTF8Encoding]::new($false))
 
-    - name: Package signed Windows release archive
+    - name: Velopack pack (Windows, signed)
+      if: env.TRUSTED_SIGNING_ENABLED == 'true'
       shell: pwsh
       run: |
-        Copy-Item version.txt -Destination publish/win-x64/ -Force
-        Remove-Item publish/win-x64/apps.json -ErrorAction SilentlyContinue
-        Compress-Archive -Path publish/win-x64/* -DestinationPath Quiver-Windows-x64.zip -Force
+        vpk pack `
+          --packId ${{ env.PACK_ID }} `
+          --packVersion ${{ steps.ver.outputs.version }} `
+          --packDir publish/win-x64 `
+          --mainExe Quiver.exe `
+          --icon icon.ico `
+          --runtime win-x64 `
+          --channel win `
+          --outputDir releases/win-x64 `
+          --azureTrustedSignFile "$PWD/signing-metadata.json"
 
-    - name: Upload signed Windows release archive
+    - name: Velopack pack (Windows, unsigned)
+      if: env.TRUSTED_SIGNING_ENABLED != 'true'
+      shell: pwsh
+      run: |
+        Write-Warning "AZURE_TRUSTED_SIGNING_ENABLED is not 'true'. Windows Velopack packages will be UNSIGNED."
+        vpk pack `
+          --packId ${{ env.PACK_ID }} `
+          --packVersion ${{ steps.ver.outputs.version }} `
+          --packDir publish/win-x64 `
+          --mainExe Quiver.exe `
+          --icon icon.ico `
+          --runtime win-x64 `
+          --channel win `
+          --outputDir releases/win-x64
+
+    - name: Upload Windows Velopack artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: release-Quiver-Windows-x64
-        path: Quiver-Windows-x64.zip
-        retention-days: 1
+        name: velopack-win-x64
+        path: releases/win-x64/**
+        retention-days: 14
 
-  build-linux:
+  pack-linux:
+    needs: test
     runs-on: ubuntu-latest
-    
-    env:
-      Solution_Name: Quiver.sln
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+          - rid: linux-arm64
 
     steps:
     - name: Checkout
@@ -197,60 +161,56 @@ jobs:
       with:
         dotnet-version: 9.0.x
 
-    - name: Restore dependencies
-      run: dotnet restore Quiver.sln
-
-    - name: Publish Linux x64
-      run: dotnet publish Quiver.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/linux-x64
-
-    - name: Publish Linux ARM64
-      run: dotnet publish Quiver.csproj -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/linux-arm64
-
-    - name: Upload Linux x64
-      uses: actions/upload-artifact@v4
-      with:
-        name: Quiver-Linux-x64
-        path: publish/linux-x64
-        retention-days: 14
-
-    - name: Upload Linux ARM64
-      uses: actions/upload-artifact@v4
-      with:
-        name: Quiver-Linux-ARM64
-        path: publish/linux-arm64
-        retention-days: 14
-
-    - name: Package Linux release archives
-      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    - name: Resolve pack version
+      id: ver
+      shell: bash
       run: |
-        cp version.txt publish/linux-x64/
-        cp version.txt publish/linux-arm64/
-        rm -f publish/linux-x64/apps.json publish/linux-arm64/apps.json
-        tar -czf Quiver-Linux-X64.tar.gz -C publish/linux-x64 .
-        tar -czf Quiver-Linux-ARM64.tar.gz -C publish/linux-arm64 .
+        VERSION=$(grep -oE '<Version>[^<]+' Quiver.csproj | head -n1 | sed 's/<Version>//')
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-    - name: Upload Linux x64 release archive
-      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    - name: Publish ${{ matrix.rid }}
+      run: |
+        dotnet publish Quiver.csproj -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishTrimmed=false -o publish/${{ matrix.rid }}
+        # Do not bake user-data leftovers into the AppImage.
+        rm -f publish/${{ matrix.rid }}/apps.json \
+              publish/${{ matrix.rid }}/settings.json \
+              publish/${{ matrix.rid }}/games.json \
+              publish/${{ matrix.rid }}/game.json \
+              publish/${{ matrix.rid }}/crash.log
+        rm -rf publish/${{ matrix.rid }}/Apps publish/${{ matrix.rid }}/Cache
+
+    - name: Install vpk
+      run: dotnet tool install -g vpk --version ${{ env.VELOPACK_VERSION }}
+
+    - name: Velopack pack (Linux AppImage)
+      run: |
+        vpk pack \
+          --packId ${{ env.PACK_ID }} \
+          --packVersion ${{ steps.ver.outputs.version }} \
+          --packDir publish/${{ matrix.rid }} \
+          --mainExe Quiver \
+          --icon Assets/quiver-icon.png \
+          --runtime ${{ matrix.rid }} \
+          --channel ${{ matrix.rid }} \
+          --outputDir releases/${{ matrix.rid }}
+        chmod +x releases/${{ matrix.rid }}/*.AppImage
+
+    - name: Upload Linux Velopack artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: release-Quiver-Linux-X64
-        path: Quiver-Linux-X64.tar.gz
-        retention-days: 1
+        name: velopack-${{ matrix.rid }}
+        path: releases/${{ matrix.rid }}/**
+        retention-days: 14
 
-    - name: Upload Linux ARM64 release archive
-      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-Quiver-Linux-ARM64
-        path: Quiver-Linux-ARM64.tar.gz
-        retention-days: 1
-
-  build-macos:
+  pack-macos:
+    needs: test
     runs-on: macos-latest
-    
-    env:
-      Solution_Name: Quiver.sln
-      App_Name: Quiver
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: osx-x64
+          - rid: osx-arm64
 
     steps:
     - name: Checkout
@@ -263,102 +223,140 @@ jobs:
       with:
         dotnet-version: 9.0.x
 
-    - name: Restore dependencies
-      run: dotnet restore Quiver.sln
-
-    - name: Publish macOS x64
-      run: dotnet publish Quiver.csproj -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/osx-x64
-
-    - name: Create macOS .app bundle
+    - name: Resolve pack version
+      id: ver
+      shell: bash
       run: |
-        APP_BUNDLE="publish/${{ env.App_Name }}.app"
-        mkdir -p "$APP_BUNDLE/Contents/MacOS"
-        mkdir -p "$APP_BUNDLE/Contents/Resources"
-        
-        # Copy all published files to the app bundle (user library is created at runtime, not shipped)
-        rm -f publish/osx-x64/apps.json
-        cp -r publish/osx-x64/* "$APP_BUNDLE/Contents/MacOS/"
-        cp version.txt "$APP_BUNDLE/Contents/MacOS/"
-        rm -f "$APP_BUNDLE/Contents/MacOS/apps.json"
-        
-        # Make the executable... executable
-        chmod +x "$APP_BUNDLE/Contents/MacOS/${{ env.App_Name }}"
-        
-        # Create Info.plist
-        cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleExecutable</key>
-            <string>${{ env.App_Name }}</string>
-            <key>CFBundleIdentifier</key>
-            <string>com.tgeorgiadis.quiver</string>
-            <key>CFBundleName</key>
-            <string>${{ env.App_Name }}</string>
-            <key>CFBundleVersion</key>
-            <string>2.4.3</string>
-            <key>CFBundleShortVersionString</key>
-            <string>2.4.3</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>LSMinimumSystemVersion</key>
-            <string>10.15</string>
-            <key>NSHighResolutionCapable</key>
-            <true/>
-        </dict>
-        </plist>
-        EOF
+        VERSION=$(grep -oE '<Version>[^<]+' Quiver.csproj | head -n1 | sed 's/<Version>//')
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-    - name: Upload macOS x64
+    - name: Publish ${{ matrix.rid }}
+      run: |
+        dotnet publish Quiver.csproj -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishTrimmed=false -o publish/${{ matrix.rid }}
+        rm -f publish/${{ matrix.rid }}/apps.json
+
+    - name: Install vpk
+      run: dotnet tool install -g vpk --version ${{ env.VELOPACK_VERSION }}
+
+    # Apple Developer ID + notarization can be wired later via
+    # --signAppIdentity / --signInstallIdentity / --notaryProfile / --keychain.
+    - name: Velopack pack (macOS)
+      run: |
+        vpk pack \
+          --packId ${{ env.PACK_ID }} \
+          --packVersion ${{ steps.ver.outputs.version }} \
+          --packDir publish/${{ matrix.rid }} \
+          --mainExe Quiver \
+          --icon icon.ico \
+          --runtime ${{ matrix.rid }} \
+          --channel ${{ matrix.rid }} \
+          --outputDir releases/${{ matrix.rid }}
+
+    - name: Upload macOS Velopack artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Quiver-macOS-x64
-        path: publish/${{ env.App_Name }}.app
+        name: velopack-${{ matrix.rid }}
+        path: releases/${{ matrix.rid }}/**
         retention-days: 14
 
-    - name: Package macOS release archive
-      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-      run: |
-        cd publish
-        zip -r ../Quiver-macOS-x64.zip "${{ env.App_Name }}.app"
-
-    - name: Upload macOS release archive
-      if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-Quiver-macOS-x64
-        path: Quiver-macOS-x64.zip
-        retention-days: 1
-
-  publish-release:
-    needs: [ test, build-windows, sign-windows, build-linux, build-macos ]
-    if: |
-      always()
-      && (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v'))
-      && needs.test.result == 'success'
-      && needs.build-windows.result == 'success'
-      && needs.build-linux.result == 'success'
-      && needs.build-macos.result == 'success'
-      && (needs.sign-windows.result == 'success' || needs.sign-windows.result == 'skipped')
+  # Publish Velopack packages to a GitHub Release when a v* tag is pushed.
+  publish-github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [pack-windows, pack-linux, pack-macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-    - name: Download release archives
+    - name: Resolve pack version
+      id: ver
+      shell: bash
+      run: |
+        VERSION=$(grep -oE '<Version>[^<]+' Quiver.csproj | head -n1 | sed 's/<Version>//')
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        if [[ "$VERSION" == *-* ]]; then
+          echo "prerelease=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "prerelease=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Download Velopack artifacts
       uses: actions/download-artifact@v4
       with:
-        pattern: release-Quiver-*
-        merge-multiple: true
+        pattern: velopack-*
         path: release-assets
+        merge-multiple: false
 
-    - name: Upload to GitHub Release
-      uses: softprops/action-gh-release@v2
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
       with:
-        body_path: RELEASE_NOTES.md
-        files: release-assets/*
-        # SemVer: tags with a hyphen (e.g. v2.4.3-rc.1) are prereleases and must not become /releases/latest.
-        prerelease: ${{ contains(github.ref_name, '-') }}
-        make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+        dotnet-version: 9.0.x
+
+    - name: Install vpk
+      run: dotnet tool install -g vpk --version ${{ env.VELOPACK_VERSION }}
+
+    - name: Create GitHub Release shell
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TAG="${GITHUB_REF_NAME}"
+        NOTES="RELEASE_NOTES.md"
+        if [[ ! -f "$NOTES" ]]; then
+          NOTES="$(mktemp)"
+          echo "Quiver ${{ steps.ver.outputs.version }}" > "$NOTES"
+        fi
+        PRE_ARGS=()
+        if [[ "${{ steps.ver.outputs.prerelease }}" == "true" ]]; then
+          PRE_ARGS+=(--prerelease)
+        fi
+        gh release view "$TAG" >/dev/null 2>&1 || \
+          gh release create "$TAG" \
+            --title "Quiver v${{ steps.ver.outputs.version }}" \
+            --notes-file "$NOTES" \
+            "${PRE_ARGS[@]}"
+
+    - name: Upload Velopack channels to GitHub Release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        PRE_FLAG="false"
+        if [[ "${{ steps.ver.outputs.prerelease }}" == "true" ]]; then
+          PRE_FLAG="true"
+        fi
+        TAG="${GITHUB_REF_NAME}"
+        # Each pack job wrote into its own artifact folder (velopack-<rid>/...).
+        mapfile -t CHANNEL_DIRS < <(find release-assets -mindepth 1 -maxdepth 1 -type d | sort)
+        if [[ ${#CHANNEL_DIRS[@]} -eq 0 ]]; then
+          echo "No Velopack artifact directories found under release-assets/"
+          ls -laR release-assets || true
+          exit 1
+        fi
+        for dir in "${CHANNEL_DIRS[@]}"; do
+          echo "Uploading Velopack assets from $dir"
+          # Infer channel from releases.*.json / assets.*.json produced by vpk pack.
+          channel_file="$(find "$dir" -maxdepth 1 -name 'releases.*.json' | head -n1 || true)"
+          if [[ -z "$channel_file" ]]; then
+            echo "No releases.*.json in $dir — skipping"
+            ls -la "$dir" || true
+            continue
+          fi
+          channel="$(basename "$channel_file" | sed -E 's/^releases\.(.+)\.json$/\1/')"
+          echo "Channel: $channel"
+          vpk upload github \
+            --outputDir "$dir" \
+            --channel "$channel" \
+            --repoUrl "${{ env.REPO_URL }}" \
+            --token "$GH_TOKEN" \
+            --publish true \
+            --pre "$PRE_FLAG" \
+            --merge true \
+            --tag "$TAG" \
+            --releaseName "Quiver v${{ steps.ver.outputs.version }}" \
+            --targetCommitish "$GITHUB_SHA"
+        done

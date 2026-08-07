@@ -74,11 +74,13 @@ namespace Quiver.Services
                 _settings = new AppSettings();
             }
 
+            QuiverPaths.EnsureUserDataRootExists();
+
             _appsFolder = !string.IsNullOrEmpty(_settings?.AppsPath)
                 ? _settings.AppsPath
-                : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, Profile.DefaultInstallFolderName);
+                : QuiverPaths.DefaultAppsDirectory;
 
-            _cacheFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache");
+            _cacheFolder = QuiverPaths.CacheDirectory;
 
             try
             {
@@ -281,7 +283,7 @@ namespace Quiver.Services
                 }
                 else
                 {
-                    targetPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, Profile.DefaultInstallFolderName);
+                    targetPath = QuiverPaths.DefaultAppsDirectory;
                     Directory.CreateDirectory(targetPath);
                 }
 
@@ -297,7 +299,7 @@ namespace Quiver.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error updating apps folder: {ex.Message}");
-                _appsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, Profile.DefaultInstallFolderName);
+                _appsFolder = QuiverPaths.DefaultAppsDirectory;
                 Directory.CreateDirectory(_appsFolder);
                 throw;
             }

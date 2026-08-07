@@ -21,16 +21,71 @@ A modern launcher for downloading, installing, and running apps from GitHub rele
 
 ### Prerequisites
 
-- .NET 9 Runtime (get it [here](https://dotnet.microsoft.com/en-us/))
 - Internet connection for updates and downloads
+- Official builds are **self-contained** (no separate .NET install required). Local development still needs the .NET 9 SDK.
 
 ### Installation
 
-1. Download the latest release from the [Releases](https://github.com/tgeorgiadis/quiver/releases) page
-2. Extract the downloaded archive to your preferred location
-3. Run the executable.
+Quiver uses [Velopack](https://docs.velopack.io/) for packaging and self-updates. Prerelease Quiver updates are opt-in via Settings → **Include prerelease Quiver updates** (development only); installs whose version already contains `-` (e.g. `2.4.3-rc.2`) follow GitHub prereleases automatically.
 
-**Windows:** Official release builds include `Quiver.exe` and `Quiver.Updater.exe`. When Azure Artifact Signing is enabled for the repo, those EXEs are Authenticode-signed. To verify: right-click → Properties → Digital Signatures, or run `Get-AuthenticodeSignature .\Quiver.exe` in PowerShell.
+**Windows (portable-first — recommended)**
+
+1. Download `Quiver-Portable.zip` from [Releases](https://github.com/tgeorgiadis/quiver/releases)
+2. Extract it anywhere (USB drive, folder, etc.)
+3. Run `Quiver.exe` from the extracted folder
+
+Your library stays in that same folder (`apps.json`, `settings.json`, `Apps/`, `Cache/` next to `current/`), so you can move the whole directory. Optional: `Quiver-Setup.exe` installs to LocalAppData with the same layout.
+
+```
+Quiver/
+├── Quiver.exe          # launcher stub
+├── current/            # app binaries (replaced on update)
+├── apps.json
+├── settings.json
+├── Apps/
+└── Cache/
+```
+
+**Linux**
+
+1. Download the `.AppImage` for your architecture (x64 or ARM64)
+2. Put it in a writable folder (USB drive, `~/Apps`, etc.)
+3. Make it executable, then run it:
+   ```bash
+   chmod +x Quiver*.AppImage
+   ./Quiver*.AppImage
+   ```
+   Or right-click → Properties → Permissions → **Allow executing file as a program**.  
+   (Copies from Windows/NTFS/shared folders often lose the executable bit; `chmod +x` is expected in that case.)
+
+Library data (`apps.json`, `settings.json`, `Apps/`, `Cache/`) is stored **beside the AppImage** so you can move that folder together. If the AppImage’s directory is not writable (e.g. `/usr/local/bin`), Quiver falls back to `~/.local/share/Quiver/` (or `$XDG_DATA_HOME/Quiver`).
+
+```
+MyFolder/
+├── Quiver-x.y.z-linux-x64.AppImage
+├── apps.json
+├── settings.json
+├── Apps/
+└── Cache/
+```
+
+**macOS**
+
+1. Download the Velopack macOS package from Releases
+2. Keep `Quiver.app` in a writable folder (not only `/Applications` if you want portable data)
+
+Library data lives **beside** `Quiver.app` in that folder. If the parent directory is not writable, Quiver falls back to `~/Library/Application Support/Quiver/`.
+
+```
+MyFolder/
+├── Quiver.app
+├── apps.json
+├── settings.json
+├── Apps/
+└── Cache/
+```
+
+When Azure Artifact Signing is enabled, Windows packages are Authenticode-signed. To verify a signed `Quiver.exe`: right-click → Properties → Digital Signatures, or `Get-AuthenticodeSignature .\Quiver.exe` in PowerShell.
 
 ## Usage
 
@@ -41,12 +96,7 @@ A modern launcher for downloading, installing, and running apps from GitHub rele
 
 ## Local Development
 
-When building and running from source, the launcher skips automatic self-update checks so a GitHub release does not overwrite your local build output.
-
-- **Debug builds** (`dotnet run -c Debug`): startup self-update is always skipped.
-- **Release builds** run locally: set `Quiver_SKIP_UPDATES=1` (or `true`) before launching.
-
-Manual update checks from the in-app **Check for Updates** button still work in all configurations.
+When building and running from source, Quiver is **not** a Velopack install, so self-update checks no-op (and Debug builds always skip automatic checks). Set `Quiver_SKIP_UPDATES=1` (or `true`) to skip automatic checks in Release local runs as well.
 
 ```powershell
 # Debug — no env var needed
@@ -57,7 +107,7 @@ $env:Quiver_SKIP_UPDATES = "1"
 dotnet run --project Quiver.csproj -c Release
 ```
 
-If a previous run already downloaded a release into your output folder, delete `update_check.json` and any `backup_*` folders under `bin\Debug` or `bin\Release`, then rebuild.
+User data for unpackaged Windows debug builds still lives beside the build output. Unpackaged macOS/Linux runs (no Velopack AppImage/`.app`) use the OS app-support fallbacks (`~/Library/Application Support/Quiver/` or `~/.local/share/Quiver/`).
 
 ### Automated tests
 

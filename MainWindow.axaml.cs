@@ -81,6 +81,7 @@ namespace Quiver
             _settings.EnableGamepadInput || GamepadFocusChrome.KeyboardNavigationActive;
 
         private readonly LauncherUpdateService _launcherUpdateService = new();
+        private readonly VelopackUpdateService _velopackUpdateService = new();
         private bool _isCheckingUpdates;
         private int _pendingUpdatesCount;
         private DateTime? _lastUpdateCheckTime;
@@ -190,14 +191,9 @@ namespace Quiver
         {
             if (manualCheckTime.HasValue)
                 LastUpdateCheckTime = manualCheckTime.Value;
-            else
-            {
-                var info = _launcherUpdateService.LoadUpdateCheckInfo();
-                if (info.LastCheckTime != default)
-                    LastUpdateCheckTime = info.LastCheckTime.ToLocalTime();
-            }
 
-            var launcherPending = _launcherUpdateService.IsLauncherUpdatePending();
+            var launcherPending = (_app?.IsLauncherUpdatePending() ?? false)
+                || _velopackUpdateService.IsUpdatePendingRestart;
             var gamePending = AppUpdateSelection.CountManualPendingUpdates(Games);
             PendingUpdatesCount = LauncherUpdateService.ComputePendingUpdatesCount(launcherPending, gamePending);
         }
@@ -1208,6 +1204,7 @@ namespace Quiver
         {
             try
             {
+                await OfferLegacyUserDataImportIfNeededAsync();
                 await _gameManager.LoadGamesAsync();
                 _settings = AppSettings.Load();
 
@@ -1246,6 +1243,50 @@ namespace Quiver
                     UpdateGameCollectionUi();
                     await ShowMessageBoxAsync($"Failed to load apps: {ex.Message}", "Load Error");
                 });
+            }
+        }
+
+        private async Task OfferLegacyUserDataImportIfNeededAsync()
+        {
+            UserDataMigration.TryMigrateFromLegacyCandidates();
+            if (!UserDataMigration.ShouldOfferImportPicker())
+                return;
+
+            var import = await ShowMessageBoxAsync(
+                "No Quiver library was found in the new data location.\n\n" +
+                "If you used a previous portable folder, you can import apps.json, settings, Cache, and Apps from that folder now.",
+                "Import previous Quiver data?",
+                true);
+
+            UserDataMigration.MarkImportOffered();
+            if (!import)
+                return;
+
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Select previous Quiver folder",
+                AllowMultiple = false,
+            });
+
+            var folder = folders.FirstOrDefault();
+            if (folder == null)
+                return;
+
+            var path = folder.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            if (UserDataMigration.ImportFromDirectory(path))
+            {
+                await ShowMessageBoxAsync(
+                    "Imported your previous Quiver data successfully.",
+                    "Import complete");
+            }
+            else
+            {
+                await ShowMessageBoxAsync(
+                    "No Quiver user data was found in the selected folder.",
+                    "Import");
             }
         }
 
@@ -2639,6 +2680,9 @@ namespace Quiver
                 if (BackgroundUpdateCheckCheckBox != null)
                     BackgroundUpdateCheckCheckBox.IsChecked = _settings.BackgroundUpdateCheckEnabled;
 
+                if (AllowPrereleaseLauncherUpdatesCheckBox != null)
+                    AllowPrereleaseLauncherUpdatesCheckBox.IsChecked = _settings.AllowPrereleaseLauncherUpdates;
+
                 if (AutoUpdateNewlyAddedAppsCheckBox != null)
                     AutoUpdateNewlyAddedAppsCheckBox.IsChecked = _settings.AutoUpdateNewlyAddedApps;
 
@@ -2727,7 +2771,16 @@ namespace Quiver
             _suppressCatalogSourceUiEvents = true;
             try
             {
-                await _gameManager.CatalogService.RefreshAllSourcesUsageStatsAsync(_settings);
+                try
+                {
+                    await _gameManager.CatalogService.RefreshAllSourcesUsageStatsAsync(_settings);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Catalog source usage stats refresh failed: {ex.Message}");
+                }
+
+                // Always refresh the visible list even if stats fail (e.g. path/parse errors).
                 _catalogViewModel.RefreshSourceList(CatalogSources, _settings);
             }
             finally
@@ -4179,14 +4232,17 @@ namespace Quiver
                 }
                 else
                 {
-                    var info = _launcherUpdateService.LoadUpdateCheckInfo();
+                    var pending = (_app?.IsLauncherUpdatePending() ?? false)
+                        || _velopackUpdateService.IsUpdatePendingRestart;
                     launcherResult = new ManualLauncherCheckResult
                     {
-                        InstalledVersion = LauncherVersionService.ReadInstalledVersion(
-                            AppDomain.CurrentDomain.BaseDirectory),
+                        InstalledVersion = _velopackUpdateService.CurrentVersion
+                            ?? LauncherVersionService.ReadInstalledVersion(
+                                AppDomain.CurrentDomain.BaseDirectory),
                         CheckSucceeded = true,
-                        LauncherUpdatePending = _launcherUpdateService.IsLauncherUpdatePending(),
-                        AvailableLauncherVersion = info.LastKnownVersion,
+                        LauncherUpdatePending = pending,
+                        AvailableLauncherVersion = _velopackUpdateService.LastUpdateInfo?
+                            .TargetFullRelease.Version.ToString(),
                     };
                 }
 
@@ -6204,6 +6260,24 @@ namespace Quiver
             _settings.BackgroundUpdateCheckEnabled = false;
             OnSettingChanged();
             ApplyTrayAndBackgroundUpdateSettings();
+        }
+
+        private void AllowPrereleaseLauncherUpdatesCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            _settings.AllowPrereleaseLauncherUpdates = true;
+            OnSettingChanged();
+        }
+
+        private void AllowPrereleaseLauncherUpdatesCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsUiEvents || _settings == null)
+                return;
+
+            _settings.AllowPrereleaseLauncherUpdates = false;
+            OnSettingChanged();
         }
 
         private void BackgroundUpdateIntervalComboBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)

@@ -1,18 +1,18 @@
 using Avalonia;
 using Avalonia.Controls.Platform;
+using Quiver.Services;
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using Velopack;
+using Velopack.Locators;
 
 namespace Quiver
 {
     class Program
     {
-        private static readonly string CrashLogPath = Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory,
-            "crash.log");
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool AttachConsole(int dwProcessId);
 
@@ -24,6 +24,27 @@ namespace Quiver
         [STAThread]
         public static int Main(string[] args)
         {
+            // Must be first: Velopack install/update hooks exit inside Run().
+            VelopackApp.Build().Run();
+
+            QuiverPaths.VelopackRootAppDirProvider = () =>
+            {
+                try
+                {
+                    return VelopackLocator.Current?.RootAppDir;
+                }
+                catch
+                {
+                    return null;
+                }
+            };
+
+            // Linux/macOS: library beside AppImage / .app when that folder is writable.
+            QuiverPaths.VelopackPackageDirectoryProvider = ResolveVelopackPackageDirectory;
+
+            QuiverPaths.EnsureUserDataRootExists();
+            UserDataMigration.TryMigrateFromLegacyCandidates();
+
             if (args.Length > 0 && args[0].StartsWith("-"))
             {
                 if (OperatingSystem.IsWindows())
@@ -85,7 +106,8 @@ namespace Quiver
 
             try
             {
-                File.AppendAllText(CrashLogPath, message.ToString() + Environment.NewLine);
+                QuiverPaths.EnsureUserDataRootExists();
+                File.AppendAllText(QuiverPaths.CrashLogPath, message.ToString() + Environment.NewLine);
             }
             catch
             {
@@ -105,6 +127,37 @@ namespace Quiver
             }
         }
 #endif
+
+        private static string? ResolveVelopackPackageDirectory()
+        {
+            try
+            {
+                var locator = VelopackLocator.Current;
+                if (locator is null)
+                    return null;
+
+                if (OperatingSystem.IsLinux() &&
+                    locator is LinuxVelopackLocator linux &&
+                    !string.IsNullOrWhiteSpace(linux.AppImagePath))
+                {
+                    return Path.GetDirectoryName(linux.AppImagePath);
+                }
+
+                if (OperatingSystem.IsMacOS())
+                {
+                    return QuiverPaths.ResolveMacOsPackageDirectory(
+                        locator.RootAppDir,
+                        locator.AppContentDir,
+                        AppDomain.CurrentDomain.BaseDirectory);
+                }
+            }
+            catch
+            {
+                // Not a Velopack install, or locator unavailable.
+            }
+
+            return null;
+        }
 
         private static int RunCLI(string[] args)
         {

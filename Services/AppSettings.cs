@@ -97,6 +97,11 @@ namespace Quiver
         public bool CloseToTray { get; set; }
         public bool BackgroundUpdateCheckEnabled { get; set; }
         public int BackgroundUpdateCheckIntervalMinutes { get; set; } = BackgroundUpdateCheckIntervals.DefaultMinutes;
+        /// <summary>
+        /// When true, Velopack also considers GitHub prereleases for Quiver self-updates.
+        /// Intended for development; default is off. RC installs (version contains '-') still follow prereleases.
+        /// </summary>
+        public bool AllowPrereleaseLauncherUpdates { get; set; }
         public bool AutoUpdateNewlyAddedApps { get; set; }
         public string BackgroundImagePath { get; set; } = string.Empty;
         public string LauncherMusicPath { get; set; } = string.Empty;

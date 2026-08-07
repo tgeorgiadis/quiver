@@ -35,42 +35,50 @@ public class ReleasePackagingTests
     }
 
     [Fact]
-    public void Release_workflow_strips_apps_json_before_archiving()
+    public void Release_workflow_uses_velopack_pack_and_not_custom_updater()
     {
         var workflowPath = Path.Combine(RepoRoot, ".github", "workflows", "dotnet-desktop.yml");
         var workflow = File.ReadAllText(workflowPath);
 
-        workflow.Should().Contain("Remove-Item publish/win-x64/apps.json");
-        workflow.Should().Contain("rm -f publish/linux-x64/apps.json publish/linux-arm64/apps.json");
-        workflow.Should().Contain("rm -f publish/osx-x64/apps.json");
-    }
-
-    [Fact]
-    public void Release_workflow_publishes_and_requires_windows_updater()
-    {
-        var workflowPath = Path.Combine(RepoRoot, ".github", "workflows", "dotnet-desktop.yml");
-        var workflow = File.ReadAllText(workflowPath);
-
-        workflow.Should().Contain("Quiver.Updater/Quiver.Updater.csproj");
-        workflow.Should().Contain("Quiver.Updater.exe");
-        workflow.Should().Contain("azure/artifact-signing-action@v2");
+        workflow.Should().Contain("vpk pack");
+        workflow.Should().Contain("vpk upload github");
+        workflow.Should().Contain("--packId");
+        workflow.Should().Contain("--channel");
+        workflow.Should().Contain("PACK_ID: Quiver");
+        workflow.Should().Contain("publish-github-release");
+        workflow.Should().NotContain("Quiver.Updater/Quiver.Updater.csproj");
+        workflow.Should().NotContain("Quiver.Updater.exe");
+        workflow.Should().Contain("win-x64");
+        workflow.Should().Contain("linux-x64");
+        workflow.Should().Contain("linux-arm64");
+        workflow.Should().Contain("osx-x64");
+        workflow.Should().Contain("osx-arm64");
         workflow.Should().Contain("AZURE_TRUSTED_SIGNING_ENABLED");
-        workflow.Should().Contain("prerelease:");
-        workflow.Should().Contain("contains(github.ref_name, '-')");
+        workflow.Should().Contain("VELOPACK_VERSION");
+        workflow.Should().Contain("Assets/quiver-icon.png");
+        workflow.Should().Contain("chmod +x releases/");
+        workflow.Should().Contain("rm -rf publish/${{ matrix.rid }}/Apps");
     }
 
     [Fact]
-    public void Project_does_not_copy_apps_json_to_publish_output()
+    public void Repository_includes_linux_pack_icon_png()
+    {
+        var iconPath = Path.Combine(RepoRoot, "Assets", "quiver-icon.png");
+        File.Exists(iconPath).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Project_references_velopack_and_does_not_copy_apps_json()
     {
         var csprojPath = Path.Combine(RepoRoot, "Quiver.csproj");
         var csproj = File.ReadAllText(csprojPath);
 
+        csproj.Should().Contain("Velopack");
         csproj.Should().NotContain(
             "<None Update=\"apps.json\">",
             "apps.json must not be copied to publish output; it is user data created at runtime");
-        csproj.Should().Contain(
-            "<None Update=\"version.txt\">",
-            "version.txt should still ship with the app for update checks");
+        csproj.Should().NotContain("CopyWindowsUpdater");
+        csproj.Should().Contain("osx-arm64");
     }
 
     [Fact]
@@ -97,82 +105,68 @@ public class ReleasePackagingTests
                 : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx-x64"
                 : "linux-x64";
 
-            var publishCommands = new List<string>
-            {
-                $"publish \"{Path.Combine(RepoRoot, "Quiver.csproj")}\" -c Release -r {runtimeIdentifier} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:SkipUpdaterCopy=true -o \"{publishDir}\"",
-            };
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                publishCommands.Add(
-                    $"publish \"{Path.Combine(RepoRoot, "Quiver.Updater", "Quiver.Updater.csproj")}\" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o \"{publishDir}\"");
-            }
+            var publishArgs =
+                $"publish \"{Path.Combine(RepoRoot, "Quiver.csproj")}\" -c Release -r {runtimeIdentifier} --self-contained true -p:PublishTrimmed=false -o \"{publishDir}\"";
 
             using var timeoutCts = new CancellationTokenSource(PublishTimeout);
 
-            foreach (var publishArgs in publishCommands)
+            var startInfo = new ProcessStartInfo
             {
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = "dotnet",
-                    Arguments = publishArgs,
-                    WorkingDirectory = RepoRoot,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
+                FileName = "dotnet",
+                Arguments = publishArgs,
+                WorkingDirectory = RepoRoot,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
 
-                _output.WriteLine($"Starting publish (timeout {PublishTimeout.TotalMinutes:F0} minutes)...");
-                _output.WriteLine(startInfo.FileName + " " + startInfo.Arguments);
+            _output.WriteLine($"Starting publish (timeout {PublishTimeout.TotalMinutes:F0} minutes)...");
+            _output.WriteLine(startInfo.FileName + " " + startInfo.Arguments);
 
-                process?.Dispose();
-                process = Process.Start(startInfo);
-                process.Should().NotBeNull();
+            process = Process.Start(startInfo);
+            process.Should().NotBeNull();
 
-                var stdout = new StringBuilder();
-                var stderr = new StringBuilder();
+            var stdout = new StringBuilder();
+            var stderr = new StringBuilder();
 
-                process!.OutputDataReceived += (_, e) =>
-                {
-                    if (e.Data == null)
-                        return;
+            process!.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data == null)
+                    return;
 
-                    stdout.AppendLine(e.Data);
-                    _output.WriteLine("[stdout] " + e.Data);
-                };
-                process.ErrorDataReceived += (_, e) =>
-                {
-                    if (e.Data == null)
-                        return;
+                stdout.AppendLine(e.Data);
+                _output.WriteLine("[stdout] " + e.Data);
+            };
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data == null)
+                    return;
 
-                    stderr.AppendLine(e.Data);
-                    _output.WriteLine("[stderr] " + e.Data);
-                };
+                stderr.AppendLine(e.Data);
+                _output.WriteLine("[stderr] " + e.Data);
+            };
 
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
 
-                try
-                {
-                    await process.WaitForExitAsync(timeoutCts.Token);
-                }
-                catch (OperationCanceledException) when (!process.HasExited)
-                {
-                    throw new TimeoutException(
-                        $"dotnet publish did not finish within {PublishTimeout.TotalMinutes:F0} minutes.");
-                }
-
-                process.ExitCode.Should().Be(0, because: stderr.ToString());
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
             }
+            catch (OperationCanceledException) when (!process.HasExited)
+            {
+                throw new TimeoutException(
+                    $"dotnet publish did not finish within {PublishTimeout.TotalMinutes:F0} minutes.");
+            }
+
+            process.ExitCode.Should().Be(0, because: stderr.ToString());
 
             File.Exists(Path.Combine(publishDir, "apps.json")).Should().BeFalse(
                 "release publish output must not ship a blank apps.json that could wipe user libraries on update");
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                File.Exists(Path.Combine(publishDir, "Quiver.Updater.exe")).Should().BeTrue(
-                    "Windows releases must ship Quiver.Updater.exe for Defender-safer self-updates");
-            }
+            File.Exists(Path.Combine(publishDir, "Quiver.Updater.exe")).Should().BeFalse(
+                "custom Quiver.Updater.exe must not ship; Velopack owns updates");
         }
         finally
         {

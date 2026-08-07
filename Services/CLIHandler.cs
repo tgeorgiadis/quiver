@@ -6,11 +6,9 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace Quiver
@@ -24,18 +22,16 @@ namespace Quiver
         private const ConsoleColor ColorMuted = ConsoleColor.DarkGray;
         private static readonly QuiverProfile Profile = QuiverProfile.Instance;
         private static readonly string Repository = Profile.Repository;
-        private const string VersionFileName = "version.txt";
-        private const string UpdateCheckFileName = "update_check.json";
-        private const int UpdaterProcessExitTimeoutSeconds = 120;
-
         private GameManager? _gameManager;
         private string _currentVersion = "Unknown";
         private readonly LauncherUpdateService _launcherUpdateService;
+        private readonly VelopackUpdateService _velopackUpdateService;
 
         public CLIHandler(GameManager? gameManager = null, LauncherUpdateService? launcherUpdateService = null)
         {
             _gameManager = gameManager;
             _launcherUpdateService = launcherUpdateService ?? new LauncherUpdateService();
+            _velopackUpdateService = new VelopackUpdateService();
         }
 
         public async Task<int> Execute(string[] args)
@@ -168,18 +164,26 @@ namespace Quiver
 
         private void LoadVersion()
         {
-            _currentVersion = _launcherUpdateService.ReadInstalledVersion();
+            _currentVersion = _velopackUpdateService.CurrentVersion
+                ?? _launcherUpdateService.ReadInstalledVersion();
         }
 
         private async Task CheckForLauncherUpdates()
         {
             try
             {
-                var latestTag = await _launcherUpdateService.FetchLatestReleaseTagAsync();
-                if (_launcherUpdateService.IsUpdateAvailable(_currentVersion, latestTag))
+                if (VelopackUpdateService.ShouldSkipAutomaticSelfUpdate())
+                    return;
+
+                var settings = AppSettings.Load();
+                var token = settings?.GitHubApiToken;
+                var result = await _velopackUpdateService.CheckForUpdatesAsync(
+                    token,
+                    allowPrereleaseLauncherUpdates: settings?.AllowPrereleaseLauncherUpdates ?? false);
+                if (result.UpdateAvailable && !string.IsNullOrWhiteSpace(result.AvailableVersion))
                 {
                     WriteColor($"  [UPDATE AVAILABLE] ", ColorWarning);
-                    Console.WriteLine($"New version {latestTag} is available! Use --update-launcher to upgrade.");
+                    Console.WriteLine($"New version {result.AvailableVersion} is available! Use --update-launcher to upgrade.");
                     Console.WriteLine();
                 }
             }
@@ -757,72 +761,41 @@ namespace Quiver
         {
             try
             {
-                string currentAppDirectory = AppDomain.CurrentDomain.BaseDirectory;
-                string currentVersion = LoadCurrentLauncherVersion(currentAppDirectory);
-
-                using var client = new HttpClient();
-                client.Timeout = TimeSpan.FromMinutes(10);
-                client.DefaultRequestHeaders.Add("User-Agent", Profile.CliUserAgent);
-
-                WriteColor("→ Checking launcher release...", ColorMuted);
+                WriteColor("→ Checking for Quiver updates (Velopack)...", ColorMuted);
                 Console.WriteLine();
 
-                string releaseJson = await client.GetStringAsync($"https://api.github.com/repos/{Repository}/releases/latest");
-                var release = JsonSerializer.Deserialize<GitHubRelease>(releaseJson);
-                if (release == null || string.IsNullOrWhiteSpace(release.tag_name))
-                    return PrintError("Could not read launcher update information.");
+                var settings = AppSettings.Load();
+                var token = settings?.GitHubApiToken;
+                var result = await _velopackUpdateService.CheckForUpdatesAsync(
+                    token,
+                    allowPrereleaseLauncherUpdates: settings?.AllowPrereleaseLauncherUpdates ?? false);
+                if (result.IsNotInstalled)
+                    return PrintError("This build is not a Velopack install. Download Quiver-Portable.zip (or Setup) from GitHub Releases.");
 
-                if (!IsNewerVersion(release.tag_name, currentVersion))
+                if (!result.CheckSucceeded)
+                    return PrintError(result.ErrorMessage ?? "Could not check for launcher updates.");
+
+                if (!result.UpdateAvailable || result.UpdateInfo == null)
                 {
-                    WriteColor($"✓ Launcher is already up to date ({currentVersion})", ColorSuccess);
+                    WriteColor($"✓ Launcher is already up to date ({result.InstalledVersion})", ColorSuccess);
                     Console.WriteLine();
                     return 0;
                 }
 
-                string platformIdentifier = GetPlatformIdentifier();
-                var asset = release.assets.FirstOrDefault(a =>
-                    a.name.Contains(platformIdentifier, StringComparison.OrdinalIgnoreCase) &&
-                    (a.name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || a.name.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)));
-
-                if (asset == null)
-                    return PrintError($"No downloadable launcher update found for this platform ({platformIdentifier}).");
-
-                WriteColor($"→ Downloading launcher {release.tag_name}...", ColorMuted);
+                WriteColor($"→ Downloading launcher {result.AvailableVersion}...", ColorMuted);
                 Console.WriteLine();
 
-                string tempDownloadPath = Path.Combine(Path.GetTempPath(), asset.name);
-                string tempUpdateFolder = Path.Combine(Path.GetTempPath(), "Quiver_temp_update");
-                if (Directory.Exists(tempUpdateFolder))
-                    Directory.Delete(tempUpdateFolder, true);
-                Directory.CreateDirectory(tempUpdateFolder);
-
-                await using (var downloadStream = await client.GetStreamAsync(asset.browser_download_url))
-                await using (var fileStream = new FileStream(tempDownloadPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
-                {
-                    await downloadStream.CopyToAsync(fileStream);
-                }
-
-                WriteColor("→ Extracting launcher update...", ColorMuted);
+                var includePrerelease = result.IncludedPrerelease;
+                await _velopackUpdateService.DownloadUpdatesAsync(
+                    result.UpdateInfo,
+                    progress: p => Console.Write($"\r  Download progress: {p}%   "),
+                    gitHubToken: token,
+                    includePrerelease: includePrerelease);
                 Console.WriteLine();
 
-                if (asset.name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                {
-                    ZipFile.ExtractToDirectory(tempDownloadPath, tempUpdateFolder, true);
-                }
-                else
-                {
-                    int tarResult = await ExtractTarGzAsync(tempDownloadPath, tempUpdateFolder);
-                    if (tarResult != 0)
-                        return PrintError("Failed to extract launcher update archive.");
-                }
-
-                if (!ValidateLauncherUpdateFiles(tempUpdateFolder))
-                    return PrintError("Downloaded launcher update appears to be incomplete.");
-
-                WriteColor("→ Starting updater. The launcher will relaunch when it finishes.", ColorWarning);
+                WriteColor("→ Applying update and restarting...", ColorWarning);
                 Console.WriteLine();
-
-                await CreateAndRunLauncherUpdaterScript(release, tempUpdateFolder, tempDownloadPath, currentAppDirectory);
+                _velopackUpdateService.ApplyUpdatesAndRestart(result.UpdateInfo, includePrerelease);
                 return 0;
             }
             catch (Exception ex)
@@ -830,213 +803,6 @@ namespace Quiver
                 return PrintError($"Failed to update launcher: {ex.Message}");
             }
         }
-
-        private static string LoadCurrentLauncherVersion(string currentAppDirectory)
-        {
-            string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
-            if (File.Exists(updateCheckFilePath))
-            {
-                try
-                {
-                    var json = File.ReadAllText(updateCheckFilePath);
-                    var updateInfo = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
-                    if (updateInfo != null &&
-                        updateInfo.TryGetValue("CurrentVersion", out var versionElement) &&
-                        !string.IsNullOrWhiteSpace(versionElement.GetString()))
-                    {
-                        return versionElement.GetString()!;
-                    }
-                }
-                catch
-                {
-                }
-            }
-
-            string versionFilePath = Path.Combine(currentAppDirectory, VersionFileName);
-            return File.Exists(versionFilePath) ? File.ReadAllText(versionFilePath).Trim() : "0.0";
-        }
-
-        private static bool ValidateLauncherUpdateFiles(string updateDirectory)
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) &&
-                Directory.GetDirectories(updateDirectory, "*.app", SearchOption.TopDirectoryOnly).Any())
-            {
-                return true;
-            }
-
-            string executableName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? "Quiver.exe"
-                : "Quiver";
-
-            string executablePath = Path.Combine(updateDirectory, executableName);
-            if (!File.Exists(executablePath) || new FileInfo(executablePath).Length <= 1024)
-                return false;
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                string updaterPath = Path.Combine(updateDirectory, LauncherUpdateApplier.WindowsUpdaterFileName);
-                if (!File.Exists(updaterPath) || new FileInfo(updaterPath).Length <= 1024)
-                    return false;
-            }
-
-            return true;
-        }
-
-        private static async Task<int> ExtractTarGzAsync(string tarGzPath, string extractPath)
-        {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "tar",
-                Arguments = $"-xzf \"{tarGzPath}\" -C \"{extractPath}\"",
-                UseShellExecute = false,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(startInfo);
-            if (process == null)
-                return 1;
-
-            await process.WaitForExitAsync();
-            return process.ExitCode;
-        }
-
-        private static async Task CreateAndRunLauncherUpdaterScript(GitHubRelease release, string tempUpdateFolder, string tempDownloadPath, string currentAppDirectory)
-        {
-            int currentProcessId = Environment.ProcessId;
-            string applicationExecutable = Environment.ProcessPath
-                ?? Process.GetCurrentProcess().MainModule?.FileName
-                ?? throw new InvalidOperationException("Could not determine launcher executable path.");
-            string backupDir = Path.Combine(Path.GetTempPath(), "Quiver_backup_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
-            string updateCheckFilePath = Path.Combine(currentAppDirectory, UpdateCheckFileName);
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                WindowsLauncherUpdateStarter.StartFromUpdatePackage(
-                    tempUpdateFolder,
-                    currentProcessId,
-                    currentAppDirectory,
-                    applicationExecutable,
-                    release.tag_name,
-                    tempDownloadPath,
-                    UpdaterProcessExitTimeoutSeconds);
-            }
-            else
-            {
-                string updaterScriptPath = Path.Combine(Path.GetTempPath(), "Quiver_Updater.sh");
-                var preservedCasePattern = UpdaterUserDataPreservation.BuildUnixPreserveCasePattern();
-                string scriptContent = $@"#!/bin/bash
-echo ""Quiver Updater - Version {release.tag_name}""
-echo
-echo ""Waiting for Quiver CLI to close...""
-waitCount=0
-while kill -0 {currentProcessId} 2>/dev/null; do
-    if [ ""$waitCount"" -ge {UpdaterProcessExitTimeoutSeconds} ]; then
-        echo ""Launcher did not close in time. Aborting update to avoid replacing files while the app is still running.""
-        exit 1
-    fi
-    waitCount=$((waitCount + 1))
-    sleep 1
-done
-
-appDir=""{currentAppDirectory}""
-backupDir=""{backupDir}""
-updateDir=""{tempUpdateFolder}""
-mkdir -p ""$backupDir""
-
-echo ""Backing up files replaced by this update...""
-find ""$updateDir"" -mindepth 1 -maxdepth 1 -exec basename {{}} \; | while IFS= read -r entry; do
-    case ""$entry"" in
-        {preservedCasePattern}) continue ;;
-    esac
-    if [ -e ""$appDir/$entry"" ]; then
-        cp -R ""$appDir/$entry"" ""$backupDir/"" 2>/dev/null || true
-    fi
-done
-
-echo ""Applying update...""
-updateFailed=0
-for entryPath in ""$updateDir""/*; do
-    [ -e ""$entryPath"" ] || continue
-    entry=$(basename ""$entryPath"")
-    case ""$entry"" in
-        {preservedCasePattern}) continue ;;
-    esac
-    if ! cp -R ""$entryPath"" ""$appDir/"" 2>/dev/null; then
-        updateFailed=1
-        break
-    fi
-done
-
-if [ ""$updateFailed"" -eq 1 ]; then
-    echo ""Update failed! Restoring backup...""
-    cp -r ""$backupDir""/* ""$appDir""/ 2>/dev/null || true
-    rm -rf ""$backupDir"" ""$updateDir"" 2>/dev/null || true
-    rm -f ""{tempDownloadPath}"" 2>/dev/null || true
-    exit 1
-fi
-
-cat > ""{updateCheckFilePath}"" << 'EOF'
-{{""CurrentVersion"":""{release.tag_name}"",""LastCheckTime"":""{DateTime.UtcNow:o}"",""LastKnownVersion"":""{release.tag_name}"",""ETag"":"""",""UpdateAvailable"":false}}
-EOF
-
-if [ -f ""$appDir/Quiver"" ]; then
-    chmod +x ""$appDir/Quiver""
-    cd ""$appDir""
-    nohup ""./Quiver"" > /dev/null 2>&1 &
-fi
-
-rm -rf ""$backupDir"" ""$updateDir"" 2>/dev/null || true
-rm -f ""{tempDownloadPath}"" 2>/dev/null || true
-rm -- ""$0""
-";
-                scriptContent = scriptContent.Replace("\r\n", "\n").Replace("\r", "\n");
-                await File.WriteAllTextAsync(updaterScriptPath, scriptContent);
-
-                using var chmod = Process.Start(new ProcessStartInfo
-                {
-                    FileName = "chmod",
-                    Arguments = $"+x \"{updaterScriptPath}\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
-                if (chmod != null)
-                    await chmod.WaitForExitAsync();
-
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "/bin/bash",
-                    Arguments = $"\"{updaterScriptPath}\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
-            }
-        }
-
-        private static string GetPlatformIdentifier()
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                return "Windows";
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                return "macOS";
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                return RuntimeInformation.OSArchitecture switch
-                {
-                    Architecture.Arm64 => "Linux-ARM64",
-                    Architecture.X64 => "Linux-X64",
-                    Architecture.X86 => "Linux-X86",
-                    Architecture.Arm => "Linux-ARM",
-                    _ => "Linux-X64"
-                };
-            }
-
-            throw new PlatformNotSupportedException("Unsupported operating system");
-        }
-
-        private static bool IsNewerVersion(string latestVersion, string currentVersion) =>
-            LauncherVersionService.IsNewerVersion(latestVersion, currentVersion);
-
         private async Task<int> UninstallGame(string gameName)
         {
             if (string.IsNullOrEmpty(gameName))

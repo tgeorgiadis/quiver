@@ -24,7 +24,7 @@ namespace Quiver.Services
         {
             _gameManager = gameManager;
             _locationReader = locationReader ?? CatalogLocationReader.Default;
-            var baseDir = dataDirectory ?? AppDomain.CurrentDomain.BaseDirectory;
+            var baseDir = dataDirectory ?? QuiverPaths.UserDataRoot;
             _appsConfigPath = Path.Combine(baseDir, "apps.json");
             _legacyGamesConfigPath = Path.Combine(baseDir, "games.json");
             _catalogSourcesCacheFolder = Path.Combine(baseDir, "Cache", "CatalogSources");
@@ -322,7 +322,7 @@ namespace Quiver.Services
             settings.EnsureInitialized();
             CommunityCatalogBootstrap.MigrateLegacyDefaultSource(settings);
 
-            cacheFolder ??= Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache", "CatalogSources");
+            cacheFolder ??= Path.Combine(QuiverPaths.CacheDirectory, "CatalogSources");
             Directory.CreateDirectory(cacheFolder);
 
             var changed = false;
@@ -604,14 +604,14 @@ namespace Quiver.Services
             if (IsRemoteLocation(location) || Path.IsPathRooted(location))
                 return location;
 
-            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, location);
+            return Path.Combine(QuiverPaths.UserDataRoot, location);
         }
 
         private string GetSourceCachePath(string sourceId) =>
             Path.Combine(_catalogSourcesCacheFolder, $"{sourceId}.json");
 
-        private static string GetLegacyAcceptedCachePath(string sourceId) =>
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Cache", "CatalogSources", $"{sourceId}.accepted.json");
+        private string GetLegacyAcceptedCachePath(string sourceId) =>
+            Path.Combine(_catalogSourcesCacheFolder, $"{sourceId}.accepted.json");
 
         private async Task<List<GameInfo>> LoadAppsFromFileAsync(string path)
         {
