@@ -8,6 +8,7 @@ public interface IGameDownloadDialogs
         LinuxWindowsRunnerConfig? existing = null,
         bool isInstall = true);
     Task ShowRateLimitExceededAsync();
+    Task ShowGitLabRateLimitExceededAsync();
     Task ShowErrorAsync(string message, string title);
 }
 
@@ -26,6 +27,9 @@ public sealed class AvaloniaGameDownloadDialogs : IGameDownloadDialogs
 
     public Task ShowRateLimitExceededAsync() =>
         GameDialogService.ShowRateLimitErrorAsync();
+
+    public Task ShowGitLabRateLimitExceededAsync() =>
+        GameDialogService.ShowGitLabRateLimitErrorAsync();
 
     public Task ShowErrorAsync(string message, string title) =>
         GameDialogService.ShowMessageBoxAsync(message, title);
@@ -53,6 +57,8 @@ public sealed class HeadlessGameDownloadDialogs : IGameDownloadDialogs
     }
 
     public Task ShowRateLimitExceededAsync() => Task.CompletedTask;
+
+    public Task ShowGitLabRateLimitExceededAsync() => Task.CompletedTask;
 
     public Task ShowErrorAsync(string message, string title) => Task.CompletedTask;
 }

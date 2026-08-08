@@ -77,7 +77,6 @@ namespace Quiver
         public int SlotTextMargin { get; set; } = 0;
         public int SlotSize { get; set; } = 152;
         public int ActionButtonSize { get; set; } = 36;
-        public bool WindowBorderRounding { get; set; } = true;
         public bool ShowOSTopBar { get; set; } = false;
         public string PrimaryColor { get; set; } = "#18181b";
         public string SecondaryColor { get; set; } = "#404040";
@@ -86,6 +85,7 @@ namespace Quiver
         public List<string> ManuallyHiddenApps { get; set; } = new List<string>();
         public string AppsPath { get; set; } = string.Empty;
         public string GitHubApiToken { get; set; } = string.Empty;
+        public string GitLabApiToken { get; set; } = string.Empty;
         public string SortBy { get; set; } = "LastPlayed";
         public string CatalogReviewSortBy { get; set; } = "Name";
         public string ModsSortBy { get; set; } = "InstalledFirst";

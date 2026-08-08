@@ -32,7 +32,7 @@ public static class GameDownloadInstallService
             return;
         }
 
-        var apiToken = settings?.GitHubApiToken ?? string.Empty;
+        var apiToken = game.GetReleaseApiToken(settings);
 
         try
         {
@@ -44,15 +44,17 @@ public static class GameDownloadInstallService
 
             if (latestRelease == null)
             {
-                if (GitHubApiCache.TryGetCachedVersion(game.Repository, out var cache) && cache?.CachedRelease != null)
+                if (GitHubApiCache.TryGetCachedVersion(game.RepositorySource, game.Repository, out var cache) &&
+                    cache?.CachedRelease != null)
                 {
                     latestRelease = cache.CachedRelease;
                 }
                 else
                 {
                     game.DownloadProgress = 5;
-                    var releaseResult = await GitHubReleaseService.FetchReleasesAsync(
+                    var releaseResult = await ReleaseSourceRegistry.Default.FetchReleasesAsync(
                         httpClient,
+                        game.RepositorySource,
                         game.Repository,
                         apiToken).ConfigureAwait(false);
 
@@ -73,6 +75,7 @@ public static class GameDownloadInstallService
                     }
 
                     GitHubApiCache.SetCache(
+                        game.RepositorySource,
                         game.Repository,
                         latestRelease.tag_name,
                         releaseResult.ETag ?? string.Empty,
@@ -147,7 +150,7 @@ public static class GameDownloadInstallService
                 }
             }
 
-            var downloadPath = Path.Combine(Path.GetTempPath(), asset.name);
+            string? downloadPath = null;
 
             try
             {
@@ -155,6 +158,15 @@ public static class GameDownloadInstallService
                 using var downloadResponse = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead)
                     .ConfigureAwait(false);
                 downloadResponse.EnsureSuccessStatusCode();
+
+                var dispositionFileName =
+                    downloadResponse.Content.Headers.ContentDisposition?.FileNameStar ??
+                    downloadResponse.Content.Headers.ContentDisposition?.FileName;
+                var effectiveAssetName = GameInstallationService.ResolveEffectiveAssetName(
+                    asset.name,
+                    dispositionFileName);
+
+                downloadPath = Path.Combine(Path.GetTempPath(), effectiveAssetName);
 
                 var totalBytes = downloadResponse.Content.Headers.ContentLength ?? 0;
                 var canReportProgress = totalBytes > 0;
@@ -186,7 +198,7 @@ public static class GameDownloadInstallService
                 await GameInstallationService.InstallOrUpdateGameAsync(
                     downloadPath,
                     gamePath,
-                    asset.name,
+                    effectiveAssetName,
                     latestRelease.tag_name,
                     game.GetInstallationOptions()).ConfigureAwait(false);
 
@@ -212,18 +224,21 @@ public static class GameDownloadInstallService
                 // Single-file assets are moved into the game folder; archives stay in temp and must be deleted.
                 // If a single-file move failed, the temp file may still exist — clean it up either way for archives,
                 // and for leftover single-file temps after a failed install.
-                var wasSingleExecutable = GameInstallationService.IsSingleFileExecutableAsset(asset.name);
-
-                if (File.Exists(downloadPath) &&
-                    (!wasSingleExecutable || !File.Exists(Path.Combine(gamePath, asset.name))))
+                if (!string.IsNullOrEmpty(downloadPath) && File.Exists(downloadPath))
                 {
-                    try
+                    var installedName = Path.GetFileName(downloadPath);
+                    var wasSingleExecutable = GameInstallationService.IsSingleFileExecutableAsset(installedName);
+
+                    if (!wasSingleExecutable || !File.Exists(Path.Combine(gamePath, installedName)))
                     {
-                        File.Delete(downloadPath);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"Failed to delete temp file {downloadPath}: {ex.Message}");
+                        try
+                        {
+                            File.Delete(downloadPath);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Failed to delete temp file {downloadPath}: {ex.Message}");
+                        }
                     }
                 }
             }
@@ -238,9 +253,12 @@ public static class GameDownloadInstallService
         }
         catch (HttpRequestException ex)
         {
-            if (GameDialogService.IsGitHubRateLimitError(ex))
+            if (GameDialogService.IsRateLimitError(ex))
             {
-                await dialogs.ShowRateLimitExceededAsync();
+                if (RepositorySourceHelper.IsGitLab(game.RepositorySource))
+                    await dialogs.ShowGitLabRateLimitExceededAsync();
+                else
+                    await dialogs.ShowRateLimitExceededAsync();
             }
             else
             {

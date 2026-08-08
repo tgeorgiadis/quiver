@@ -7,9 +7,9 @@
 		<RootNamespace>Quiver</RootNamespace>
 		<AssemblyTitle>Quiver</AssemblyTitle>
 		<AssemblyDescription>Download and manage GitHub-hosted game ports</AssemblyDescription>
-		<Version>2.4.3-rc.3</Version>
-		<AssemblyVersion>2.4.3.0</AssemblyVersion>
-		<FileVersion>2.4.3.0</FileVersion>
+		<Version>3.0.0-rc.1</Version>
+		<AssemblyVersion>3.0.0.0</AssemblyVersion>
+		<FileVersion>3.0.0.0</FileVersion>
 		<Configurations>Debug;Release</Configurations>
 		<Platforms>AnyCPU;x64</Platforms>
 		<Nullable>enable</Nullable>
@@ -47,22 +47,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<None Update="version.txt">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</None>
 		<None Update="icon.ico">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
-
-	<!-- Keep version.txt in sync with $(Version) so the UI header cannot drift. -->
-	<Target Name="WriteVersionTxt" BeforeTargets="BeforeBuild;BeforePublish">
-		<WriteLinesToFile
-			File="$(MSBuildProjectDirectory)\version.txt"
-			Lines="v$(Version)"
-			Overwrite="true"
-			Encoding="UTF-8" />
-	</Target>
 
 	<ItemGroup>
 		<ProjectReference Include="lib\Quiver.Core\Quiver.Core.csproj" />
@@ -72,11 +60,14 @@
 		<Compile Remove="lib\Quiver.Core\**\*.cs" />
 		<Compile Remove="Quiver.Tests\**\*.cs" />
 		<Compile Remove="_test_build\**\*.cs" />
+		<Compile Remove="artifacts\**\*.cs" />
 		<EmbeddedResource Remove="lib\Quiver.Core\**\*.*" />
 		<EmbeddedResource Remove="Quiver.Tests\**\*.*" />
 		<EmbeddedResource Remove="_test_build\**\*.*" />
+		<EmbeddedResource Remove="artifacts\**\*.*" />
 		<None Remove="lib\Quiver.Core\**\*.*" />
 		<None Remove="Quiver.Tests\**\*.*" />
 		<None Remove="_test_build\**\*.*" />
+		<None Remove="artifacts\**\*.*" />
 	</ItemGroup>
 </Project>

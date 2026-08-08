@@ -21,6 +21,9 @@ namespace Quiver.Core.Services
         private static readonly TimeSpan NotInstalledGameUpdateInterval = TimeSpan.FromHours(24);
         private static string? _cacheFilePath;
 
+        public static string GetCacheKey(string? repositorySource, string repository) =>
+            RepositorySourceHelper.GetIdentityKey(repositorySource, repository);
+
         public static void Initialize(string cacheDirectory)
         {
             _cacheFilePath = Path.Combine(cacheDirectory, "version_cache.json");
@@ -67,32 +70,85 @@ namespace Quiver.Core.Services
             }
         }
 
-        public static bool TryGetCachedVersion(string repository, out GameVersionCache? cache)
+        private static bool TryResolveCacheEntry(
+            string? repositorySource,
+            string repository,
+            out string cacheKey,
+            out GameVersionCache? cache)
         {
-            if (_cache.TryGetValue(repository, out var foundCache))
+            cacheKey = GetCacheKey(repositorySource, repository);
+            if (_cache.TryGetValue(cacheKey, out var found))
             {
-                if (DateTime.UtcNow - foundCache.LastChecked < CacheExpiry)
-                {
-                    cache = foundCache;
-                    return true;
-                }
+                cache = found;
+                return true;
             }
+
+            // Legacy bare repository keys (pre-repositorySource) apply to GitHub only.
+            if (RepositorySourceHelper.IsGitHub(repositorySource) &&
+                !string.IsNullOrWhiteSpace(repository) &&
+                _cache.TryGetValue(repository, out var legacy))
+            {
+                cacheKey = repository;
+                cache = legacy;
+                return true;
+            }
+
             cache = null;
             return false;
         }
 
-        public static bool NeedsUpdateCheck(string repository, bool isInstalledGame = true)
+        public static bool TryGetCachedVersion(
+            string? repositorySource,
+            string? repository,
+            out GameVersionCache? cache)
         {
-            if (!_cache.TryGetValue(repository, out var cache))
+            if (string.IsNullOrWhiteSpace(repository))
+            {
+                cache = null;
+                return false;
+            }
+
+            if (TryResolveCacheEntry(repositorySource, repository, out _, out var foundCache) &&
+                foundCache != null &&
+                DateTime.UtcNow - foundCache.LastChecked < CacheExpiry)
+            {
+                cache = foundCache;
+                return true;
+            }
+
+            cache = null;
+            return false;
+        }
+
+        /// <summary>Legacy overload: treats repository as GitHub.</summary>
+        public static bool TryGetCachedVersion(string repository, out GameVersionCache? cache) =>
+            TryGetCachedVersion(RepositorySourceIds.GitHub, repository, out cache);
+
+        public static bool NeedsUpdateCheck(
+            string? repositorySource,
+            string repository,
+            bool isInstalledGame = true)
+        {
+            if (!TryResolveCacheEntry(repositorySource, repository, out _, out var cache) || cache == null)
                 return true;
 
             var interval = isInstalledGame ? InstalledGameUpdateInterval : NotInstalledGameUpdateInterval;
             return DateTime.UtcNow - cache.LastUpdateCheck >= interval;
         }
 
-        public static void SetCache(string repository, string version, string etag, GitHubRelease? release = null)
+        /// <summary>Legacy overload: treats repository as GitHub.</summary>
+        public static bool NeedsUpdateCheck(string repository, bool isInstalledGame = true) =>
+            NeedsUpdateCheck(RepositorySourceIds.GitHub, repository, isInstalledGame);
+
+        public static void SetCache(
+            string? repositorySource,
+            string repository,
+            string version,
+            string etag,
+            GitHubRelease? release = null)
         {
-            _cache.AddOrUpdate(repository,
+            var cacheKey = GetCacheKey(repositorySource, repository);
+            _cache.AddOrUpdate(cacheKey,
                 new GameVersionCache
                 {
                     Version = version,
@@ -110,21 +166,46 @@ namespace Quiver.Core.Services
                     CachedRelease = release ?? old.CachedRelease
                 });
 
+            // Drop legacy bare key once migrated to composite GitHub key.
+            if (RepositorySourceHelper.IsGitHub(repositorySource) &&
+                !string.IsNullOrWhiteSpace(repository) &&
+                !string.Equals(cacheKey, repository, StringComparison.OrdinalIgnoreCase))
+            {
+                _cache.TryRemove(repository, out _);
+            }
+
             SaveToDisk();
         }
 
-        public static string GetETag(string repository)
+        /// <summary>Legacy overload: treats repository as GitHub.</summary>
+        public static void SetCache(string repository, string version, string etag, GitHubRelease? release = null) =>
+            SetCache(RepositorySourceIds.GitHub, repository, version, etag, release);
+
+        public static string GetETag(string? repositorySource, string repository)
         {
-            return _cache.TryGetValue(repository, out var cache) ? cache.ETag : "";
+            if (TryResolveCacheEntry(repositorySource, repository, out _, out var cache) && cache != null)
+                return cache.ETag;
+            return "";
         }
 
-        public static void RemoveCache(string repository)
+        /// <summary>Legacy overload: treats repository as GitHub.</summary>
+        public static string GetETag(string repository) =>
+            GetETag(RepositorySourceIds.GitHub, repository);
+
+        public static void RemoveCache(string? repositorySource, string repository)
         {
             if (string.IsNullOrWhiteSpace(repository))
                 return;
 
-            _cache.TryRemove(repository, out _);
+            var cacheKey = GetCacheKey(repositorySource, repository);
+            _cache.TryRemove(cacheKey, out _);
+            if (RepositorySourceHelper.IsGitHub(repositorySource))
+                _cache.TryRemove(repository, out _);
             SaveToDisk();
         }
+
+        /// <summary>Legacy overload: treats repository as GitHub.</summary>
+        public static void RemoveCache(string repository) =>
+            RemoveCache(RepositorySourceIds.GitHub, repository);
     }
 }

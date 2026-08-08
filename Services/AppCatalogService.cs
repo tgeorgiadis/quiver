@@ -1,3 +1,4 @@
+using Quiver.Core.Services;
 using Quiver.Models;
 using Quiver.Services.Mods;
 using System.Net.Http;
@@ -378,15 +379,15 @@ namespace Quiver.Services
         public async Task<List<GameInfo>> GetExternalOnlyAppsForSourceAsync(string sourceId, List<GameInfo>? localApps = null)
         {
             localApps ??= await LoadLocalAppsAsync().ConfigureAwait(false);
-            var localRepos = new HashSet<string>(
+            var localKeys = new HashSet<string>(
                 localApps
                     .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                    .Select(a => a.Repository!),
+                    .Select(a => a.IdentityKey),
                 StringComparer.OrdinalIgnoreCase);
 
             var externalApps = await LoadCachedAppsAsync(sourceId).ConfigureAwait(false);
             return externalApps
-                .Where(a => !string.IsNullOrWhiteSpace(a.Repository) && !localRepos.Contains(a.Repository))
+                .Where(a => !string.IsNullOrWhiteSpace(a.Repository) && !localKeys.Contains(a.IdentityKey))
                 .ToList();
         }
 
@@ -409,19 +410,19 @@ namespace Quiver.Services
         public async Task PromoteAppsToLocalAsync(IEnumerable<GameInfo> apps, bool autoUpdateNewlyAdded = false)
         {
             var localApps = await LoadLocalAppsAsync().ConfigureAwait(false);
-            var localRepos = new HashSet<string>(
+            var localKeys = new HashSet<string>(
                 localApps
                     .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                    .Select(a => a.Repository!),
+                    .Select(a => a.IdentityKey),
                 StringComparer.OrdinalIgnoreCase);
 
             foreach (var app in apps)
             {
-                if (string.IsNullOrWhiteSpace(app.Repository) || localRepos.Contains(app.Repository))
+                if (string.IsNullOrWhiteSpace(app.Repository) || localKeys.Contains(app.IdentityKey))
                     continue;
 
                 localApps.Add(CatalogCompareService.CloneForLocal(app, autoUpdateNewlyAdded));
-                localRepos.Add(app.Repository);
+                localKeys.Add(app.IdentityKey);
             }
 
             await SaveLocalAppsAsync(localApps).ConfigureAwait(false);
@@ -443,6 +444,7 @@ namespace Quiver.Services
             var entries = apps
                 .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
                 .Select(a => string.Join("|",
+                    a.IdentityKey,
                     a.Repository!.Trim(),
                     a.Name ?? "",
                     a.FolderName ?? "",
@@ -463,11 +465,11 @@ namespace Quiver.Services
         {
             var baselineByRepo = baselineApps
                 .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(a => a.IdentityKey, a => a, StringComparer.OrdinalIgnoreCase);
 
             var remoteByRepo = remoteApps
                 .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(a => a.IdentityKey, a => a, StringComparer.OrdinalIgnoreCase);
 
             var diff = new CatalogDiff();
 
@@ -489,6 +491,7 @@ namespace Quiver.Services
         }
 
         public static bool AreCatalogFieldsEquivalent(GameInfo a, GameInfo b) =>
+            string.Equals(a.EffectiveRepositorySource, b.EffectiveRepositorySource, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.Name, b.Name, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.FolderName, b.FolderName, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(a.InstallPath ?? "", b.InstallPath ?? "", StringComparison.OrdinalIgnoreCase) &&
@@ -659,7 +662,7 @@ namespace Quiver.Services
 
         private static List<GameInfo> DedupeByRepository(List<GameInfo> apps) =>
             apps
-                .GroupBy(app => app.Repository ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(app => app.IdentityKey, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();
 
@@ -674,10 +677,23 @@ namespace Quiver.Services
             {
                 try
                 {
+                    var rawRepositorySource = appElement.TryGetProperty("repositorySource", out var repositorySourceElement)
+                        ? repositorySourceElement.GetString()
+                        : null;
+                    var normalizedRepositorySource = RepositorySourceHelper.Normalize(rawRepositorySource, out var unsupportedSource);
+                    if (unsupportedSource)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"Unsupported repositorySource '{rawRepositorySource}' for repository '{(appElement.TryGetProperty("repository", out var warnRepo) ? warnRepo.GetString() : null)}'; defaulting to GitHub.");
+                    }
+
                     var app = new GameInfo
                     {
                         Name = (appElement.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null) ?? string.Empty,
                         Repository = (appElement.TryGetProperty("repository", out var repoElement) ? repoElement.GetString() : null) ?? string.Empty,
+                        RepositorySource = RepositorySourceHelper.IsGitHub(normalizedRepositorySource)
+                            ? null
+                            : normalizedRepositorySource,
                         FolderName = (appElement.TryGetProperty("folderName", out var folderElement) ? folderElement.GetString() : null) ?? string.Empty,
                         InstallPath = appElement.TryGetProperty("installPath", out var installPathElement) ? installPathElement.GetString() : null,
                         GameIconUrl = GetIconUrl(appElement),
@@ -865,6 +881,10 @@ namespace Quiver.Services
                 ["preferredVersion"] = app.PreferredVersion,
                 ["skippedUpdateVersion"] = app.SkippedUpdateVersion,
             };
+
+            var effectiveSource = RepositorySourceHelper.Normalize(app.RepositorySource);
+            if (!RepositorySourceHelper.IsGitHub(effectiveSource))
+                payload["repositorySource"] = effectiveSource;
 
             if (app.AutoUpdate)
                 payload["autoUpdate"] = true;

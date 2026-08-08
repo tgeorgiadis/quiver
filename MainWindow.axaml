@@ -210,7 +210,7 @@
 											<MenuItem Header="Show Changelog"
 													  Click="ShowChangelog_Click"
 													  CommandParameter="{Binding}"/>
-											<MenuItem Header="Open GitHub Page"
+											<MenuItem Header="Open Repository"
 													  Click="OpenGitHubPage_Click"
 													  CommandParameter="{Binding}"/>
 										</MenuItem>
@@ -376,7 +376,7 @@
 										<MenuItem Header="Show Changelog"
 												  Click="ShowChangelog_Click"
 												  CommandParameter="{Binding}"/>
-										<MenuItem Header="Open GitHub Page"
+										<MenuItem Header="Open Repository"
 												  Click="OpenGitHubPage_Click"
 												  CommandParameter="{Binding}"/>
 									</MenuItem>
@@ -623,7 +623,7 @@
 									<MenuItem Header="Show Changelog"
 											  Click="ShowChangelog_Click"
 											  CommandParameter="{Binding}"/>
-									<MenuItem Header="Open GitHub Page"
+									<MenuItem Header="Open Repository"
 											  Click="OpenGitHubPage_Click"
 											  CommandParameter="{Binding}"/>
 								</MenuItem>
@@ -2031,7 +2031,7 @@
 
 </Window.Styles>
 
-<Border CornerRadius="24" ClipToBounds="True" Background="Transparent">
+<Border CornerRadius="0" ClipToBounds="True" Background="Transparent">
 	<Grid x:Name="MainGrid">
 		<Grid.ColumnDefinitions>
 			<ColumnDefinition Width="240"/>
@@ -2328,25 +2328,25 @@
 				<RowDefinition Height="*"/>
 			</Grid.RowDefinitions>
 
-			<!-- Top Bar -->
-			<Border Grid.Row="0" 
-					Background="{DynamicResource ThemeDarker}" 
-					BorderBrush="{DynamicResource ThemeBorder}"
-					BorderThickness="0,0,0,1"
-					Padding="0,8,0,8"
-					ZIndex="1"
-					PointerPressed="TopBar_PointerPressed">
-				<Grid VerticalAlignment="Top">
-					<TextBlock x:Name="HeaderTitleText"
-							   Text="Library"
-							   FontSize="24"
-							   Margin="15,0,0,0"
-							   FontWeight="Bold"
-							   Foreground="{DynamicResource ThemeText}"
-							   VerticalAlignment="Center"/>
-					    <StackPanel Orientation="Horizontal"
-						       HorizontalAlignment="Right"
-							   VerticalAlignment="Center">
+			<!-- Top Bar: drag layer is a sibling behind controls so BeginMoveDrag never captures chrome clicks -->
+			<Grid Grid.Row="0" ZIndex="1">
+				<Border Background="{DynamicResource ThemeDarker}"
+						BorderBrush="{DynamicResource ThemeBorder}"
+						BorderThickness="0,0,0,1"
+						PointerPressed="TopBar_PointerPressed"/>
+				<Border Padding="0,8,0,8">
+					<Grid VerticalAlignment="Top">
+						<TextBlock x:Name="HeaderTitleText"
+								   Text="Library"
+								   FontSize="24"
+								   Margin="15,0,0,0"
+								   FontWeight="Bold"
+								   Foreground="{DynamicResource ThemeText}"
+								   VerticalAlignment="Center"
+								   IsHitTestVisible="False"/>
+						<StackPanel Orientation="Horizontal"
+									HorizontalAlignment="Right"
+									VerticalAlignment="Center">
 
 							<StackPanel x:Name="LibraryTopBarPanel" Orientation="Horizontal">
 							<Button x:Name="AddNewEntryButton"
@@ -2356,12 +2356,13 @@
 									Margin="0,0,16,0"
 									Click="AddNewEntryButton_Click"/>
 
-							<!-- Sorting ComboBox -->	
-							<TextBlock Text="Sort by:" 
+							<!-- Sorting ComboBox -->
+							<TextBlock Text="Sort by:"
 									   Foreground="{DynamicResource ThemeTextSecondary}"
 									   FontSize="14"
 									   FontWeight="Medium"
-									   VerticalAlignment="Center"/>
+									   VerticalAlignment="Center"
+									   IsHitTestVisible="False"/>
 							<ComboBox x:Name="SortByComboBox"
 									  Foreground="{DynamicResource ThemeTextSecondary}"
 									  Background="{DynamicResource ThemeDarker}"
@@ -2383,7 +2384,8 @@
 										   Foreground="{DynamicResource ThemeTextSecondary}"
 										   FontSize="14"
 										   FontWeight="Medium"
-										   VerticalAlignment="Center"/>
+										   VerticalAlignment="Center"
+										   IsHitTestVisible="False"/>
 								<ComboBox x:Name="CatalogReviewSortByComboBox"
 										  Foreground="{DynamicResource ThemeTextSecondary}"
 										  Background="{DynamicResource ThemeDarker}"
@@ -2405,13 +2407,13 @@
 									IsVisible="False"
 									Click="CatalogReviewBack_Click"/>
 
-							<!-- Version Text -->
-							<TextBlock Grid.Row="0"
-								   Text="{Binding currentVersionString}"
+							<!-- Version text -->
+							<TextBlock Text="{Binding currentVersionString}"
 								   VerticalAlignment="Center"
 								   HorizontalAlignment="Right"
 								   Foreground="{DynamicResource ThemeText}"
-								   FontSize="14"/>
+								   FontSize="14"
+								   IsHitTestVisible="False"/>
 
 							<Button x:Name="CheckForUpdatesButton"
 									Classes="modern-icon"
@@ -2493,9 +2495,10 @@
 									Classes="modern-icon"
 									Width="28"
 									Margin="12,0,0,0"
+									ClickMode="Press"
 									Click="MinimizeButton_Click">
-								<Image Width="28" 
-									   Height="28" 
+								<Image Width="28"
+									   Height="28"
 									   Source="avares://Quiver/Assets/Icons/button_minimize.png"/>
 							</Button>
 
@@ -2504,9 +2507,10 @@
 									Classes="modern-icon"
 									Width="28"
 									Margin="8,0,0,0"
+									ClickMode="Press"
 									Click="ToggleFullscreen_Click">
-								<Image Width="28" 
-									   Height="28" 
+								<Image Width="28"
+									   Height="28"
 									   Source="avares://Quiver/Assets/Icons/button_fullscreen.png"/>
 							</Button>
 
@@ -2515,15 +2519,16 @@
 									Classes="modern-icon"
 									Width="28"
 									Margin="8,0,10,0"
+									ClickMode="Press"
 									Click="CloseLauncher_Click">
-								<Image Width="28" 
-									   Height="28" 
+								<Image Width="28"
+									   Height="28"
 									   Source="avares://Quiver/Assets/Icons/button_close.png"/>
 							</Button>
 						</StackPanel>
-				</Grid>
-			</Border>
-
+					</Grid>
+				</Border>
+			</Grid>
 			<!-- Remote announcement banner (sky blue — not focus orange / success green) -->
 			<Border x:Name="AnnouncementBanner"
 					Grid.Row="1"
@@ -3286,19 +3291,6 @@
 										</StackPanel>
 
 										<StackPanel Spacing="2">
-											<CheckBox x:Name="RoundWindowCornersCheckBox"
-													  Content="Rounded Window Corners"
-													  Foreground="{DynamicResource ThemeText}"
-													  FontSize="13" FontWeight="SemiBold"
-													  Checked="RoundWindowCornersCheckBox_Checked"
-													  Unchecked="RoundWindowCornersCheckBox_Unchecked"/>
-											<TextBlock Text="Apply rounded corners to the launcher window"
-													   FontSize="11"
-													   Foreground="{DynamicResource ThemeTextSecondary}"
-													   Margin="20,0,0,0"/>
-										</StackPanel>
-
-										<StackPanel Spacing="2">
 											<CheckBox x:Name="ShowOSTopBarCheckBox"
 													  Content="Show OS Top Bar"
 													  Foreground="{DynamicResource ThemeText}"
@@ -3708,15 +3700,60 @@
 												Click="ClearGitHubToken_Click"
 												FontSize="12"/>
 
-										<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,8,0,8"/>
-
 										<TextBlock Text="Visit GitHub's token documentation for more information on generating a personal access token."
 												   FontSize="10"
 												   Foreground="{DynamicResource ThemeTextSecondary}"
 												   FontStyle="Italic"
-												   TextWrapping="Wrap"/>
+												   TextWrapping="Wrap"
+												   Margin="0,8,0,0"/>
 
-										<StackPanel Spacing="2" Margin="0,12,0,0">
+										<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,12,0,8"/>
+
+										<!-- GitLab API Token -->
+										<TextBlock Text="GITLAB API TOKEN"
+												   FontSize="10" FontWeight="Bold"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   LetterSpacing="1"
+												   Margin="0,0,0,4"/>
+
+										<TextBlock Text="Optional. Raises GitLab API rate limits and allows private gitlab.com projects"
+												   FontSize="11"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   TextWrapping="Wrap"
+												   Margin="0,0,0,6"/>
+
+										<TextBox x:Name="GitLabTokenTextBox"
+												 Foreground="{DynamicResource ThemeText}"
+												 Background="{DynamicResource ThemeBase}"
+												 BorderBrush="{DynamicResource ThemeBorder}"
+												 BorderThickness="1"
+												 Padding="12,10"
+												 CornerRadius="4"
+												 TextChanged="GitLabTokenTextBox_TextChanged"
+												 Text="{Binding Settings.GitLabApiToken, Mode=TwoWay}"/>
+
+										<Button Classes="options"
+												Content="Create GitLab Token"
+												HorizontalAlignment="Stretch"
+												Click="CreateGitLabToken_Click"
+												FontSize="12"/>
+
+										<Button Classes="options"
+												Content="Clear GitLab Token"
+												HorizontalAlignment="Stretch"
+												Click="ClearGitLabToken_Click"
+												FontSize="12"/>
+
+										<TextBlock Text="Visit GitLab's personal access token settings to create a token (read_api is enough for public releases)."
+												   FontSize="10"
+												   Foreground="{DynamicResource ThemeTextSecondary}"
+												   FontStyle="Italic"
+												   TextWrapping="Wrap"
+												   Margin="0,8,0,0"/>
+
+										<Border Height="1" Background="{DynamicResource ThemeBorder}" Margin="0,12,0,8"/>
+
+										<StackPanel Spacing="2">
 											<CheckBox x:Name="AllowPrereleaseLauncherUpdatesCheckBox"
 													  Content="Include prerelease Quiver updates"
 													  Foreground="{DynamicResource ThemeText}"
@@ -3886,6 +3923,7 @@
 											<RowDefinition Height="Auto"/>
 											<RowDefinition Height="Auto"/>
 											<RowDefinition Height="Auto"/>
+											<RowDefinition Height="Auto"/>
 										</Grid.RowDefinitions>
 
 										<TextBlock Grid.Row="0" Grid.Column="0" Text="Name:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
@@ -3900,8 +3938,24 @@
 												 Margin="8,0,0,8"
 												 TextChanged="GameNameTextBox_TextChanged"/>
 
-										<TextBlock Grid.Row="1" Grid.Column="0" Text="Repository:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-										<TextBox Grid.Row="1" Grid.Column="1"
+										<TextBlock Grid.Row="1" Grid.Column="0" Text="Repository Source:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<ComboBox Grid.Row="1" Grid.Column="1"
+												  x:Name="NewGameRepositorySourceComboBox"
+												  Foreground="{DynamicResource ThemeText}"
+												  Background="{DynamicResource ThemeBase}"
+												  BorderBrush="{DynamicResource ThemeBorder}"
+												  BorderThickness="1"
+												  CornerRadius="4"
+												  Padding="8"
+												  Margin="8,0,0,8"
+												  HorizontalAlignment="Stretch"
+												  SelectedIndex="0">
+											<ComboBoxItem Content="GitHub" Tag="github"/>
+											<ComboBoxItem Content="GitLab" Tag="gitlab"/>
+										</ComboBox>
+
+										<TextBlock Grid.Row="2" Grid.Column="0" Text="Repository:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="2" Grid.Column="1"
 												 x:Name="NewGameRepoTextBox"
 												 Foreground="{DynamicResource ThemeText}"
 												 Background="{DynamicResource ThemeBase}"
@@ -3912,8 +3966,8 @@
 												 Margin="8,0,0,8"
 												 TextChanged="GameRepoTextBox_TextChanged"/>
 
-										<TextBlock Grid.Row="2" Grid.Column="0" Text="Folder Name:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-										<TextBox Grid.Row="2" Grid.Column="1"
+										<TextBlock Grid.Row="3" Grid.Column="0" Text="Folder Name:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="3" Grid.Column="1"
 												 x:Name="NewGameFolderTextBox"
 												 Foreground="{DynamicResource ThemeText}"
 												 Background="{DynamicResource ThemeBase}"
@@ -3924,8 +3978,8 @@
 												 Margin="8,0,0,8"
 												 TextChanged="GameFolderTextBox_TextChanged"/>
 
-										<TextBlock Grid.Row="3" Grid.Column="0" Text="Tags:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-										<TextBox Grid.Row="3" Grid.Column="1"
+										<TextBlock Grid.Row="4" Grid.Column="0" Text="Tags:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="4" Grid.Column="1"
 												 x:Name="NewGameTagsTextBox"
 												 Watermark="e.g. n64, recomp"
 												 Foreground="{DynamicResource ThemeText}"
@@ -3939,8 +3993,8 @@
 												 TextWrapping="Wrap"
 												 MinHeight="56"/>
 
-										<TextBlock Grid.Row="4" Grid.Column="0" Text="Icon URL:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-										<TextBox Grid.Row="4" Grid.Column="1"
+										<TextBlock Grid.Row="5" Grid.Column="0" Text="Icon URL:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="5" Grid.Column="1"
 												 x:Name="NewGameIconTextBox"
 												 Foreground="{DynamicResource ThemeText}"
 												 Background="{DynamicResource ThemeBase}"
@@ -3951,8 +4005,8 @@
 												 Margin="8,0,0,8"
 												 TextChanged="GameIconTextBox_TextChanged"/>
 
-										<TextBlock Grid.Row="5" Grid.Column="0" Text="Files To Add:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-										<TextBox Grid.Row="5" Grid.Column="1"
+										<TextBlock Grid.Row="6" Grid.Column="0" Text="Files To Add:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="6" Grid.Column="1"
 												 x:Name="NewGameFilesToAddTextBox"
 												 Watermark="e.g. portable.txt"
 												 Foreground="{DynamicResource ThemeText}"
@@ -3963,8 +4017,8 @@
 												 Padding="8"
 												 Margin="8,0,0,8"/>
 
-										<TextBlock Grid.Row="6" Grid.Column="0" Text="Mods Path:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-										<TextBox Grid.Row="6" Grid.Column="1"
+										<TextBlock Grid.Row="7" Grid.Column="0" Text="Mods Path:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="7" Grid.Column="1"
 												 x:Name="NewGameModsPathTextBox"
 												 Watermark="e.g. mods"
 												 Foreground="{DynamicResource ThemeText}"
@@ -3975,16 +4029,16 @@
 												 Padding="8"
 												 Margin="8,0,0,8"/>
 
-										<TextBlock Grid.Row="7" Grid.Column="0" Text="Mod Layout:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
-										<CheckBox Grid.Row="7" Grid.Column="1"
+										<TextBlock Grid.Row="8" Grid.Column="0" Text="Mod Layout:" VerticalAlignment="Center" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<CheckBox Grid.Row="8" Grid.Column="1"
 												  x:Name="NewGameModsFolderPerModCheckBox"
 												  Content="Install each mod into its own folder"
 												  Foreground="{DynamicResource ThemeText}"
 												  Margin="8,0,0,8"
 												  VerticalAlignment="Center"/>
 
-										<TextBlock Grid.Row="8" Grid.Column="0" Text="Mod Sources:" VerticalAlignment="Top" Margin="0,10,0,0" Foreground="{DynamicResource ThemeTextSecondary}"/>
-										<TextBox Grid.Row="8" Grid.Column="1"
+										<TextBlock Grid.Row="9" Grid.Column="0" Text="Mod Sources:" VerticalAlignment="Top" Margin="0,10,0,0" Foreground="{DynamicResource ThemeTextSecondary}"/>
+										<TextBox Grid.Row="9" Grid.Column="1"
 												 x:Name="NewGameModsSourcesTextBox"
 												 Watermark="Thunderstore URL/slug or GameBanana mods/games/{id} (one per line)"
 												 Foreground="{DynamicResource ThemeText}"

@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace Quiver.Services;
 
 public static class LauncherVersionService
@@ -8,6 +10,10 @@ public static class LauncherVersionService
             return "0.0.0";
 
         var normalized = version.Trim().TrimStart('v', 'V');
+        var plus = normalized.IndexOf('+');
+        if (plus >= 0)
+            normalized = normalized[..plus];
+
         var segments = normalized.Split('.', StringSplitOptions.RemoveEmptyEntries).ToList();
 
         while (segments.Count < 3)
@@ -49,21 +55,41 @@ public static class LauncherVersionService
         }
     }
 
+    /// <summary>
+    /// Launcher version from the running assembly (InformationalVersion, then AssemblyVersion).
+    /// Velopack callers should prefer <c>VelopackLocator</c> and use this only as fallback.
+    /// <paramref name="baseDirectory"/> is ignored (kept for call-site compatibility).
+    /// </summary>
     public static string ReadInstalledVersion(string? baseDirectory = null)
     {
-        baseDirectory ??= AppDomain.CurrentDomain.BaseDirectory;
-        var versionFilePath = Path.Combine(baseDirectory, "version.txt");
+        _ = baseDirectory;
 
         try
         {
-            return File.Exists(versionFilePath)
-                ? File.ReadAllText(versionFilePath).Trim()
-                : "Version information not found";
+            var assembly = typeof(LauncherVersionService).Assembly;
+            var informational = assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion;
+
+            if (!string.IsNullOrWhiteSpace(informational))
+                return StripBuildMetadata(informational.Trim());
+
+            var version = assembly.GetName().Version;
+            if (version != null)
+                return $"{version.Major}.{version.Minor}.{version.Build}";
+
+            return "Version information not found";
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Error loading version: {ex.Message}");
             return "Version loading failed";
         }
+    }
+
+    internal static string StripBuildMetadata(string version)
+    {
+        var plus = version.IndexOf('+');
+        return plus >= 0 ? version[..plus] : version;
     }
 }

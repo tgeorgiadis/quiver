@@ -20,9 +20,9 @@ public class LauncherUpdateServiceTests
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempDir);
-        File.WriteAllText(Path.Combine(tempDir, "version.txt"), "1.0.0");
+        // LastKnownVersion must be newer than the running assembly version.
         File.WriteAllText(Path.Combine(tempDir, "update_check.json"),
-            """{"LastCheckTime":"2026-01-01T00:00:00Z","UpdateAvailable":true,"LastKnownVersion":"v1.1.0","CurrentVersion":"1.0.0"}""");
+            """{"LastCheckTime":"2026-01-01T00:00:00Z","UpdateAvailable":true,"LastKnownVersion":"v99.0.0","CurrentVersion":"1.0.0"}""");
 
         try
         {
@@ -44,34 +44,27 @@ public class LauncherUpdateServiceTests
     }
 
     [Fact]
-    public void ReadInstalledVersion_reads_version_txt_from_directory()
+    public void ReadInstalledVersion_returns_assembly_version()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(tempDir);
-        File.WriteAllText(Path.Combine(tempDir, "version.txt"), "2.3.4");
-
-        try
-        {
-            new LauncherUpdateService().ReadInstalledVersion(tempDir).Should().Be("2.3.4");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var fromService = new LauncherUpdateService().ReadInstalledVersion();
+        fromService.Should().Be(LauncherVersionService.ReadInstalledVersion());
+        fromService.Should().NotBeNullOrWhiteSpace();
+        fromService.Should().NotBe("Version information not found");
     }
 
     [Fact]
-    public void ReadInstalledVersion_prefers_version_txt_over_stale_update_check_cache()
+    public void IsLauncherUpdatePending_compares_last_known_to_assembly_not_cache_current_version()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempDir);
-        File.WriteAllText(Path.Combine(tempDir, "version.txt"), "v2.0.0");
+        // Cache claims CurrentVersion already matches LastKnownVersion, but pending is
+        // decided against the running assembly version.
         File.WriteAllText(Path.Combine(tempDir, "update_check.json"),
-            """{"LastCheckTime":"2026-01-01T00:00:00Z","UpdateAvailable":false,"LastKnownVersion":"v2.0.0","CurrentVersion":"v2.1.0"}""");
+            """{"LastCheckTime":"2026-01-01T00:00:00Z","UpdateAvailable":true,"LastKnownVersion":"v99.0.0","CurrentVersion":"v99.0.0"}""");
 
         try
         {
-            new LauncherUpdateService().ReadInstalledVersion(tempDir).Should().Be("v2.0.0");
+            new LauncherUpdateService().IsLauncherUpdatePending(tempDir).Should().BeTrue();
         }
         finally
         {
@@ -102,24 +95,5 @@ public class LauncherUpdateServiceTests
         var lastCheck = DateTime.UtcNow - interval - TimeSpan.FromMinutes(1);
 
         LauncherUpdateService.ShouldSkipUpdateCheck(lastCheck, DateTime.UtcNow, interval).Should().BeFalse();
-    }
-
-    [Fact]
-    public void IsLauncherUpdatePending_uses_version_txt_when_cache_current_version_is_stale()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(tempDir);
-        File.WriteAllText(Path.Combine(tempDir, "version.txt"), "v2.0.0");
-        File.WriteAllText(Path.Combine(tempDir, "update_check.json"),
-            """{"LastCheckTime":"2026-01-01T00:00:00Z","UpdateAvailable":true,"LastKnownVersion":"v2.1.0","CurrentVersion":"v2.1.0"}""");
-
-        try
-        {
-            new LauncherUpdateService().IsLauncherUpdatePending(tempDir).Should().BeTrue();
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
     }
 }

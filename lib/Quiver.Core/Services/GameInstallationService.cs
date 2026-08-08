@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
+using SharpCompress.Archives;
+using SharpCompress.Common;
 
 namespace Quiver.Core.Services;
 
@@ -24,6 +26,93 @@ public static class GameInstallationService
         return !Path.HasExtension(assetName);
     }
 
+    /// <summary>
+    /// Prefers a Content-Disposition filename when the release asset display name lacks a usable extension
+    /// (common for GitLab package links named like <c>LADXHD.Patcher-Lite-Windows</c>).
+    /// </summary>
+    public static string ResolveEffectiveAssetName(string? assetName, string? contentDispositionFileName)
+    {
+        var fromDisposition = NormalizeDownloadFileName(contentDispositionFileName);
+        var fromAsset = NormalizeDownloadFileName(assetName);
+
+        // Prefer disposition when it carries a usable extension and the release link name does not
+        // (GitLab package links often use display names like "LADXHD.Patcher-Lite-Windows").
+        if (HasRecognizedInstallExtension(fromDisposition) && !HasRecognizedInstallExtension(fromAsset))
+            return fromDisposition;
+
+        if (!string.IsNullOrEmpty(fromAsset))
+            return fromAsset;
+
+        if (!string.IsNullOrEmpty(fromDisposition))
+            return fromDisposition;
+
+        return "download.bin";
+    }
+
+    public static bool HasRecognizedInstallExtension(string? assetName)
+    {
+        if (string.IsNullOrWhiteSpace(assetName))
+            return false;
+
+        return assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+               assetName.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase) ||
+               assetName.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ||
+               assetName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+               assetName.EndsWith(".appimage", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Detects zip / 7z / gzip from the file header when the asset name has no usable extension.
+    /// </summary>
+    public static string? DetectArchiveExtensionFromFile(string downloadPath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(downloadPath);
+            Span<byte> header = stackalloc byte[4];
+            var read = stream.Read(header);
+            if (read < 2)
+                return null;
+
+            if (header[0] == (byte)'P' && header[1] == (byte)'K')
+                return ".zip";
+
+            if (read >= 4 &&
+                header[0] == 0x37 &&
+                header[1] == 0x7A &&
+                header[2] == 0xBC &&
+                header[3] == 0xAF)
+            {
+                return ".7z";
+            }
+
+            if (header[0] == 0x1F && header[1] == 0x8B)
+                return ".tar.gz";
+        }
+        catch
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    static string NormalizeDownloadFileName(string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return string.Empty;
+
+        var trimmed = fileName.Trim().Trim('"');
+        var name = Path.GetFileName(trimmed);
+        if (string.IsNullOrWhiteSpace(name))
+            return string.Empty;
+
+        foreach (var c in Path.GetInvalidFileNameChars())
+            name = name.Replace(c, '_');
+
+        return name;
+    }
+
     public static async Task InstallOrUpdateGameAsync(
         string downloadPath,
         string gamePath,
@@ -34,25 +123,37 @@ public static class GameInstallationService
         options ??= GameInstallationOptions.Default;
         Directory.CreateDirectory(gamePath);
 
-        if (IsSingleFileExecutableAsset(assetName))
+        var effectiveName = assetName;
+        if (!HasRecognizedInstallExtension(effectiveName) && !IsSingleFileExecutableAsset(effectiveName))
+        {
+            var detected = DetectArchiveExtensionFromFile(downloadPath);
+            if (!string.IsNullOrEmpty(detected))
+                effectiveName = effectiveName + detected;
+        }
+
+        if (IsSingleFileExecutableAsset(effectiveName))
         {
             var destPath = Path.Combine(gamePath, assetName);
             File.Move(downloadPath, destPath, true);
             MakeExecutableIfNeeded(destPath);
         }
-        else if (assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        else if (effectiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
         {
             await ExtractZipAsync(downloadPath, gamePath).ConfigureAwait(false);
         }
-        else if (assetName.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
+        else if (effectiveName.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
         {
             await ExtractTarGzAsync(downloadPath, gamePath).ConfigureAwait(false);
+        }
+        else if (effectiveName.EndsWith(".7z", StringComparison.OrdinalIgnoreCase))
+        {
+            await ExtractSevenZipAsync(downloadPath, gamePath).ConfigureAwait(false);
         }
         else
         {
             throw new InvalidOperationException(
                 $"Unsupported release asset type: '{assetName}'. " +
-                "Expected .exe, .appimage, .zip, .tar.gz, or an extensionless binary.");
+                "Expected .exe, .appimage, .zip, .tar.gz, .7z, or an extensionless binary.");
         }
 
         try
@@ -347,6 +448,60 @@ public static class GameInstallationService
         finally
         {
             TryDeleteDirectory(tempExtractPath);
+        }
+    }
+
+    static Task ExtractSevenZipAsync(string downloadPath, string gamePath)
+    {
+        Directory.CreateDirectory(gamePath);
+
+        var tempExtractPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempExtractPath);
+
+        try
+        {
+            ExtractSevenZipToDirectory(downloadPath, tempExtractPath);
+            var sourcePath = GetEffectiveExtractionSource(tempExtractPath);
+            MoveDirectoryContents(sourcePath, gamePath);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempExtractPath);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    static void ExtractSevenZipToDirectory(string archivePath, string destinationDirectoryPath)
+    {
+        Directory.CreateDirectory(destinationDirectoryPath);
+        var destinationRoot = Path.GetFullPath(destinationDirectoryPath);
+
+        using var archive = ArchiveFactory.OpenArchive(archivePath);
+        foreach (var entry in archive.Entries)
+        {
+            if (entry.IsDirectory)
+                continue;
+
+            var key = entry.Key ?? string.Empty;
+            var relative = key.Replace('\\', '/').TrimStart('/');
+            if (relative.Length == 0)
+                continue;
+
+            var destination = Path.GetFullPath(
+                Path.Combine(destinationDirectoryPath, relative.Replace('/', Path.DirectorySeparatorChar)));
+            if (!destination.StartsWith(destinationRoot, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var destDir = Path.GetDirectoryName(destination);
+            if (!string.IsNullOrEmpty(destDir))
+                Directory.CreateDirectory(destDir);
+
+            entry.WriteToFile(destination, new ExtractionOptions
+            {
+                Overwrite = true,
+                ExtractFullPath = false,
+            });
         }
     }
 

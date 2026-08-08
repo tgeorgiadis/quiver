@@ -52,6 +52,7 @@ public class FileSettingsStoreTests : IDisposable
         var store = new FileSettingsStore(_settingsPath);
         var settings = store.Load();
         settings.GitHubApiToken = "test-token";
+        settings.GitLabApiToken = "gitlab-token";
         settings.SortBy = "Name";
         settings.CatalogReviewSortBy = "Repository";
         settings.ListScope = AppListScope.InstalledOnly;
@@ -61,6 +62,7 @@ public class FileSettingsStoreTests : IDisposable
 
         var reloaded = new FileSettingsStore(_settingsPath).Load();
         reloaded.GitHubApiToken.Should().Be("test-token");
+        reloaded.GitLabApiToken.Should().Be("gitlab-token");
         reloaded.SortBy.Should().Be("Name");
         reloaded.CatalogReviewSortBy.Should().Be("Repository");
         reloaded.ListScope.Should().Be(AppListScope.InstalledOnly);

@@ -14,6 +14,13 @@
           }
         ]
       }
+    },
+    {
+      "name": "GitLab Example App",
+      "repository": "username/example-app-repo",
+      "repositorySource": "gitlab",
+      "folderName": "ExampleAppGitLab",
+      "appIconUrl": null
     }
   ]
 }

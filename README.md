@@ -7,13 +7,14 @@
 
 ![Quiver Screenshot](Assets/LauncherScreenshot.png)
 
-A modern launcher for downloading, installing, and running apps from GitHub releases — with a personal library, community catalog subscriptions, and flexible filtering.
+A modern launcher for downloading, installing, and running apps from GitHub and GitLab releases — with a personal library, community catalog subscriptions, and flexible filtering.
 
 ## Features
 
 - **Tag filters** — Organize and filter your library with custom tags
 - **App Catalog** — Subscribe to community app lists, review changes, and build your library from `apps.json`
-- **Automated updates** — Download and install the latest releases from GitHub
+- **GitHub & GitLab releases** — Install and update apps from GitHub or gitlab.com release assets
+- **Automated updates** — Download and install the latest releases automatically
 - **Version management** — Automatic version checking and in-app update checks
 - **UI improvements** — Refined layout, catalog review workflow, and top-bar controls
 
@@ -26,15 +27,17 @@ A modern launcher for downloading, installing, and running apps from GitHub rele
 
 ### Installation
 
-Quiver uses [Velopack](https://docs.velopack.io/) for packaging and self-updates. Prerelease Quiver updates are opt-in via Settings → Advanced → **Include prerelease Quiver updates** (development only); installs whose version already contains `-` (e.g. `2.4.3-rc.3`) follow GitHub prereleases automatically.
+Quiver uses [Velopack](https://docs.velopack.io/) for packaging and self-updates. Prerelease Quiver updates are opt-in via Settings → Advanced → **Include prerelease Quiver updates** (development only); installs whose version already contains `-` (e.g. `3.0.0-rc.1`) follow GitHub prereleases automatically.
+
+**Upgrading from 2.4.x or older:** in-app update cannot migrate a flat 2.4.x install onto Velopack 3.0. Download a fresh portable and copy your library — see [MIGRATING.md](MIGRATING.md).
 
 **Windows (portable-first — recommended)**
 
-1. Download `Quiver-Portable.zip` from [Releases](https://github.com/tgeorgiadis/quiver/releases)
+1. Download `Quiver-win-Portable.zip` from [Releases](https://github.com/tgeorgiadis/quiver/releases)
 2. Extract it anywhere (USB drive, folder, etc.)
 3. Run `Quiver.exe` from the extracted folder
 
-Your library stays in that same folder (`apps.json`, `settings.json`, `Apps/`, `Cache/` next to `current/`), so you can move the whole directory. Optional: `Quiver-Setup.exe` installs to LocalAppData with the same layout.
+Your library stays in that same folder (`apps.json`, `settings.json`, `Apps/`, `Cache/` next to `current/`), so you can move the whole directory.
 
 ```
 Quiver/
@@ -48,9 +51,13 @@ Quiver/
 
 **Linux**
 
-1. Download the `.AppImage` for your architecture (x64 or ARM64)
-2. Put it in a writable folder (USB drive, `~/Apps`, etc.)
-3. Make it executable, then run it:
+1. Download `Quiver-linux-x64.tar.gz` or `Quiver-linux-arm64.tar.gz` from [Releases](https://github.com/tgeorgiadis/quiver/releases)
+2. Extract it (creates a `Quiver-linux-…` folder — keep the AppImage there so library files stay with it):
+   ```bash
+   tar -xzf Quiver-linux-x64.tar.gz
+   cd Quiver-linux-x64
+   ```
+3. Make the AppImage executable, then run it:
    ```bash
    chmod +x Quiver*.AppImage
    ./Quiver*.AppImage
@@ -61,7 +68,7 @@ Quiver/
 Library data (`apps.json`, `settings.json`, `Apps/`, `Cache/`) is stored **beside the AppImage** so you can move that folder together. If the AppImage’s directory is not writable (e.g. `/usr/local/bin`), Quiver falls back to `~/.local/share/Quiver/` (or `$XDG_DATA_HOME/Quiver`).
 
 ```
-MyFolder/
+Quiver-linux-x64/
 ├── Quiver-x.y.z-linux-x64.AppImage
 ├── apps.json
 ├── settings.json
@@ -139,11 +146,13 @@ dotnet test Quiver.sln -c Release --filter "Category!=Slow" --collect:"XPlat Cod
 
 ## Configuration
 
-### GitHub API Token
-To avoid hitting GitHub's API rate limits, you can provide a personal access token.
-Create a token with no special permissions needed and set it in the launcher settings.
-You can create a token at ```GitHub Settings -> Developer settings > Personal access tokens > Tokens (classic) > Generate new token```
-You don't need to give it any special permissions. Then paste that Token into your Settings field. Do not share your Token!
+### GitHub / GitLab API Tokens
+To avoid hitting API rate limits, you can provide personal access tokens in **Settings → Advanced**.
+
+- **GitHub:** Create a classic token with no special permissions at GitHub Settings → Developer settings → Personal access tokens. Paste it into **GitHub API Token**.
+- **GitLab (optional):** Create a personal access token with `read_api` at [GitLab personal access tokens](https://gitlab.com/-/user_settings/personal_access_tokens). Paste it into **GitLab API Token**. Public gitlab.com releases work without a token.
+
+Do not share your tokens.
 
 ### apps.json and App Catalog
 
@@ -264,7 +273,8 @@ See the [Quiver Community App Catalog](https://github.com/tgeorgiadis/quiver-com
 Each app entry requires the following properties:
 
 - **`name`** - The display name of the app as it appears in the launcher
-- **`repository`** - The GitHub repository in the format `username/repository`
+- **`repository`** - The repository path in the format `username/repository` (GitHub) or `namespace/project` (GitLab). On **Edit App Entry**, repository and repository source can be changed to retarget releases (e.g. move an app to GitLab); the install folder is unchanged unless **Folder Name** is edited.
+- **`repositorySource`** *(optional)* - `github` (default when omitted) or `gitlab`. Older Quiver versions ignore this field and treat entries as GitHub-only.
 - **`folderName`** - The folder name where the app will be downloaded and installed
 - **`appIconUrl`** - URL of the app's icon image. If null, a default icon will be used.
 
@@ -284,6 +294,13 @@ Each app entry requires the following properties:
             "repository": "anotheruser/another-app-repo",
             "folderName": "AnotherApp",
             "appIconUrl": "link/to/an/image.png"
+        },
+        {
+            "name": "GitLab Example App",
+            "repository": "bighead.0/ladxhd_updated",
+            "repositorySource": "gitlab",
+            "folderName": "LADXHD",
+            "appIconUrl": null
         }
     ]
 }

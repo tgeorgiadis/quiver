@@ -37,6 +37,20 @@ namespace Quiver.Models
 
         public string? Name { get; set; }
         public string? Repository { get; set; }
+
+        /// <summary>
+        /// Release host: <c>github</c> (default) or <c>gitlab</c>. Null/empty means GitHub.
+        /// </summary>
+        public string? RepositorySource { get; set; }
+
+        /// <summary>Normalized repository source after unknown-value fallback to GitHub.</summary>
+        public string EffectiveRepositorySource =>
+            RepositorySourceHelper.Normalize(RepositorySource);
+
+        /// <summary>Composite identity key used for catalog dedupe and version cache.</summary>
+        public string IdentityKey =>
+            RepositorySourceHelper.GetIdentityKey(RepositorySource, Repository);
+
         public string? FolderName { get; set; }
         public string? InstallPath { get; set; }
         public string? GameIconUrl { get; set; }
@@ -730,7 +744,7 @@ namespace Quiver.Models
             {
                 _cachedRelease = null;
                 LatestVersion = string.Empty;
-                GitHubApiCache.RemoveCache(Repository);
+                GitHubApiCache.RemoveCache(RepositorySource, Repository);
 
                 if (File.Exists(versionFile))
                 {
@@ -1112,6 +1126,26 @@ namespace Quiver.Models
             }
         }
 
+        private static string GetGitLabApiToken(AppSettings? settings = null)
+        {
+            if (settings != null)
+                return settings.GitLabApiToken ?? string.Empty;
+
+            try
+            {
+                return AppSettings.Load()?.GitLabApiToken ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        public string GetReleaseApiToken(AppSettings? settings = null) =>
+            RepositorySourceHelper.IsGitLab(RepositorySource)
+                ? GetGitLabApiToken(settings)
+                : GetGitHubApiToken(settings);
+
         public async Task<bool> PerformActionAsync(
             HttpClient httpClient,
             string gamesFolder,
@@ -1168,9 +1202,9 @@ namespace Quiver.Models
 
             try
             {
-                if (!forceCheck && !GitHubApiCache.NeedsUpdateCheck(Repository))
+                if (!forceCheck && !GitHubApiCache.NeedsUpdateCheck(RepositorySource, Repository))
                 {
-                    if (GitHubApiCache.TryGetCachedVersion(Repository, out var cachedData) && cachedData != null)
+                    if (GitHubApiCache.TryGetCachedVersion(RepositorySource, Repository, out var cachedData) && cachedData != null)
                     {
                         ApplyCachedRelease(cachedData.Version, cachedData.CachedRelease);
                         RefreshInstalledStatus();
@@ -1179,18 +1213,24 @@ namespace Quiver.Models
                     return;
                 }
 
-                var result = await GitHubReleaseService.FetchReleasesAsync(
+                var result = await ReleaseSourceRegistry.Default.FetchReleasesAsync(
                     httpClient,
+                    RepositorySource,
                     Repository,
-                    GetGitHubApiToken(),
-                    GitHubApiCache.GetETag(Repository)).ConfigureAwait(false);
+                    GetReleaseApiToken(),
+                    GitHubApiCache.GetETag(RepositorySource, Repository)).ConfigureAwait(false);
 
                 if (result.IsNotModified)
                 {
-                    if (GitHubApiCache.TryGetCachedVersion(Repository, out var existingCache) && existingCache != null)
+                    if (GitHubApiCache.TryGetCachedVersion(RepositorySource, Repository, out var existingCache) && existingCache != null)
                     {
                         ApplyCachedRelease(existingCache.Version, existingCache.CachedRelease);
-                        GitHubApiCache.SetCache(Repository, existingCache.Version, existingCache.ETag, existingCache.CachedRelease);
+                        GitHubApiCache.SetCache(
+                            RepositorySource,
+                            Repository,
+                            existingCache.Version,
+                            existingCache.ETag,
+                            existingCache.CachedRelease);
                         RefreshInstalledStatus();
                     }
 
@@ -1201,21 +1241,26 @@ namespace Quiver.Models
                 if (latestRelease != null && !string.IsNullOrWhiteSpace(latestRelease.tag_name))
                 {
                     ApplyCachedRelease(latestRelease.tag_name, latestRelease);
-                    GitHubApiCache.SetCache(Repository, latestRelease.tag_name, result.ETag ?? string.Empty, latestRelease);
+                    GitHubApiCache.SetCache(
+                        RepositorySource,
+                        Repository,
+                        latestRelease.tag_name,
+                        result.ETag ?? string.Empty,
+                        latestRelease);
                     RefreshInstalledStatus();
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine($"No releases found for {Repository}");
+                    System.Diagnostics.Debug.WriteLine($"No releases found for {IdentityKey}");
                 }
             }
             catch (HttpRequestException ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Network error fetching latest version for {Repository}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Network error fetching latest version for {IdentityKey}: {ex.Message}");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error fetching latest version for {Repository}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error fetching latest version for {IdentityKey}: {ex.Message}");
             }
         }
 
@@ -1273,10 +1318,11 @@ namespace Quiver.Models
             if (string.IsNullOrWhiteSpace(Repository))
                 return [];
 
-            return await GitHubReleaseService.FetchReleasesWithAssetsAsync(
+            return await ReleaseSourceRegistry.Default.FetchReleasesWithAssetsAsync(
                 httpClient,
+                RepositorySource,
                 Repository,
-                GetGitHubApiToken()).ConfigureAwait(false);
+                GetReleaseApiToken()).ConfigureAwait(false);
         }
         public async Task InstallReleaseAsync(HttpClient httpClient, string gamesFolder, AppSettings settings, GitHubRelease release, GitHubAsset selectedAsset)
         {

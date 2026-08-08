@@ -43,7 +43,6 @@ namespace Quiver
             QuiverPaths.VelopackPackageDirectoryProvider = ResolveVelopackPackageDirectory;
 
             QuiverPaths.EnsureUserDataRootExists();
-            UserDataMigration.TryMigrateFromLegacyCandidates();
 
             if (args.Length > 0 && args[0].StartsWith("-"))
             {

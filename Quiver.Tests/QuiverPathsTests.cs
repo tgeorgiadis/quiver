@@ -37,22 +37,6 @@ public class QuiverPathsTests : IDisposable
     }
 
     [Fact]
-    public void LooksLikeLegacyUserDataDirectory_detects_apps_json()
-    {
-        var temp = Path.Combine(Path.GetTempPath(), "QuiverLegacy_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(temp);
-        try
-        {
-            File.WriteAllText(Path.Combine(temp, "apps.json"), "{\"apps\":[]}");
-            QuiverPaths.LooksLikeLegacyUserDataDirectory(temp).Should().BeTrue();
-        }
-        finally
-        {
-            Directory.Delete(temp, recursive: true);
-        }
-    }
-
-    [Fact]
     public void ResolveMacOsPackageDirectory_returns_parent_of_app_bundle()
     {
         var portableRoot = Path.Combine(Path.GetTempPath(), "QuiverMacPortable_" + Guid.NewGuid().ToString("N"));

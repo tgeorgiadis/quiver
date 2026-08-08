@@ -54,7 +54,7 @@ public class GameInstallationServiceExtensionlessTests
     [Fact]
     public async Task InstallOrUpdateGameAsync_rejects_unsupported_asset_extension()
     {
-        var downloadPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.7z");
+        var downloadPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.rar");
         var gamePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
 
         try
@@ -64,7 +64,7 @@ public class GameInstallationServiceExtensionlessTests
             var act = async () => await GameInstallationService.InstallOrUpdateGameAsync(
                 downloadPath,
                 gamePath,
-                "payload.7z",
+                "payload.rar",
                 "v1.0.0");
 
             await act.Should().ThrowAsync<InvalidOperationException>()

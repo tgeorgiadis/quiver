@@ -1,3 +1,4 @@
+using System.Reflection;
 using FluentAssertions;
 using Quiver.Services;
 
@@ -28,19 +29,30 @@ public class LauncherVersionServiceTests
     }
 
     [Fact]
-    public void ReadInstalledVersion_reads_version_file_from_directory()
+    public void NormalizeVersionString_strips_plus_build_metadata()
     {
-        var tempDirectory = Path.Combine(Path.GetTempPath(), "Quiver.Tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDirectory);
-        File.WriteAllText(Path.Combine(tempDirectory, "version.txt"), "v1.2.3");
+        LauncherVersionService.NormalizeVersionString("1.2.3+abc").Should().Be("1.2.3");
+    }
 
-        try
-        {
-            LauncherVersionService.ReadInstalledVersion(tempDirectory).Should().Be("v1.2.3");
-        }
-        finally
-        {
-            Directory.Delete(tempDirectory, recursive: true);
-        }
+    [Fact]
+    public void StripBuildMetadata_removes_git_suffix()
+    {
+        LauncherVersionService.StripBuildMetadata("3.0.0-rc.1+abc123")
+            .Should().Be("3.0.0-rc.1");
+    }
+
+    [Fact]
+    public void ReadInstalledVersion_returns_assembly_informational_version_without_build_metadata()
+    {
+        var expected = typeof(LauncherVersionService).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        expected.Should().NotBeNullOrWhiteSpace();
+        var cleaned = LauncherVersionService.StripBuildMetadata(expected!.Trim());
+
+        LauncherVersionService.ReadInstalledVersion().Should().Be(cleaned);
+        // Directory argument is ignored (no version.txt fallback).
+        LauncherVersionService.ReadInstalledVersion(Path.GetTempPath()).Should().Be(cleaned);
     }
 }

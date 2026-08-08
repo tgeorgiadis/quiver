@@ -64,7 +64,14 @@ public class ReleasePackagingTests
         workflow.Should().Contain("environment: signing");
         workflow.Should().Contain("## Downloads");
         workflow.Should().Contain("Quiver-win-Portable.zip");
+        workflow.Should().Contain("Quiver-linux-x64.tar.gz");
+        workflow.Should().Contain("Quiver-linux-arm64.tar.gz");
+        workflow.Should().Contain("Package AppImage as tar.gz");
+        workflow.Should().Contain("*.tar.gz");
         workflow.Should().Contain("releases.*.json");
+        // Bare AppImages are not published; users get tar.gz, updates use nupkg + releases.*.json.
+        workflow.Should().Contain("find release-assets -type f -name '*.AppImage' -delete");
+        workflow.Should().NotContain("-name '*.AppImage' -o \\");
     }
 
     [Fact]

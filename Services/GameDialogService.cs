@@ -14,10 +14,13 @@ namespace Quiver.Services;
 
 public static class GameDialogService
 {
-    public static bool IsGitHubRateLimitError(Exception ex)
+    public static bool IsGitHubRateLimitError(Exception ex) => IsRateLimitError(ex);
+
+    public static bool IsRateLimitError(Exception ex)
     {
         var message = ex.Message;
         return message.Contains("403", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("429", StringComparison.OrdinalIgnoreCase)
             || message.Contains("rate limit", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -582,6 +585,133 @@ public static class GameDialogService
                 messageBox.Close();
                 if (mainWindow is MainWindow mainWindowInstance)
                     mainWindowInstance.OpenGitHubApiTokenSettings();
+            };
+            closeButton.Click += (_, _) => messageBox.Close();
+
+            GamepadModalDialogNavigation.Attach(messageBox);
+
+            await messageBox.ShowDialog(mainWindow);
+        });
+    }
+
+    public static async Task ShowGitLabRateLimitErrorAsync()
+    {
+        if (TryGetDesktopMainWindow() is not Window mainWindow)
+        {
+            WriteConsoleError(
+                "Rate Limit Exceeded",
+                "GitLab API rate limit exceeded. Add a GitLab API token in Settings → Advanced.");
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            var hyperlinkText = new TextBlock
+            {
+                Text = "https://gitlab.com/-/user_settings/personal_access_tokens",
+                Foreground = new SolidColorBrush(Color.FromRgb(0, 122, 255)),
+                Cursor = new Cursor(StandardCursorType.Hand),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(10, 0, 0, 0),
+            };
+
+            hyperlinkText.PointerPressed += (_, _) =>
+            {
+                try
+                {
+                    var url = "https://gitlab.com/-/user_settings/personal_access_tokens";
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                    else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                        Process.Start("xdg-open", url);
+                    else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                        Process.Start("open", url);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Failed to open URL: {ex.Message}");
+                }
+            };
+
+            var openSettingsButton = new Button
+            {
+                Content = "Open Settings",
+                MinWidth = 120,
+            };
+
+            var closeButton = new Button
+            {
+                Content = "Close",
+                MinWidth = 100,
+            };
+
+            var messageBox = new Window
+            {
+                Title = "Rate Limit Exceeded",
+                Width = 600,
+                Height = 450,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Content = new ScrollViewer
+                {
+                    Content = new StackPanel
+                    {
+                        Margin = new Thickness(20),
+                        Spacing = 15,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = "GitLab API rate limit exceeded.",
+                                FontWeight = FontWeight.Bold,
+                                FontSize = 16,
+                                TextWrapping = TextWrapping.Wrap,
+                            },
+                            new TextBlock
+                            {
+                                Text = "GitLab limits unauthenticated API requests. Adding a personal access token raises the limit and enables private projects.",
+                                TextWrapping = TextWrapping.Wrap,
+                            },
+                            new TextBlock
+                            {
+                                Text = "To avoid this, add a GitLab API token in Settings → Advanced:",
+                                FontWeight = FontWeight.SemiBold,
+                                TextWrapping = TextWrapping.Wrap,
+                                Margin = new Thickness(0, 10, 0, 0),
+                            },
+                            new TextBlock
+                            {
+                                Text = "1. Click the link below to create a token:",
+                                TextWrapping = TextWrapping.Wrap,
+                            },
+                            hyperlinkText,
+                            new TextBlock { Text = "2. Create a personal access token (read_api is enough for public releases)", TextWrapping = TextWrapping.Wrap },
+                            new TextBlock { Text = "3. Copy the token and paste it in Settings → Advanced → GitLab API Token", TextWrapping = TextWrapping.Wrap },
+                            new TextBlock
+                            {
+                                Text = "Do not share your token with anyone!",
+                                Foreground = new SolidColorBrush(Color.FromRgb(255, 149, 0)),
+                                FontWeight = FontWeight.Bold,
+                                TextWrapping = TextWrapping.Wrap,
+                                Margin = new Thickness(0, 10, 0, 0),
+                            },
+                            new StackPanel
+                            {
+                                Orientation = Orientation.Horizontal,
+                                HorizontalAlignment = HorizontalAlignment.Center,
+                                Spacing = 10,
+                                Margin = new Thickness(0, 10, 0, 0),
+                                Children = { openSettingsButton, closeButton },
+                            },
+                        },
+                    },
+                },
+            };
+
+            openSettingsButton.Click += (_, _) =>
+            {
+                messageBox.Close();
+                if (mainWindow is MainWindow mainWindowInstance)
+                    mainWindowInstance.OpenGitLabApiTokenSettings();
             };
             closeButton.Click += (_, _) => messageBox.Close();
 

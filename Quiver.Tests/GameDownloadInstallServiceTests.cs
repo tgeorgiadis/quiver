@@ -257,6 +257,8 @@ public class GameDownloadInstallServiceTests
 
         public Task ShowRateLimitExceededAsync() => Task.CompletedTask;
 
+        public Task ShowGitLabRateLimitExceededAsync() => Task.CompletedTask;
+
         public Task ShowErrorAsync(string message, string title)
         {
             LastError = $"{title}: {message}";

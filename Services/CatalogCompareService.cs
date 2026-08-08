@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Quiver.Core.Services;
 using Quiver.Models;
 using Quiver.Services.Mods;
 
@@ -20,6 +21,7 @@ namespace Quiver.Services
 
         public CatalogSyncStatus Status { get; init; }
         public string Repository { get; init; } = "";
+        public string IdentityKey { get; init; } = "";
         public string DisplayName { get; init; } = "";
         public GameInfo? Local { get; init; }
         public GameInfo? External { get; init; }
@@ -86,30 +88,31 @@ namespace Quiver.Services
             "tags",
             "filesToAdd",
             "mods",
+            "repositorySource",
         ];
 
         public static IReadOnlyList<CatalogSyncRowItem> BuildCompareRows(
             List<GameInfo> localApps,
             List<GameInfo> externalApps)
         {
-            var localByRepo = localApps
+            var localByKey = localApps
                 .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                .ToDictionary(a => a.Repository!, a => a, StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(a => a.IdentityKey, a => a, StringComparer.OrdinalIgnoreCase);
 
             var rows = new List<CatalogSyncRowItem>();
-            var seenRepos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var external in externalApps)
             {
                 if (string.IsNullOrWhiteSpace(external.Repository))
                     continue;
 
-                var repo = external.Repository!;
-                if (!seenRepos.Add(repo))
+                var key = external.IdentityKey;
+                if (!seenKeys.Add(key))
                     continue;
 
-                localByRepo.TryGetValue(repo, out var local);
-                rows.Add(CreateCompareRow(repo, local, external));
+                localByKey.TryGetValue(key, out var local);
+                rows.Add(CreateCompareRow(external.Repository!, local, external));
             }
 
             return rows;
@@ -145,6 +148,8 @@ namespace Quiver.Services
             {
                 Status = status,
                 Repository = repo,
+                IdentityKey = (external ?? local)?.IdentityKey
+                    ?? RepositorySourceHelper.GetIdentityKey(null, repo),
                 DisplayName = external?.Name ?? local?.Name ?? repo,
                 Local = local,
                 External = external,
@@ -157,6 +162,8 @@ namespace Quiver.Services
         {
             var changed = new List<string>();
 
+            if (!string.Equals(local.EffectiveRepositorySource, external.EffectiveRepositorySource, StringComparison.OrdinalIgnoreCase))
+                changed.Add("repositorySource");
             if (!string.Equals(local.Name, external.Name, StringComparison.OrdinalIgnoreCase))
                 changed.Add("name");
             if (!string.Equals(local.FolderName, external.FolderName, StringComparison.OrdinalIgnoreCase))
@@ -187,6 +194,9 @@ namespace Quiver.Services
             {
                 Name = external.Name,
                 Repository = external.Repository,
+                RepositorySource = RepositorySourceHelper.IsGitHub(external.RepositorySource)
+                    ? null
+                    : RepositorySourceHelper.Normalize(external.RepositorySource),
                 FolderName = external.FolderName,
                 InstallPath = external.InstallPath,
                 GameIconUrl = external.GameIconUrl,
@@ -212,6 +222,9 @@ namespace Quiver.Services
             {
                 Name = external.Name,
                 Repository = external.Repository,
+                RepositorySource = RepositorySourceHelper.IsGitHub(external.RepositorySource)
+                    ? null
+                    : RepositorySourceHelper.Normalize(external.RepositorySource),
                 FolderName = external.FolderName,
                 InstallPath = external.InstallPath,
                 GameIconUrl = external.GameIconUrl,
@@ -252,6 +265,9 @@ namespace Quiver.Services
             {
                 Name = external.Name,
                 Repository = external.Repository,
+                RepositorySource = RepositorySourceHelper.IsGitHub(external.RepositorySource)
+                    ? null
+                    : RepositorySourceHelper.Normalize(external.RepositorySource),
                 FolderName = external.FolderName,
                 InstallPath = external.InstallPath,
                 GameIconUrl = external.GameIconUrl,
@@ -276,15 +292,15 @@ namespace Quiver.Services
             bool autoUpdateNewlyAdded = false)
         {
             var result = new List<GameInfo>(localApps);
-            var localRepos = new HashSet<string>(
+            var localKeys = new HashSet<string>(
                 result
                     .Where(a => !string.IsNullOrWhiteSpace(a.Repository))
-                    .Select(a => a.Repository!),
+                    .Select(a => a.IdentityKey),
                 StringComparer.OrdinalIgnoreCase);
 
             foreach (var row in rows.Where(r => r.Status == CatalogSyncStatus.InExternalOnly && r.External != null))
             {
-                if (localRepos.Add(row.Repository))
+                if (localKeys.Add(row.IdentityKey))
                     result.Add(CloneForLocal(row.External!, autoUpdateNewlyAdded));
             }
 
@@ -295,15 +311,15 @@ namespace Quiver.Services
             List<GameInfo> localApps,
             IReadOnlyList<CatalogSyncRowItem> rows)
         {
-            var replaceByRepo = rows
+            var replaceByKey = rows
                 .Where(r => r.Status == CatalogSyncStatus.Changed && r.Local != null && r.External != null)
-                .ToDictionary(r => r.Repository, r => r, StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(r => r.IdentityKey, r => r, StringComparer.OrdinalIgnoreCase);
 
             return localApps
                 .Select(app =>
                 {
                     if (string.IsNullOrWhiteSpace(app.Repository) ||
-                        !replaceByRepo.TryGetValue(app.Repository, out var row))
+                        !replaceByKey.TryGetValue(app.IdentityKey, out var row))
                         return app;
 
                     return ReplaceFromExternal(app, row.External!);
@@ -320,8 +336,7 @@ namespace Quiver.Services
                 return localApps;
 
             var exists = localApps.Any(a =>
-                a.Repository != null &&
-                a.Repository.Equals(row.Repository, StringComparison.OrdinalIgnoreCase));
+                string.Equals(a.IdentityKey, row.IdentityKey, StringComparison.OrdinalIgnoreCase));
 
             if (exists)
                 return localApps;
@@ -337,8 +352,7 @@ namespace Quiver.Services
 
             return localApps
                 .Select(app =>
-                    app.Repository != null &&
-                    app.Repository.Equals(row.Repository, StringComparison.OrdinalIgnoreCase)
+                    string.Equals(app.IdentityKey, row.IdentityKey, StringComparison.OrdinalIgnoreCase)
                         ? ReplaceFromExternal(app, row.External)
                         : app)
                 .ToList();
@@ -351,8 +365,7 @@ namespace Quiver.Services
 
             return localApps
                 .Select(app =>
-                    app.Repository != null &&
-                    app.Repository.Equals(row.Repository, StringComparison.OrdinalIgnoreCase)
+                    string.Equals(app.IdentityKey, row.IdentityKey, StringComparison.OrdinalIgnoreCase)
                         ? MergeExternalIntoLocal(app, row.External)
                         : app)
                 .ToList();
@@ -365,8 +378,7 @@ namespace Quiver.Services
 
             return localApps
                 .Where(app =>
-                    app.Repository == null ||
-                    !app.Repository.Equals(row.Repository, StringComparison.OrdinalIgnoreCase))
+                    !string.Equals(app.IdentityKey, row.IdentityKey, StringComparison.OrdinalIgnoreCase))
                 .ToList();
         }
 

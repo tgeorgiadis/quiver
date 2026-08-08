@@ -268,6 +268,8 @@ namespace Quiver
         private bool _musicPausedByDeactivation = false;
         private bool _launchedGameOwnsInput;
         private bool _trackingLaunchedGameProcess;
+        private WindowState _windowStateBeforeMinimize = WindowState.Normal;
+        private bool _restoreWindowStateAfterMinimize;
         private string _launcherMusicPath = string.Empty;
         public string LauncherMusicPath
         {
@@ -330,25 +332,8 @@ namespace Quiver
                 }
             }
         }
-        public IBrush WindowBackground
-        {
-            get
-            {
-                if (_settings?.WindowBorderRounding ?? false)
-                {
-                    if (IsFullscreen)
-                    {
-                        return this.Resources["ThemeDarker"] as IBrush ?? Brushes.Transparent;
-                    }
-                    if (_settings.ShowOSTopBar)
-                    {
-                        return this.Resources["ThemeDarker"] as IBrush ?? Brushes.Transparent;
-                    }
-                    return Brushes.Transparent;
-                }
-                return this.Resources["ThemeDarker"] as IBrush ?? Brushes.Transparent;
-            }
-        }
+        public IBrush WindowBackground =>
+            this.Resources["ThemeDarker"] as IBrush ?? Brushes.Transparent;
         public bool ExtendClientAreaEnabled => !_settings.ShowOSTopBar;
         public ExtendClientAreaChromeHints ChromeHints
         {
@@ -1113,17 +1098,8 @@ namespace Quiver
 
         private void TopBar_PointerPressed(object? sender, PointerPressedEventArgs e)
         {
-            // Skip if Hovering ComboBox or if system decorations are enabled
-            var source = e.Source as Control;
-            if (IsDescendantOf(source, SortByComboBox) ||
-                IsDescendantOf(source, CatalogReviewSortByComboBox))
-            {
-                return;
-            }
             if (_settings.ShowOSTopBar)
-            {
                 return;
-            }
 
             var point = e.GetCurrentPoint(this);
 
@@ -1142,21 +1118,6 @@ namespace Quiver
                     BeginMoveDrag(e);
                 }
             }
-        }
-
-        private bool IsDescendantOf(Control? control, Control? parent)
-        {
-            if (control == null || parent == null)
-                return false;
-
-            while (control != null)
-            {
-                if (control == parent)
-                    return true;
-                control = control.Parent as Control;
-            }
-
-            return false;
         }
 
         private void LoadCurrentPlatform()
@@ -1205,7 +1166,6 @@ namespace Quiver
         protected override void OnOpened(EventArgs e)
         {
             base.OnOpened(e);
-            ApplyRoundedCorners();
             _ = InitializeGamesAsync();
         }
 
@@ -1213,7 +1173,6 @@ namespace Quiver
         {
             try
             {
-                await OfferLegacyUserDataImportIfNeededAsync();
                 await _gameManager.LoadGamesAsync();
                 _settings = AppSettings.Load();
 
@@ -1252,50 +1211,6 @@ namespace Quiver
                     UpdateGameCollectionUi();
                     await ShowMessageBoxAsync($"Failed to load apps: {ex.Message}", "Load Error");
                 });
-            }
-        }
-
-        private async Task OfferLegacyUserDataImportIfNeededAsync()
-        {
-            UserDataMigration.TryMigrateFromLegacyCandidates();
-            if (!UserDataMigration.ShouldOfferImportPicker())
-                return;
-
-            var import = await ShowMessageBoxAsync(
-                "No Quiver library was found in the new data location.\n\n" +
-                "If you used a previous portable folder, you can import apps.json, settings, Cache, and Apps from that folder now.",
-                "Import previous Quiver data?",
-                true);
-
-            UserDataMigration.MarkImportOffered();
-            if (!import)
-                return;
-
-            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-            {
-                Title = "Select previous Quiver folder",
-                AllowMultiple = false,
-            });
-
-            var folder = folders.FirstOrDefault();
-            if (folder == null)
-                return;
-
-            var path = folder.TryGetLocalPath();
-            if (string.IsNullOrWhiteSpace(path))
-                return;
-
-            if (UserDataMigration.ImportFromDirectory(path))
-            {
-                await ShowMessageBoxAsync(
-                    "Imported your previous Quiver data successfully.",
-                    "Import complete");
-            }
-            else
-            {
-                await ShowMessageBoxAsync(
-                    "No Quiver user data was found in the selected folder.",
-                    "Import");
             }
         }
 
@@ -1537,7 +1452,109 @@ namespace Quiver
 
         public void MinimizeButton_Click(object sender, RoutedEventArgs e)
         {
+            if (WindowState != WindowState.Minimized)
+            {
+                // Avalonia/Win32 drops FullScreen across minimize (restores as Normal). Remember intent here.
+                // IsFullscreen can outlive WindowState when the platform briefly transitions through Normal.
+                _windowStateBeforeMinimize = (IsFullscreen || WindowState == WindowState.FullScreen)
+                    ? WindowState.FullScreen
+                    : WindowState;
+                _restoreWindowStateAfterMinimize =
+                    _windowStateBeforeMinimize is WindowState.Maximized or WindowState.FullScreen;
+            }
+
             WindowState = WindowState.Minimized;
+        }
+
+        protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+        {
+            base.OnPropertyChanged(change);
+
+            if (change.Property != WindowStateProperty)
+                return;
+
+            var oldState = change.GetOldValue<WindowState>();
+            var newState = change.GetNewValue<WindowState>();
+
+            // Platform may hop FullScreen -> Normal -> Minimized while minimizing; keep FullScreen intent.
+            if (newState == WindowState.Minimized && oldState != WindowState.Minimized)
+            {
+                if (IsFullscreen || oldState == WindowState.FullScreen
+                    || _windowStateBeforeMinimize == WindowState.FullScreen)
+                {
+                    _windowStateBeforeMinimize = WindowState.FullScreen;
+                    _restoreWindowStateAfterMinimize = true;
+                }
+                else if (oldState == WindowState.Maximized)
+                {
+                    _windowStateBeforeMinimize = WindowState.Maximized;
+                    _restoreWindowStateAfterMinimize = true;
+                }
+            }
+            else if (oldState == WindowState.Minimized && newState != WindowState.Minimized)
+            {
+                // Known Avalonia issue: fullscreen/maximize often restores as Normal after taskbar un-minimize.
+                ScheduleRestoreWindowStateAfterMinimize();
+            }
+        }
+
+        private void RestoreWindowStateAfterMinimizeIfNeeded()
+        {
+            ScheduleRestoreWindowStateAfterMinimize();
+        }
+
+        private void ScheduleRestoreWindowStateAfterMinimize()
+        {
+            if (!_restoreWindowStateAfterMinimize)
+                return;
+
+            var desired = _windowStateBeforeMinimize;
+            if (desired is not (WindowState.Maximized or WindowState.FullScreen))
+            {
+                _restoreWindowStateAfterMinimize = false;
+                return;
+            }
+
+            // Do not clear the flag until applied — Activated can fire while still Minimized.
+            Dispatcher.UIThread.Post(() => TryApplyRestoredWindowState(desired, retry: true), DispatcherPriority.Input);
+        }
+
+        private void TryApplyRestoredWindowState(WindowState desired, bool retry)
+        {
+            if (!_restoreWindowStateAfterMinimize)
+                return;
+
+            if (WindowState == WindowState.Minimized)
+            {
+                if (retry)
+                    Dispatcher.UIThread.Post(() => TryApplyRestoredWindowState(desired, retry: false), DispatcherPriority.Background);
+                return;
+            }
+
+            if (desired == WindowState.FullScreen)
+                IsFullscreen = true;
+
+            if (WindowState != desired)
+                WindowState = desired;
+
+            // Second kick: Win32/Avalonia sometimes applies Normal after our first FullScreen set.
+            if (retry)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (WindowState == WindowState.Minimized)
+                        return;
+                    if (desired == WindowState.FullScreen)
+                        IsFullscreen = true;
+                    if (WindowState != desired)
+                        WindowState = desired;
+                    _restoreWindowStateAfterMinimize = false;
+                }, DispatcherPriority.Background);
+            }
+            else
+            {
+                _restoreWindowStateAfterMinimize = false;
+            }
         }
 
         public void LayoutPreset_Landscape_Click(object sender, RoutedEventArgs e)
@@ -2534,7 +2551,11 @@ namespace Quiver
             }
         }
 
-        public void OpenGitHubApiTokenSettings()
+        public void OpenGitHubApiTokenSettings() => OpenAdvancedApiTokenSettings(focusGitLab: false);
+
+        public void OpenGitLabApiTokenSettings() => OpenAdvancedApiTokenSettings(focusGitLab: true);
+
+        private void OpenAdvancedApiTokenSettings(bool focusGitLab)
         {
             if (SettingsPanel == null)
                 return;
@@ -2553,10 +2574,11 @@ namespace Quiver
 
             Dispatcher.UIThread.Post(() =>
             {
-                if (GitHubTokenTextBox != null)
+                var target = focusGitLab ? GitLabTokenTextBox : GitHubTokenTextBox;
+                if (target != null)
                 {
-                    GitHubTokenTextBox.BringIntoView();
-                    GamepadControlActivation.ActivateTextBox(GitHubTokenTextBox);
+                    target.BringIntoView();
+                    GamepadControlActivation.ActivateTextBox(target);
                 }
             }, DispatcherPriority.Loaded);
         }
@@ -2665,6 +2687,9 @@ namespace Quiver
                 if (GitHubTokenTextBox != null)
                     GitHubTokenTextBox.Text = _settings.GitHubApiToken;
 
+                if (GitLabTokenTextBox != null)
+                    GitLabTokenTextBox.Text = _settings.GitLabApiToken;
+
                 if (GamePathTextBox != null)
                     GamePathTextBox.Text = _settings.AppsPath;
 
@@ -2673,9 +2698,6 @@ namespace Quiver
 
                 if (StartFullscreenCheckBox != null)
                     StartFullscreenCheckBox.IsChecked = _settings.StartFullscreen;
-
-                if (RoundWindowCornersCheckBox != null)
-                    RoundWindowCornersCheckBox.IsChecked = _settings.WindowBorderRounding;
 
                 if (EnableGamepadCheckBox != null)
                     EnableGamepadCheckBox.IsChecked = _settings.EnableGamepadInput;
@@ -4000,28 +4022,6 @@ namespace Quiver
             }
         }
 
-        private void RoundWindowCornersCheckBox_Checked(object sender, RoutedEventArgs e)
-        {
-            if (_settings != null)
-            {
-                _settings.WindowBorderRounding = true;
-                ApplyRoundedCorners();
-                OnPropertyChanged(nameof(WindowBackground));
-                OnSettingChanged();
-            }
-        }
-
-        private void RoundWindowCornersCheckBox_Unchecked(object sender, RoutedEventArgs e)
-        {
-            if (_settings != null)
-            {
-                _settings.WindowBorderRounding = false;
-                ApplyRoundedCorners();
-                OnPropertyChanged(nameof(WindowBackground));
-                OnSettingChanged();
-            }
-        }
-
         private void ShowOSTopBarCheckBox_Checked(object sender, RoutedEventArgs e)
         {
             if (_settings != null)
@@ -4597,15 +4597,15 @@ namespace Quiver
             {
                 try
                 {
-                    var githubUrl = $"https://github.com/{game.Repository}";
-                    OpenUrl(githubUrl);
+                    var url = RepositorySourceHelper.GetRepositoryPageUrl(game.RepositorySource, game.Repository);
+                    OpenUrl(url);
                 }
                 catch (Exception ex)
                 {
-                    _ = ShowMessageBoxAsync($"Failed to open GitHub page: {ex.Message}", "Error");
+                    _ = ShowMessageBoxAsync($"Failed to open repository page: {ex.Message}", "Error");
                 }
             }
-            else _ = ShowMessageBoxAsync($"Failed to open GitHub page", "Error");
+            else _ = ShowMessageBoxAsync("Failed to open repository page", "Error");
         }
 
         private async void SetCustomIcon_Click(object sender, RoutedEventArgs e)
@@ -6342,6 +6342,15 @@ namespace Quiver
             }
         }
 
+        private void GitLabTokenTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_settings != null && sender is TextBox textBox)
+            {
+                _settings.GitLabApiToken = textBox.Text ?? string.Empty;
+                OnSettingChanged();
+            }
+        }
+
         private void BackgroundPathTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             if (_settings != null && sender is TextBox textBox)
@@ -6451,6 +6460,30 @@ namespace Quiver
                 _settings.GitHubApiToken = string.Empty;
                 if (GitHubTokenTextBox != null)
                     GitHubTokenTextBox.Text = string.Empty;
+                OnSettingChanged();
+            }
+        }
+
+        private void CreateGitLabToken_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var url = "https://gitlab.com/-/user_settings/personal_access_tokens";
+                OpenUrl(url);
+            }
+            catch (Exception ex)
+            {
+                _ = ShowMessageBoxAsync($"Failed to open GitLab token page: {ex.Message}", "Error");
+            }
+        }
+
+        private void ClearGitLabToken_Click(object sender, RoutedEventArgs e)
+        {
+            if (_settings != null)
+            {
+                _settings.GitLabApiToken = string.Empty;
+                if (GitLabTokenTextBox != null)
+                    GitLabTokenTextBox.Text = string.Empty;
                 OnSettingChanged();
             }
         }
@@ -6616,6 +6649,7 @@ namespace Quiver
 
         private string? _editingGameName;
         private string? _editingGameRepository;
+        private string? _editingGameIdentityKey;
         private string? _editingFolderName;
         private GameInfo? _editingGame;
 
@@ -6748,8 +6782,9 @@ namespace Quiver
 
             FormTitleText.Text = "Edit App Entry";
             NewGameNameTextBox.Text = game.Name ?? "";
+            SetRepositorySourceSelection(game.EffectiveRepositorySource);
             NewGameRepoTextBox.Text = game.Repository ?? "";
-            NewGameRepoTextBox.IsReadOnly = true;
+            NewGameRepoTextBox.IsReadOnly = false;
             NewGameFolderTextBox.Text = game.FolderName ?? "";
             NewGameIconTextBox.Text = game.GameIconUrl ?? "";
             if (NewGameTagsTextBox != null)
@@ -6767,6 +6802,7 @@ namespace Quiver
 
             _editingGameName = game.Name;
             _editingGameRepository = game.Repository;
+            _editingGameIdentityKey = game.IdentityKey;
             _editingFolderName = game.FolderName;
             _editingGame = game;
         }
@@ -6836,6 +6872,14 @@ namespace Quiver
 
                 var name = NewGameNameTextBox?.Text?.Trim();
                 var repository = NewGameRepoTextBox?.Text?.Trim();
+                var repositorySource = GetSelectedRepositorySource(out var unsupportedSource);
+                if (unsupportedSource)
+                {
+                    _ = ShowMessageBoxAsync(
+                        $"Unsupported repository source; defaulting to GitHub.",
+                        "Repository Source");
+                }
+
                 var folderName = NewGameFolderTextBox?.Text?.Trim();
                 var iconUrl = NewGameIconTextBox?.Text?.Trim();
                 var tags = TagHelper.ParseCommaSeparatedTags(NewGameTagsTextBox?.Text);
@@ -6845,6 +6889,7 @@ namespace Quiver
                 var modsLayout = NewGameModsFolderPerModCheckBox?.IsChecked == true
                     ? GameModsConfig.LayoutFolderPerMod
                     : null;
+                var identityKey = RepositorySourceHelper.GetIdentityKey(repositorySource, repository);
 
                 if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(repository) || string.IsNullOrEmpty(folderName))
                 {
@@ -6855,9 +6900,13 @@ namespace Quiver
 
                 var games = await LoadGamesFromJsonAsync();
 
-                if (!string.IsNullOrEmpty(_editingGameRepository))
+                if (!string.IsNullOrEmpty(_editingGameIdentityKey) || !string.IsNullOrEmpty(_editingGameRepository))
                 {
-                    var appToUpdate = games.FirstOrDefault(g => g.Repository == _editingGameRepository);
+                    var appToUpdate = games.FirstOrDefault(g =>
+                        (!string.IsNullOrEmpty(_editingGameIdentityKey) &&
+                         string.Equals(g.IdentityKey, _editingGameIdentityKey, StringComparison.OrdinalIgnoreCase)) ||
+                        (string.IsNullOrEmpty(_editingGameIdentityKey) &&
+                         g.Repository == _editingGameRepository));
                     if (appToUpdate == null)
                     {
                         _ = ShowMessageBoxAsync("Could not find the app to update.", "Error");
@@ -6867,6 +6916,20 @@ namespace Quiver
                     if (name != _editingGameName && games.Any(g => g.Name == name))
                     {
                         _ = ShowMessageBoxAsync("An app with this name already exists.", "Duplicate Name");
+                        return;
+                    }
+
+                    var oldRepository = appToUpdate.Repository;
+                    var oldRepositorySource = appToUpdate.RepositorySource;
+                    var oldIdentityKey = appToUpdate.IdentityKey;
+                    if (!string.Equals(oldIdentityKey, identityKey, StringComparison.OrdinalIgnoreCase) &&
+                        games.Any(g =>
+                            !ReferenceEquals(g, appToUpdate) &&
+                            string.Equals(g.IdentityKey, identityKey, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _ = ShowMessageBoxAsync(
+                            "Another app already uses this repository and repository source.",
+                            "Duplicate Repository");
                         return;
                     }
 
@@ -6890,6 +6953,10 @@ namespace Quiver
 
                     var previousFilesToAdd = AppFilesToAddService.Normalize(appToUpdate.FilesToAdd);
                     appToUpdate.Name = name;
+                    appToUpdate.Repository = repository;
+                    appToUpdate.RepositorySource = RepositorySourceHelper.IsGitHub(repositorySource)
+                        ? null
+                        : repositorySource;
                     appToUpdate.FolderName = folderName;
                     appToUpdate.GameIconUrl = iconUrl;
                     appToUpdate.Tags = tags;
@@ -6898,13 +6965,26 @@ namespace Quiver
                     appToUpdate.ModsSources = modsSources;
                     appToUpdate.ModsLayout = modsLayout;
 
+                    if (AppIdentityMigration.MigrateIdentity(
+                            _settings,
+                            oldRepositorySource,
+                            oldRepository,
+                            appToUpdate.RepositorySource,
+                            appToUpdate.Repository))
+                    {
+                        OnSettingChanged();
+                    }
+
                     await SaveGamesToJsonAsync(games);
                     AppFilesToAddService.SyncForGame(appToUpdate, _gameManager.GamesFolder, previousFilesToAdd);
                     _ = ShowMessageBoxAsync("App entry updated successfully", "App Updated");
                 }
                 else
                 {
-                    if (games.Any(g => g.Name == name || g.Repository == repository || g.FolderName == folderName))
+                    if (games.Any(g =>
+                            g.Name == name ||
+                            string.Equals(g.IdentityKey, identityKey, StringComparison.OrdinalIgnoreCase) ||
+                            g.FolderName == folderName))
                     {
                         _ = ShowMessageBoxAsync("An app with this name, repository, or folder name already exists", "Duplicate App");
                         return;
@@ -6914,6 +6994,9 @@ namespace Quiver
                     {
                         Name = name,
                         Repository = repository,
+                        RepositorySource = RepositorySourceHelper.IsGitHub(repositorySource)
+                            ? null
+                            : repositorySource,
                         FolderName = folderName,
                         GameIconUrl = iconUrl,
                         Tags = tags,
@@ -7068,6 +7151,7 @@ namespace Quiver
         private void ClearForm()
         {
             if (NewGameNameTextBox != null) NewGameNameTextBox.Text = "";
+            SetRepositorySourceSelection(RepositorySourceIds.GitHub);
             if (NewGameRepoTextBox != null)
             {
                 NewGameRepoTextBox.Text = "";
@@ -7087,8 +7171,41 @@ namespace Quiver
             _entryFormShowValidation = false;
             _editingGameName = null;
             _editingGameRepository = null;
+            _editingGameIdentityKey = null;
             _editingFolderName = null;
             _editingGame = null;
+        }
+
+        private void SetRepositorySourceSelection(string? repositorySource)
+        {
+            if (NewGameRepositorySourceComboBox == null)
+                return;
+
+            var normalized = RepositorySourceHelper.Normalize(repositorySource);
+            foreach (var item in NewGameRepositorySourceComboBox.Items)
+            {
+                if (item is ComboBoxItem comboItem &&
+                    comboItem.Tag is string tag &&
+                    string.Equals(tag, normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    NewGameRepositorySourceComboBox.SelectedItem = comboItem;
+                    return;
+                }
+            }
+
+            NewGameRepositorySourceComboBox.SelectedIndex = 0;
+        }
+
+        private string GetSelectedRepositorySource(out bool wasUnsupported)
+        {
+            wasUnsupported = false;
+            if (NewGameRepositorySourceComboBox?.SelectedItem is ComboBoxItem item &&
+                item.Tag is string tag)
+            {
+                return RepositorySourceHelper.Normalize(tag, out wasUnsupported);
+            }
+
+            return RepositorySourceIds.GitHub;
         }
 
         private async void RemoveGameEntry_Click(object sender, RoutedEventArgs e)
@@ -7765,6 +7882,7 @@ namespace Quiver
             }
 
             Add(NewGameNameTextBox);
+            Add(NewGameRepositorySourceComboBox);
             Add(NewGameRepoTextBox);
             Add(NewGameFolderTextBox);
             Add(NewGameTagsTextBox);
@@ -11362,6 +11480,8 @@ namespace Quiver
 
         private void MainWindow_Activated(object? sender, EventArgs e)
         {
+            RestoreWindowStateAfterMinimizeIfNeeded();
+
             // Always reclaim input when Quiver is focused. Waiting on the launched process can
             // hang (shell-execute / orphaned waiters), which used to leave _launchedGameOwnsInput
             // true and swallow all gamepad/keyboard navigation while Cancel still worked.
@@ -11661,7 +11781,7 @@ namespace Quiver
                 if (IsGamepadFocusActive)
                     Dispatcher.UIThread.Post(() => ApplyChangelogGamepadSelection(0), DispatcherPriority.Loaded);
 
-                string changelogText = await FetchChangelogAsync(game.Repository);
+                string changelogText = await FetchChangelogAsync(game);
 
                 if (!_isChangelogOpen)
                     return;
@@ -12102,29 +12222,62 @@ namespace Quiver
             }
         }
 
-        private async Task<string> FetchChangelogAsync(string repository)
+        private async Task<string> FetchChangelogAsync(GameInfo game)
         {
             try
             {
+                if (string.IsNullOrWhiteSpace(game.Repository))
+                    return "No changelog available for this release.";
+
                 using var client = new HttpClient();
                 client.DefaultRequestHeaders.Add("User-Agent", "Quiver");
+
+                if (RepositorySourceHelper.IsGitLab(game.RepositorySource))
+                {
+                    if (!string.IsNullOrEmpty(_settings?.GitLabApiToken))
+                        client.DefaultRequestHeaders.TryAddWithoutValidation("PRIVATE-TOKEN", _settings.GitLabApiToken);
+
+                    var encoded = Uri.EscapeDataString(game.Repository);
+                    var url = $"{GitLabReleaseSource.ApiBaseUrl}/projects/{encoded}/releases";
+                    var response = await client.GetAsync(url);
+                    if (!response.IsSuccessStatusCode)
+                        return "Failed to fetch changelog from GitLab.";
+
+                    var json = await response.Content.ReadAsStringAsync();
+                    using var document = JsonDocument.Parse(json);
+                    if (document.RootElement.ValueKind != JsonValueKind.Array ||
+                        document.RootElement.GetArrayLength() == 0)
+                    {
+                        return "No changelog available for this release.";
+                    }
+
+                    var first = document.RootElement[0];
+                    if (first.TryGetProperty("description", out var descriptionElement))
+                    {
+                        var description = descriptionElement.GetString();
+                        if (!string.IsNullOrEmpty(description))
+                            return description;
+                    }
+
+                    return "No changelog available for this release.";
+                }
 
                 if (!string.IsNullOrEmpty(_settings?.GitHubApiToken))
                 {
                     client.DefaultRequestHeaders.Add("Authorization", $"token {_settings.GitHubApiToken}");
                 }
 
-                var url = $"https://api.github.com/repos/{repository}/releases/latest";
-                var response = await client.GetAsync(url);
+                var githubUrl = $"https://api.github.com/repos/{game.Repository}/releases/latest";
+                var githubResponse = await client.GetAsync(githubUrl);
 
-                if (!response.IsSuccessStatusCode)
+                if (!githubResponse.IsSuccessStatusCode)
                 {
                     return "Failed to fetch changelog from GitHub.";
                 }
 
-                var json = await response.Content.ReadAsStringAsync();
-                using var document = JsonDocument.Parse(json);
-                var root = document.RootElement;
+                var githubJson = await githubResponse.Content.ReadAsStringAsync();
+                using var githubDocument = JsonDocument.Parse(githubJson);
+                var root = githubDocument.RootElement;
 
                 if (root.TryGetProperty("body", out var bodyElement))
                 {
@@ -12258,30 +12411,6 @@ namespace Quiver
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
-        private void ApplyRoundedCorners()
-        {
-            if (!OperatingSystem.IsWindows())
-                return;
-
-            try
-            {
-                var hwnd = this.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
-                if (hwnd != IntPtr.Zero)
-                {
-                    const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
-                    int DWMWCP_ROUND = 2;
-
-                    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref DWMWCP_ROUND, sizeof(int));
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Failed to apply rounded corners: {ex.Message}");
-            }
-        }
-
-        [DllImport("dwmapi.dll", SetLastError = true)]
-        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
     }
 
     public class MarkdownBlock

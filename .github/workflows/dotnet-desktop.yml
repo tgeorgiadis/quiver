@@ -205,6 +205,17 @@ jobs:
           --outputDir releases/${{ matrix.rid }}
         chmod +x releases/${{ matrix.rid }}/*.AppImage
 
+    - name: Package AppImage as tar.gz
+      run: |
+        set -euo pipefail
+        RID="${{ matrix.rid }}"
+        APPIMAGE=$(ls releases/"$RID"/*.AppImage | head -n1)
+        STAGE="staging/$RID/Quiver-$RID"
+        mkdir -p "$STAGE"
+        cp "$APPIMAGE" "$STAGE/"
+        chmod +x "$STAGE"/*.AppImage
+        tar -czf "releases/$RID/Quiver-$RID.tar.gz" -C "staging/$RID" "Quiver-$RID"
+
     - name: Upload Linux Velopack artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -333,13 +344,15 @@ jobs:
         find release-assets -type f -name 'RELEASES' -delete
         # Drop Setup installers if any slipped through (portable-first).
         find release-assets -type f \( -name '*-Setup.exe' -o -name '*-Setup.pkg' -o -name 'assets.*.json' \) -delete
+        # Linux users get the AppImage via Quiver-linux-*.tar.gz; updates use .nupkg + releases.*.json.
+        find release-assets -type f -name '*.AppImage' -delete
 
         mapfile -t FILES < <(
           find release-assets -type f \( \
             -name '*.nupkg' -o \
             -name 'releases.*.json' -o \
             -name '*Portable.zip' -o \
-            -name '*.AppImage' \
+            -name '*.tar.gz' \
           \) | sort
         )
         if [[ ${#FILES[@]} -eq 0 ]]; then
@@ -355,8 +368,8 @@ jobs:
           echo "Install these (portable-first). Other assets on this release are Velopack update feed files."
           echo ""
           echo "- **Windows:** [${BASE}/Quiver-win-Portable.zip](${BASE}/Quiver-win-Portable.zip)"
-          echo "- **Linux x64:** [${BASE}/Quiver-linux-x64.AppImage](${BASE}/Quiver-linux-x64.AppImage)"
-          echo "- **Linux ARM64:** [${BASE}/Quiver-linux-arm64.AppImage](${BASE}/Quiver-linux-arm64.AppImage)"
+          echo "- **Linux x64:** [${BASE}/Quiver-linux-x64.tar.gz](${BASE}/Quiver-linux-x64.tar.gz) (extract, then run the AppImage inside)"
+          echo "- **Linux ARM64:** [${BASE}/Quiver-linux-arm64.tar.gz](${BASE}/Quiver-linux-arm64.tar.gz) (extract, then run the AppImage inside)"
           echo "- **macOS x64:** [${BASE}/Quiver-osx-x64-Portable.zip](${BASE}/Quiver-osx-x64-Portable.zip)"
           echo "- **macOS ARM64:** [${BASE}/Quiver-osx-arm64-Portable.zip](${BASE}/Quiver-osx-arm64-Portable.zip)"
           echo ""

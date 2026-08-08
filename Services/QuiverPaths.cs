@@ -98,44 +98,6 @@ public static class QuiverPaths
         return FindAppBundleParent(fallbackStartDir);
     }
 
-    /// <summary>
-    /// Candidate legacy portable folders (flat layout with apps.json beside Quiver.exe).
-    /// </summary>
-    public static IEnumerable<string> GetLegacyCandidateDirectories()
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var results = new List<string>();
-
-        void TryAdd(string? path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-                return;
-            var full = NormalizeDirectory(path);
-            if (seen.Add(full))
-                results.Add(full);
-        }
-
-        TryAdd(AppDomain.CurrentDomain.BaseDirectory);
-
-        var baseDir = NormalizeDirectory(AppDomain.CurrentDomain.BaseDirectory);
-        if (string.Equals(Path.GetFileName(baseDir), "current", StringComparison.OrdinalIgnoreCase))
-            TryAdd(Path.GetDirectoryName(baseDir));
-
-        return results;
-    }
-
-    public static bool LooksLikeLegacyUserDataDirectory(string directory)
-    {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-            return false;
-
-        return File.Exists(Path.Combine(directory, "apps.json"))
-            || File.Exists(Path.Combine(directory, "settings.json"))
-            || File.Exists(Path.Combine(directory, "games.json"))
-            || Directory.Exists(Path.Combine(directory, "Apps"))
-            || Directory.Exists(Path.Combine(directory, "Cache"));
-    }
-
     internal static bool IsDirectoryWritable(string directory)
     {
         if (DirectoryWritableTester != null)

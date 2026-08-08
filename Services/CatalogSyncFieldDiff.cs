@@ -1,4 +1,5 @@
 using Avalonia.Media;
+using Quiver.Core.Services;
 using Quiver.Models;
 using Quiver.Services.Mods;
 
@@ -76,6 +77,7 @@ public static class CatalogSyncFieldDiffBuilder
         ["tags"] = "Tags",
         ["filesToAdd"] = "Files to add",
         ["mods"] = "Mods",
+        ["repositorySource"] = "Repository source",
     };
 
     public static IReadOnlyList<CatalogSyncFieldDiffItem> BuildFieldDiffs(
@@ -232,6 +234,7 @@ public static class CatalogSyncFieldDiffBuilder
             "tags" => TagHelper.FormatTagsForDisplay(app.Tags),
             "filesToAdd" => AppFilesToAddService.FormatForDisplay(app.FilesToAdd),
             "mods" => GameModsConfig.FormatForDisplay(app.ModsPath, app.ModsSources, app.ModsLayout),
+            "repositorySource" => RepositorySourceHelper.DisplayName(app.RepositorySource),
             _ => "",
         };
 }

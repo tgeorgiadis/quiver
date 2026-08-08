@@ -68,16 +68,16 @@ public static class GameStatusService
                 await game.CheckLatestVersionAsync(httpClient, forceCheck: true).ConfigureAwait(false);
             else if (isInstalled)
             {
-                if (GitHubApiCache.NeedsUpdateCheck(game.Repository ?? string.Empty, isInstalledGame: true))
+                if (GitHubApiCache.NeedsUpdateCheck(game.RepositorySource, game.Repository ?? string.Empty, isInstalledGame: true))
                     await game.CheckLatestVersionAsync(httpClient).ConfigureAwait(false);
-                else if (GitHubApiCache.TryGetCachedVersion(game.Repository, out var cache) && cache != null)
+                else if (GitHubApiCache.TryGetCachedVersion(game.RepositorySource, game.Repository, out var cache) && cache != null)
                     game.ApplyCachedRelease(cache.Version, cache.CachedRelease);
             }
             else
             {
-                if (GitHubApiCache.NeedsUpdateCheck(game.Repository ?? string.Empty, isInstalledGame: false))
+                if (GitHubApiCache.NeedsUpdateCheck(game.RepositorySource, game.Repository ?? string.Empty, isInstalledGame: false))
                     await game.CheckLatestVersionAsync(httpClient).ConfigureAwait(false);
-                else if (GitHubApiCache.TryGetCachedVersion(game.Repository, out var cache) && cache != null)
+                else if (GitHubApiCache.TryGetCachedVersion(game.RepositorySource, game.Repository, out var cache) && cache != null)
                     game.ApplyCachedRelease(cache.Version, cache.CachedRelease);
             }
 
